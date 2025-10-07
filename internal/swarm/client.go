@@ -1,6 +1,10 @@
 package swarm
 
-import "context"
+import (
+	"context"
+
+	swarmtypes "github.com/docker/docker/api/types/swarm"
+)
 
 type Client interface {
 	// Networks
@@ -73,7 +77,7 @@ type SecretPayload struct {
 type ServiceApply struct {
 	Name   string
 	Labels map[string]string
-	// Step 2 will add full swarm.ServiceSpec wiring here.
+	Spec   swarmtypes.ServiceSpec
 }
 
 type OwnedObject struct {

@@ -40,13 +40,14 @@ func (d *DockerClient) EnsureNetworks(ctx context.Context, nets []NetworkSpec) (
 			out[ns.Name] = nws[0].ID
 			continue
 		}
-		resp, err := d.c.NetworkCreate(ctx, ns.Name, network.CreateOptions{
+		create := network.CreateOptions{
 			Driver:     ifEmpty(ns.Driver, "overlay"),
 			Internal:   ns.Internal,
 			Attachable: true,
 			Labels:     ns.Labels,
 			Scope:      "swarm",
-		})
+		}
+		resp, err := d.c.NetworkCreate(ctx, ns.Name, create)
 		if err != nil {
 			return nil, err
 		}
@@ -109,26 +110,46 @@ func (d *DockerClient) EnsureSecrets(ctx context.Context, secs []SecretPayload) 
 	return out, nil
 }
 
-// EnsureService: For Step 1 we only support create-if-missing; update wiring will land in Step 2.
+// EnsureService creates or updates a service using the provided ServiceSpec.
 func (d *DockerClient) EnsureService(ctx context.Context, ap ServiceApply) (string, bool, error) {
+	// Try read existing
 	svcID, err := d.findServiceIDByName(ctx, ap.Name)
 	if err != nil {
 		return "", false, err
 	}
-	if svcID != "" {
-		return svcID, false, nil
+	if svcID == "" {
+		ap.Spec.Annotations.Name = ap.Name
+		if ap.Spec.Annotations.Labels == nil {
+			ap.Spec.Annotations.Labels = map[string]string{}
+		}
+		for k, v := range ap.Labels {
+			ap.Spec.Annotations.Labels[k] = v
+		}
+		resp, err := d.c.ServiceCreate(ctx, ap.Spec, swarm.ServiceCreateOptions{})
+		if err != nil {
+			return "", false, err
+		}
+		return resp.ID, true, nil
 	}
-	spec := swarm.ServiceSpec{
-		Annotations: swarm.Annotations{
-			Name:   ap.Name,
-			Labels: ap.Labels,
-		},
-	}
-	resp, err := d.c.ServiceCreate(ctx, spec, swarm.ServiceCreateOptions{})
+	// Inspect to get version
+	desc, _, err := d.c.ServiceInspectWithRaw(ctx, svcID, swarm.ServiceInspectOptions{})
 	if err != nil {
 		return "", false, err
 	}
-	return resp.ID, true, nil
+	// Overlay labels
+	if ap.Spec.Annotations.Labels == nil {
+		ap.Spec.Annotations.Labels = map[string]string{}
+	}
+	for k, v := range ap.Labels {
+		ap.Spec.Annotations.Labels[k] = v
+	}
+	ap.Spec.Annotations.Name = ap.Name
+	// Update
+	_, err = d.c.ServiceUpdate(ctx, svcID, desc.Meta.Version, ap.Spec, swarm.ServiceUpdateOptions{})
+	if err != nil {
+		return "", false, err
+	}
+	return svcID, true, nil
 }
 
 func (d *DockerClient) ListOwned(ctx context.Context, ownerLabels map[string]string) ([]OwnedObject, error) {

@@ -1,16 +1,20 @@
-apiVersion: scplane/v1
+apiVersion: swarmcp/v1
 kind: Service
 metadata:
   name: kratos
 spec:
   image:
-    repo: "{{ .project.vars.ocir_registry }}"
-    tag:  "service.-kratos__sha-{{ .git.short_sha }}"
+    repo: "{{ .project.vars.docker_repo }}"
+    tag: "service.-kratos__sha-{{ .git.short_sha }}"
   deploy:
     replicas: 2
     resources:
-      reservations: { cpus: "0.20", memory: "512M" }
-      limits:       { cpus: "2.00",  memory: "2G" }
+      reservations:
+        cpus: "0.20"
+        memory: "512M"
+      limits:
+        cpus: "2.00"
+        memory: "2G"
   networks:
     - name: platform_proxy
     - name: egress
@@ -29,4 +33,8 @@ spec:
   mounts:
     - type: tmpfs
       target: /run/secrets
-      options: ["nosuid","nodev","noexec","mode=0700"]
+      options:
+        - "nosuid"
+        - "nodev"
+        - "noexec"
+        - "mode=0700"

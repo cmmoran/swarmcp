@@ -2,19 +2,18 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cmmoran/swarmcp/internal/manifest"
 	"github.com/cmmoran/swarmcp/internal/reconcile"
 	"github.com/cmmoran/swarmcp/internal/render"
-	"github.com/cmmoran/swarmcp/internal/status"
 	"github.com/cmmoran/swarmcp/internal/swarm"
-	"github.com/cmmoran/swarmcp/internal/vault"
 	"github.com/spf13/cobra"
 )
 
 func init() {
-	cmd := &cobra.Command{
+	var applyCmd = &cobra.Command{
 		Use:   "apply",
 		Short: "Apply the current plan",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -28,19 +27,43 @@ func init() {
 			if err != nil {
 				return err
 			}
-			rec := reconcile.New(swarm.NewNoopClient(), vault.NewNoopClient())
+
+			var cli swarm.Client
+			switch driver {
+			case "docker":
+				dc, err := swarm.NewDockerClient()
+				if err != nil {
+					return err
+				}
+				cli = dc
+			default:
+				cli = swarm.NewNoopClient()
+			}
+
+			rec := reconcile.New(cli)
 			pl, err := rec.Plan(ctx, eff)
 			if err != nil {
 				return err
 			}
-			rep, err := rec.Apply(ctx, pl)
+
+			// Apply (naive for now)
+			_, err = cli.EnsureNetworks(ctx, pl.Networks)
 			if err != nil {
 				return err
 			}
-			rep.LastAppliedAt = time.Now()
-			status.PrintReport(cmd.OutOrStdout(), rep)
+			_, err = cli.EnsureConfigs(ctx, pl.Configs)
+			if err != nil {
+				return err
+			}
+			for _, sa := range pl.Services {
+				_, _, err := cli.EnsureService(ctx, sa)
+				if err != nil {
+					return err
+				}
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Applied at: %s\n", time.Now().Format(time.RFC3339))
 			return nil
 		},
 	}
-	rootCmd.AddCommand(cmd)
+	rootCmd.AddCommand(applyCmd)
 }

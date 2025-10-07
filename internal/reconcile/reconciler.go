@@ -2,32 +2,82 @@ package reconcile
 
 import (
 	"context"
+	"fmt"
+	"sort"
 
-	"github.com/cmmoran/swarmcp/internal/diff"
 	"github.com/cmmoran/swarmcp/internal/manifest"
-	"github.com/cmmoran/swarmcp/internal/status"
+	"github.com/cmmoran/swarmcp/internal/specnorm"
 	"github.com/cmmoran/swarmcp/internal/swarm"
-	"github.com/cmmoran/swarmcp/internal/vault"
+	"github.com/cmmoran/swarmcp/internal/util"
 )
 
 type Reconciler struct {
-	swarm swarm.Client
-	vault vault.Client
+	cli swarm.Client
 }
 
-func New(s swarm.Client, v vault.Client) *Reconciler { return &Reconciler{swarm: s, vault: v} }
+func New(cli swarm.Client) *Reconciler { return &Reconciler{cli: cli} }
 
-func (r *Reconciler) Plan(ctx context.Context, eff *manifest.EffectiveProject) (*diff.Plan, error) {
-	_ = ctx
-	_ = eff
-	// MVP: return empty plan
-	return diff.New(), nil
+type Plan struct {
+	Networks []swarm.NetworkSpec   `json:"networks"`
+	Configs  []swarm.ConfigPayload `json:"configs"`
+	Secrets  []swarm.SecretPayload `json:"secrets"`
+	Services []swarm.ServiceApply  `json:"services"`
+	Summary  []string              `json:"summary"`
 }
 
-func (r *Reconciler) Apply(ctx context.Context, pl *diff.Plan) (*status.Report, error) {
-	_ = ctx
-	_ = pl
-	rep := &status.Report{}
-	// MVP: do nothing
-	return rep, nil
+func (r *Reconciler) Plan(ctx context.Context, eff *manifest.EffectiveProject) (*Plan, error) {
+	pl := &Plan{}
+	for _, st := range eff.Stacks {
+		inst := ""
+		if st.Instance != nil {
+			inst = st.Instance.Name
+		}
+		for _, svc := range st.Services {
+			// networks (as names)
+			for _, n := range svc.EffectiveNets {
+				pl.Networks = append(pl.Networks, swarm.NetworkSpec{
+					Name: n, Driver: "overlay",
+					Labels: map[string]string{},
+				})
+			}
+			// configs
+			for cfgName, bytes := range svc.RenderedConfigs {
+				pl.Configs = append(pl.Configs, swarm.ConfigPayload{
+					Name: cfgName, Bytes: bytes, Labels: map[string]string{
+						"swarmcp.fingerprint": util.Fingerprint(bytes),
+					},
+				})
+			}
+			// service
+			n := specnorm.FromManifestSpec(svc.Service.Spec)
+			fp := util.MustFingerprintJSON(n)
+			_ = fp // reserved for label usage later
+			name := formatServiceName(eff.Project.Metadata.Name, st.Stack.Metadata.Name, inst, svc.Name)
+			env := make([]string, 0, len(svc.EffectiveEnv))
+			keys := make([]string, 0, len(svc.EffectiveEnv))
+			for k := range svc.EffectiveEnv {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				env = append(env, fmt.Sprintf("%s=%s", k, svc.EffectiveEnv[k]))
+			}
+			spec := minServiceSpec(name, svc.Service.Spec.Image.Repo+":"+svc.Service.Spec.Image.Tag, env, svc.EffectiveNets, svc.Service.Spec.Deploy.Replicas)
+			pl.Services = append(pl.Services, swarm.ServiceApply{
+				Name:   name,
+				Labels: map[string]string{"swarmcp.fingerprint": fp},
+				Spec:   spec,
+			})
+		}
+	}
+	pl.Summary = append(pl.Summary, fmt.Sprintf("networks:%d configs:%d services:%d", len(pl.Networks), len(pl.Configs), len(pl.Services)))
+	return pl, nil
+}
+
+func formatServiceName(project, stack, instance, service string) string {
+	base := "proj." + project + ".stack." + stack
+	if instance != "" {
+		base += ".inst." + instance
+	}
+	return base + ".svc." + service
 }

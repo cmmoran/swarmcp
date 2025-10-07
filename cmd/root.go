@@ -8,6 +8,7 @@ import (
 
 // rootCmd represents the base command when called without any subcommands
 var (
+	driver      string
 	projectPath string
 	rootCmd     = &cobra.Command{
 		Use:   "swarmcp",
@@ -26,4 +27,5 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&projectPath, "project", "p", "project.example", "Path to project root")
+	rootCmd.PersistentFlags().StringVar(&driver, "driver", "noop", "Backend driver: docker|noop")
 }

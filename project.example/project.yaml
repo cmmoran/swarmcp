@@ -1,20 +1,28 @@
-apiVersion: scplane/v1
+apiVersion: swarmcp/v1
 kind: Project
 metadata:
   name: synergy
 spec:
   defaults:
     networks:
-      platform_proxy: { driver: overlay, internal: true }
-      egress:         { driver: overlay, internal: false }
+      platform_proxy:
+        driver: overlay
+        internal: true
+      egress:
+        driver: overlay
+        internal: false
     resources:
-      reservations: { cpus: "0.10", memory: "256M" }
-      limits:       { cpus: "1.00",  memory: "1G" }
+      reservations:
+        cpus: "0.10"
+        memory: "256M"
+      limits:
+        cpus: "1.00"
+        memory: "1G"
   vars:
     domain: infamousity.com
-    ocir_registry: ocir.us-langley-1.oci.oraclegovcloud.com/focalpointcloud/synergy/coreservices
+    docker_repo: docker.io/chrismoran/infamousity
   vault:
-    addr: https://vault.service.consul:8200
+    addr: https://inclusion-nuc:8200
     roleIdPath: /run/vault/role_id
     wrappedSecretIdPath: /run/vault/secret_id.wrapped
   stacks:
