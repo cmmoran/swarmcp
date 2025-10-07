@@ -1,0 +1,32 @@
+apiVersion: scplane/v1
+kind: Service
+metadata:
+  name: kratos
+spec:
+  image:
+    repo: "{{ .project.vars.ocir_registry }}"
+    tag:  "service.-kratos__sha-{{ .git.short_sha }}"
+  deploy:
+    replicas: 2
+    resources:
+      reservations: { cpus: "0.20", memory: "512M" }
+      limits:       { cpus: "2.00",  memory: "2G" }
+  networks:
+    - name: platform_proxy
+    - name: egress
+  env:
+    - name: LOG_LEVEL
+      value: info
+  configs:
+    - name: kratos.yml
+      template: files/kratos.tpl.yaml
+      mode: 0444
+      target: /etc/kratos/kratos.yaml
+  secrets:
+    - name: kratos_db_url
+      fromVault: "kv/projects/{{ .project.name }}/{{ .stack.name }}/{{ .instance.name }}/kratos/db_url"
+      target: env:DSN
+  mounts:
+    - type: tmpfs
+      target: /run/secrets
+      options: ["nosuid","nodev","noexec","mode=0700"]

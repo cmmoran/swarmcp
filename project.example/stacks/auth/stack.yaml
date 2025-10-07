@@ -1,0 +1,12 @@
+apiVersion: scplane/v1
+kind: Stack
+metadata:
+  name: auth
+spec:
+  type: partition
+  instances:
+    - name: dev
+      vars: { env: dev, host: auth-dev.{{ .project.vars.domain }} }
+  services:
+    - name: kratos
+      path: services/kratos

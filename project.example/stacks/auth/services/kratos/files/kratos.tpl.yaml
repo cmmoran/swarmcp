@@ -1,0 +1,4 @@
+log:
+  level: {{ .service.env.LOG_LEVEL | default "info" }}
+public:
+  base_url: https://{{ .stack.instances.vars.host }}

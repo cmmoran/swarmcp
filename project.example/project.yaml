@@ -1,0 +1,23 @@
+apiVersion: scplane/v1
+kind: Project
+metadata:
+  name: synergy
+spec:
+  defaults:
+    networks:
+      platform_proxy: { driver: overlay, internal: true }
+      egress:         { driver: overlay, internal: false }
+    resources:
+      reservations: { cpus: "0.10", memory: "256M" }
+      limits:       { cpus: "1.00",  memory: "1G" }
+  vars:
+    domain: infamousity.com
+    ocir_registry: ocir.us-langley-1.oci.oraclegovcloud.com/focalpointcloud/synergy/coreservices
+  vault:
+    addr: https://vault.service.consul:8200
+    roleIdPath: /run/vault/role_id
+    wrappedSecretIdPath: /run/vault/secret_id.wrapped
+  stacks:
+    - name: auth
+      type: partition
+      path: stacks/auth
