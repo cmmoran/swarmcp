@@ -1,10 +1,6 @@
-/*
-Copyright © 2025 NAME HERE <EMAIL ADDRESS>
-
-*/
 package main
 
-import "github.com/infamousity/swarmcp/cmd"
+import "github.com/cmmoran/swarmcp/cmd"
 
 func main() {
 	cmd.Execute()

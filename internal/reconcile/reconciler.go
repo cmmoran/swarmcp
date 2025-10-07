@@ -3,11 +3,11 @@ package reconcile
 import (
 	"context"
 
-	"github.com/infamousity/swarmcp/internal/diff"
-	"github.com/infamousity/swarmcp/internal/manifest"
-	"github.com/infamousity/swarmcp/internal/status"
-	"github.com/infamousity/swarmcp/internal/swarm"
-	"github.com/infamousity/swarmcp/internal/vault"
+	"github.com/cmmoran/swarmcp/internal/diff"
+	"github.com/cmmoran/swarmcp/internal/manifest"
+	"github.com/cmmoran/swarmcp/internal/status"
+	"github.com/cmmoran/swarmcp/internal/swarm"
+	"github.com/cmmoran/swarmcp/internal/vault"
 )
 
 type Reconciler struct {

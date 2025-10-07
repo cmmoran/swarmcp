@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/infamousity/swarmcp/internal/manifest"
-	"github.com/infamousity/swarmcp/internal/render"
+	"github.com/cmmoran/swarmcp/internal/manifest"
+	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/spf13/cobra"
 )
 

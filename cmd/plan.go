@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/infamousity/swarmcp/internal/diff"
-	"github.com/infamousity/swarmcp/internal/manifest"
-	"github.com/infamousity/swarmcp/internal/reconcile"
-	"github.com/infamousity/swarmcp/internal/render"
-	"github.com/infamousity/swarmcp/internal/swarm"
-	"github.com/infamousity/swarmcp/internal/vault"
+	"github.com/cmmoran/swarmcp/internal/diff"
+	"github.com/cmmoran/swarmcp/internal/manifest"
+	"github.com/cmmoran/swarmcp/internal/reconcile"
+	"github.com/cmmoran/swarmcp/internal/render"
+	"github.com/cmmoran/swarmcp/internal/swarm"
+	"github.com/cmmoran/swarmcp/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -55,9 +55,9 @@ func printPlan(pl *diff.Plan, cmd *cobra.Command) {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "create: %s %s", c.Kind, c.Name)
 	}
 	for _, u := range pl.Updates {
-		fmt.Fprintf(cmd.OutOrStdout(), "update: %s %s", u.Kind, u.Name)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "update: %s %s", u.Kind, u.Name)
 	}
 	for _, d := range pl.Deletes {
-		fmt.Fprintf(cmd.OutOrStdout(), "delete: %s %s", d.Kind, d.Name)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "delete: %s %s", d.Kind, d.Name)
 	}
 }

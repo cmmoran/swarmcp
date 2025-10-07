@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/infamousity/swarmcp/internal/manifest"
-	"github.com/infamousity/swarmcp/internal/reconcile"
-	"github.com/infamousity/swarmcp/internal/render"
-	"github.com/infamousity/swarmcp/internal/status"
-	"github.com/infamousity/swarmcp/internal/swarm"
-	"github.com/infamousity/swarmcp/internal/vault"
+	"github.com/cmmoran/swarmcp/internal/manifest"
+	"github.com/cmmoran/swarmcp/internal/reconcile"
+	"github.com/cmmoran/swarmcp/internal/render"
+	"github.com/cmmoran/swarmcp/internal/status"
+	"github.com/cmmoran/swarmcp/internal/swarm"
+	"github.com/cmmoran/swarmcp/internal/vault"
 	"github.com/spf13/cobra"
 )
 
