@@ -9,7 +9,7 @@ package specnorm
 import (
 	"sort"
 
-	"github.com/cmmoran/swarmcp/internal/manifest"
+	"github.com/cmmoran/swarmcp/internal/spec"
 )
 
 // NormalizedService is an order-independent projection of manifest.ServiceSpec.
@@ -36,7 +36,7 @@ type CPUMem struct {
 	Memory string `json:"memory,omitempty"`
 }
 
-func FromManifestSpec(s manifest.ServiceSpec) NormalizedService {
+func FromManifestSpec(s spec.ServiceSpec) NormalizedService {
 	n := NormalizedService{
 		Image:       s.Image.Repo + ":" + s.Image.Tag,
 		Replicas:    s.Deploy.Replicas,

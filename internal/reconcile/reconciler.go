@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/cmmoran/swarmcp/internal/manifest"
+	"github.com/cmmoran/swarmcp/internal/spec"
 	"github.com/cmmoran/swarmcp/internal/specnorm"
 	"github.com/cmmoran/swarmcp/internal/swarm"
 	"github.com/cmmoran/swarmcp/internal/util"
@@ -25,7 +25,7 @@ type Plan struct {
 	Summary  []string              `json:"summary"`
 }
 
-func (r *Reconciler) Plan(ctx context.Context, eff *manifest.EffectiveProject) (*Plan, error) {
+func (r *Reconciler) Plan(ctx context.Context, eff *spec.EffectiveProject) (*Plan, error) {
 	pl := &Plan{}
 	for _, st := range eff.Stacks {
 		inst := ""

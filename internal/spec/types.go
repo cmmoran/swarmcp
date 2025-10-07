@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 type Project struct {
 	APIVersion string   `yaml:"apiVersion"`
@@ -33,6 +33,7 @@ type StackRef struct {
 type VaultSpec struct {
 	Addr                string `yaml:"addr"`
 	RoleIDPath          string `yaml:"roleIdPath"`
+	Namespace           string `yaml:"namespace"`
 	WrappedSecretIDPath string `yaml:"wrappedSecretIdPath"`
 }
 

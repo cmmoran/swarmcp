@@ -1,0 +1,14 @@
+apiVersion: swarmcp/v1
+kind: Stack
+metadata:
+  name: core
+spec:
+  type: shared
+  instances:
+    - name: dev
+      vars:
+        env: dev
+        host: auth-dev.{{ .project.vars.domain }}
+  services:
+    - name: kratos
+      path: services/kratos

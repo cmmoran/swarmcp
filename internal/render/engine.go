@@ -40,7 +40,7 @@ func (e *Engine) RenderString(name, tpl string, data map[string]any) (string, er
 		return "", err
 	}
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
+	if err = t.Execute(&buf, data); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
