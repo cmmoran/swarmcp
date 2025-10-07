@@ -62,11 +62,11 @@ func (r *Reconciler) Plan(ctx context.Context, eff *spec.EffectiveProject) (*Pla
 			for _, k := range keys {
 				env = append(env, fmt.Sprintf("%s=%s", k, svc.EffectiveEnv[k]))
 			}
-			spec := minServiceSpec(name, svc.Service.Spec.Image.Repo+":"+svc.Service.Spec.Image.Tag, env, svc.EffectiveNets, svc.Service.Spec.Deploy.Replicas)
+			serviceSpec := minServiceSpec(name, svc.Service.Spec.Image.Repo+":"+svc.Service.Spec.Image.Tag, env, svc.EffectiveNets, svc.Service.Spec.Deploy.Replicas)
 			pl.Services = append(pl.Services, swarm.ServiceApply{
 				Name:   name,
 				Labels: map[string]string{"swarmcp.fingerprint": fp},
-				Spec:   spec,
+				Spec:   serviceSpec,
 			})
 		}
 	}
