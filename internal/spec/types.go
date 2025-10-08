@@ -1,5 +1,7 @@
 package spec
 
+import "sort"
+
 type Project struct {
 	APIVersion string   `yaml:"apiVersion"`
 	Kind       string   `yaml:"kind"`
@@ -124,18 +126,35 @@ type EnvVar struct {
 	Value string `yaml:"value"`
 }
 
+// ConfigDecl now supports an optional file target/perms.
 type ConfigDecl struct {
-	Name     string `yaml:"name"`
-	Template string `yaml:"template"`
-	Mode     uint32 `yaml:"mode"`
-	Target   string `yaml:"target"`
+	Name     string               `yaml:"name"`
+	Template string               `yaml:"template,omitempty"`
+	File     *ReferenceFileTarget `yaml:"file,omitempty"` // default "/<name>"
 }
 
+// SecretDecl supports either a Vault source or a template (rendered in-memory),
+// and mounts as a file (no env secret targets).
 type SecretDecl struct {
-	Name      string `yaml:"name"`
-	FromVault string `yaml:"fromVault"`
-	Target    string `yaml:"target"`
-	Mode      uint32 `yaml:"mode"`
+	Name      string               `yaml:"name"`
+	FromVault string               `yaml:"fromVault,omitempty"` // optional direct Vault source
+	Template  string               `yaml:"template,omitempty"`  // optional secret template (in-memory only)
+	File      *ReferenceFileTarget `yaml:"file,omitempty"`      // default "/run/secrets/<name>"
+}
+
+// Effective (fully-resolved) items carry their data and final file targets.
+// Mode is guaranteed non-nil after normalization at resolve time.
+
+type EffectiveConfig struct {
+	Name string
+	Data []byte
+	File ReferenceFileTarget
+}
+
+type EffectiveSecret struct {
+	Name string
+	Data []byte
+	File ReferenceFileTarget // file-only; no env secrets
 }
 
 type MountDecl struct {
@@ -156,10 +175,77 @@ type EffectiveStack struct {
 }
 
 type EffectiveService struct {
-	Service         *Service
-	Name            string
-	RenderedConfigs map[string][]byte
-	ResolvedSecrets map[string][]byte
-	EffectiveEnv    map[string]string
-	EffectiveNets   []string
+	Service *Service
+	Name    string
+
+	// Cohesive, ordered items (bytes + file target together)
+	Configs []EffectiveConfig
+	Secrets []EffectiveSecret
+
+	// Non-secret environment (from the spec only; no env secrets)
+	Env map[string]string
+
+	// Swarm networks
+	Networks []string
+}
+
+func (x EffectiveService) EnvDecl() []string {
+	out := make([]string, 0, len(x.Env))
+	for k, v := range x.Env {
+		out = append(out, k+"="+v)
+	}
+	sort.Strings(out)
+
+	return out
+}
+
+// ReferenceFileTarget decorates Docker's file target (maps to Swarm File.Name/UID/GID/Mode).
+type ReferenceFileTarget struct {
+	Target string  `yaml:"target,omitempty"` // in-container path (→ Swarm File.Name)
+	UID    string  `yaml:"uid,omitempty"`    // default "0"
+	GID    string  `yaml:"gid,omitempty"`    // default "0"
+	Mode   *uint32 `yaml:"mode,omitempty"`   // default 0440 when nil
+}
+
+const (
+	defaultSecretMode = 0400
+	defaultConfigMode = 0444
+	defaultUID        = "0"
+	defaultGID        = "0"
+)
+
+func ResolveFileTarget(name string, in *ReferenceFileTarget, isSecret bool) ReferenceFileTarget {
+	out := ReferenceFileTarget{
+		UID:    defaultUID,
+		GID:    defaultGID,
+		Mode:   defaultMode(isSecret),
+		Target: defaultTarget(isSecret, name),
+	}
+	if in == nil {
+		return out
+	}
+	out.Target = ifThen(in.Target != "", in.Target, out.Target)
+	out.UID = ifThen(in.UID != "", in.UID, out.UID)
+	out.GID = ifThen(in.GID != "", in.GID, out.GID)
+	out.Mode = ifThen(in.Mode != nil, in.Mode, out.Mode)
+	return out
+}
+
+func defaultMode(isSecret bool) *uint32 {
+	sdefMode := uint32(defaultSecretMode)
+	cdefMode := uint32(defaultConfigMode)
+	return ifThen(isSecret, &sdefMode, &cdefMode)
+}
+
+func defaultTarget(isSecret bool, name string) string {
+	sdefTarget := "/run/secrets/" + name
+	cdefTarget := "/" + name
+	return ifThen(isSecret, sdefTarget, cdefTarget)
+}
+
+func ifThen[T any](cond bool, t, f T) T {
+	if cond {
+		return t
+	}
+	return f
 }

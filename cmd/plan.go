@@ -24,7 +24,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			r := render.NewEngine(render.Options{})
+			r := render.NewEngine()
 			eff, eferr := manifest.ResolveEffective(ctx, proj, r)
 			if eferr != nil {
 				return eferr

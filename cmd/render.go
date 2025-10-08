@@ -19,18 +19,20 @@ func init() {
 			if err != nil {
 				return err
 			}
-			r := render.NewEngine(render.Options{})
+			r := render.NewEngine()
 			eff, err := manifest.ResolveEffective(ctx, proj, r)
 			if err != nil {
 				return err
 			}
-			count := 0
+			countCfg := 0
+			countSec := 0
 			for _, st := range eff.Stacks {
 				for _, sv := range st.Services {
-					count += len(sv.RenderedConfigs)
+					countCfg += len(sv.Configs)
+					countSec += len(sv.Secrets)
 				}
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "rendered %d config(s) across stacks", count)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "rendered %d config(s) and %d secret(s) across stacks", countCfg, countSec)
 			return nil
 		},
 	}

@@ -4,40 +4,65 @@ import (
 	"bytes"
 	"os"
 	"text/template"
+
+	"github.com/Masterminds/sprig/v3"
 )
 
-type Options struct{}
+type Option func(*options)
+
+type options struct {
+	configFuncs template.FuncMap
+	secretFuncs template.FuncMap
+}
+
+func WithConfigFuncs(fn template.FuncMap) Option {
+	return func(o *options) {
+		o.configFuncs = fn
+	}
+}
+
+func WithSecretFuncs(fn template.FuncMap) Option {
+	return func(o *options) {
+		o.secretFuncs = fn
+	}
+}
 
 type Engine struct {
-	funcs template.FuncMap
+	configRoot, secretRoot *template.Template
+	funcs                  template.FuncMap
 }
 
-func NewEngine(_ Options) *Engine {
-	fm := template.FuncMap{
-		"default": func(def any, v any) any {
-			if v == nil {
-				return def
-			}
-			switch x := v.(type) {
-			case string:
-				if x == "" {
-					return def
-				}
-			case []byte:
-				if len(x) == 0 {
-					return def
-				}
-			}
-			return v
-		},
+func NewEngine(o ...Option) *Engine {
+	opts := &options{}
+	for _, opt := range o {
+		opt(opts)
 	}
-	return &Engine{funcs: fm}
+	txtfuncMap := sprig.TxtFuncMap()
+	e := &Engine{
+		configRoot: template.New("").Funcs(txtfuncMap),
+		secretRoot: template.New("").Funcs(txtfuncMap),
+	}
+	if opts.configFuncs != nil {
+		e.configRoot.Funcs(opts.configFuncs)
+	}
+	if opts.secretFuncs != nil {
+		e.secretRoot.Funcs(opts.secretFuncs)
+	}
+
+	return e
 }
 
-func (e *Engine) RenderString(name, tpl string, data map[string]any) (string, error) {
-	t, err := template.New(name).Funcs(e.funcs).Parse(tpl)
-	if err != nil {
-		return "", err
+func (e *Engine) RenderTemplateString(name, tpl string, data map[string]any, secretMarker ...any) (string, error) {
+	var err error
+	lt := e.configRoot
+	if len(secretMarker) > 0 {
+		lt = e.secretRoot
+	}
+	t := lt.Lookup(name)
+	if t == nil {
+		if t, err = lt.New(name).Parse(tpl); err != nil {
+			return "", err
+		}
 	}
 	var buf bytes.Buffer
 	if err = t.Execute(&buf, data); err != nil {
@@ -46,12 +71,12 @@ func (e *Engine) RenderString(name, tpl string, data map[string]any) (string, er
 	return buf.String(), nil
 }
 
-func (e *Engine) RenderFile(path string, data map[string]any) ([]byte, error) {
+func (e *Engine) RenderFile(path string, data map[string]any, secretMarker ...any) ([]byte, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	s, err := e.RenderString(path, string(b), data)
+	s, err := e.RenderTemplateString(path, string(b), data, secretMarker...)
 	if err != nil {
 		return nil, err
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 // ResolveSecret loads a secret from KV v2 (or best-effort generic) and returns a single field.
-// Path may be "mount/path#field". If no field is specified, we try "value", then if only one field exists, use it.
+// Path may be "mount/path#field". If no field is specified, we try "data", then if only one field exists, use it.
 func (c *sdkClient) ResolveSecret(ctx context.Context, path string) ([]byte, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("vault: empty path")
@@ -75,8 +75,8 @@ func pickField(m map[string]interface{}, field string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("field %q not found", field)
 	}
-	// prefer "value"
-	if v, ok := m["value"]; ok {
+	// prefer "data"
+	if v, ok := m["data"]; ok {
 		if s, ok := v.(string); ok {
 			return []byte(s), nil
 		}

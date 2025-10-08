@@ -22,7 +22,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			r := render.NewEngine(render.Options{})
+			r := render.NewEngine()
 			eff, err := manifest.ResolveEffective(ctx, proj, r)
 			if err != nil {
 				return err

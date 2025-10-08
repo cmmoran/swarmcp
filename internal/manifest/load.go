@@ -62,8 +62,8 @@ func LoadService(dir string) (*spec.Service, error) {
 // Renderer is a tiny interface so manifest does not import render package heavy types
 // (plug by adapter in main)
 type Renderer interface {
-	RenderString(name, tpl string, data map[string]any) (string, error)
-	RenderFile(path string, data map[string]any) ([]byte, error)
+	RenderTemplateString(name, tpl string, data map[string]any, secretMarker ...any) (string, error)
+	RenderFile(path string, data map[string]any, secretMarker ...any) ([]byte, error)
 }
 
 // ResolveEffective builds the fully merged effective model, renders config templates,
@@ -109,9 +109,9 @@ func resolveEffectiveWithVault(ctx context.Context, p *spec.Project, r Renderer)
 
 			for _, ssvc := range stk.Spec.Services {
 				serviceDir := filepath.Join(stackDir, ssvc.Path)
-				svc, err := LoadService(serviceDir)
-				if err != nil {
-					return nil, fmt.Errorf("load service %s: %w", ssvc.Name, err)
+				svc, serr := LoadService(serviceDir)
+				if serr != nil {
+					return nil, fmt.Errorf("load service %s: %w", ssvc.Name, serr)
 				}
 
 				// Build context for templates
@@ -129,51 +129,55 @@ func resolveEffectiveWithVault(ctx context.Context, p *spec.Project, r Renderer)
 				merged.Deploy.Resources = mergeResources(p.Spec.Defaults.Resources, svc.Spec.Deploy.Resources)
 				// For MVP, keep service env as-is.
 
-				// Render configs
-				rendered := map[string][]byte{}
+				effsvc := spec.EffectiveService{
+					Service:  svc,
+					Name:     svc.Metadata.Name,
+					Env:      envSliceToMap(svc.Spec.Env),
+					Networks: netAttachNames(merged.Networks),
+				}
+
 				for _, c := range svc.Spec.Configs {
 					if c.Template == "" {
 						continue
 					}
 					path := filepath.Join(serviceDir, c.Template)
-					b, err := r.RenderFile(path, ctxMap)
-					if err != nil {
-						return nil, fmt.Errorf("render %s: %w", path, err)
+					b, berr := r.RenderFile(path, ctxMap)
+					if berr != nil {
+						return nil, fmt.Errorf("render config %s - %s: %w", c.Name, path, berr)
 					}
-					rendered[c.Name] = b
+					effsvc.Configs = append(effsvc.Configs, spec.EffectiveConfig{
+						Name: c.Name,
+						Data: b,
+						File: spec.ResolveFileTarget(c.Name, c.File, false),
+					})
 				}
 
-				// Resolve secrets via Vault (in-memory)
-				resolvedSecrets := map[string][]byte{}
-				effectiveEnv := envSliceToMap(svc.Spec.Env)
 				for _, sd := range svc.Spec.Secrets {
-					// Template the FromVault string
-					fromPath, err := r.RenderString("vaultPath", sd.FromVault, ctxMap)
-					if err != nil {
-						return nil, fmt.Errorf("vault path render: %w", err)
+					var (
+						b     []byte
+						sberr error
+					)
+					if len(sd.Template) == 0 && len(sd.FromVault) != 0 {
+						b, sberr = vcli.ResolveSecret(ctx, strings.TrimSpace(sd.FromVault))
+						if sberr != nil {
+							return nil, fmt.Errorf("vault resolve %q: %w", sd.FromVault, sberr)
+						}
+					} else if len(sd.Template) != 0 && len(sd.FromVault) == 0 {
+						fromPath, fperr := r.RenderFile(sd.Template, ctxMap, true)
+						if fperr != nil {
+							return nil, fmt.Errorf("vault path render: %w", fperr)
+						}
+						b = fromPath
+					} else {
+						return nil, fmt.Errorf("secret %s: only one of FromVault or Template can be set", sd.Name)
 					}
-					secretBytes, err := vcli.ResolveSecret(ctx, strings.TrimSpace(fromPath))
-					if err != nil {
-						return nil, fmt.Errorf("vault resolve %q: %w", fromPath, err)
-					}
-					// Target: env:FOO or file:/path
-					if strings.HasPrefix(sd.Target, "env:") {
-						key := strings.TrimPrefix(sd.Target, "env:")
-						effectiveEnv[key] = string(secretBytes)
-					} else if strings.HasPrefix(sd.Target, "file:") {
-						// Stash in memory; wiring into swarm mounts happens later step
-						resolvedSecrets[sd.Name] = secretBytes
-					}
+					effsvc.Secrets = append(effsvc.Secrets, spec.EffectiveSecret{
+						Name: sd.Name,
+						Data: b,
+						File: spec.ResolveFileTarget(sd.Name, sd.File, true),
+					})
 				}
 
-				effsvc := spec.EffectiveService{
-					Service:         svc,
-					Name:            svc.Metadata.Name,
-					RenderedConfigs: rendered,
-					ResolvedSecrets: resolvedSecrets,
-					EffectiveEnv:    effectiveEnv,
-					EffectiveNets:   netAttachNames(merged.Networks),
-				}
 				es.Services = append(es.Services, effsvc)
 			}
 			eproj.Stacks = append(eproj.Stacks, es)
