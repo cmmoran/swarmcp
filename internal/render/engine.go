@@ -16,15 +16,11 @@ type options struct {
 }
 
 func WithConfigFuncs(fn template.FuncMap) Option {
-	return func(o *options) {
-		o.configFuncs = fn
-	}
+	return func(o *options) { o.configFuncs = fn }
 }
 
 func WithSecretFuncs(fn template.FuncMap) Option {
-	return func(o *options) {
-		o.secretFuncs = fn
-	}
+	return func(o *options) { o.secretFuncs = fn }
 }
 
 type Engine struct {
@@ -48,7 +44,6 @@ func NewEngine(o ...Option) *Engine {
 	if opts.secretFuncs != nil {
 		e.secretRoot.Funcs(opts.secretFuncs)
 	}
-
 	return e
 }
 
