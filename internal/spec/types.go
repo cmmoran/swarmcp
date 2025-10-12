@@ -1,6 +1,16 @@
 package spec
 
-import "sort"
+import (
+	"sort"
+)
+
+type Backend int
+
+const (
+	BackendAuto Backend = iota
+	BackendBao
+	BackendVault
+)
 
 type Project struct {
 	APIVersion string   `yaml:"apiVersion"`
@@ -15,10 +25,10 @@ type Metadata struct {
 }
 
 type ProjSpec struct {
-	Defaults ProjDefaults   `yaml:"defaults"`
-	Vars     map[string]any `yaml:"vars"`
-	Vault    VaultSpec      `yaml:"vault"`
-	Stacks   []StackRef     `yaml:"stacks"`
+	Defaults        ProjDefaults        `yaml:"defaults"`
+	Vars            map[string]any      `yaml:"vars"`
+	SecretsProvider SecretsProviderSpec `yaml:"secretsprovider"`
+	Stacks          []StackRef          `yaml:"stacks"`
 }
 
 type ProjDefaults struct {
@@ -32,11 +42,12 @@ type StackRef struct {
 	Path string `yaml:"path"`
 }
 
-type VaultSpec struct {
-	Addr                string `yaml:"addr"`
-	RoleIDPath          string `yaml:"roleIdPath"`
-	Namespace           string `yaml:"namespace"`
-	WrappedSecretIDPath string `yaml:"wrappedSecretIdPath"`
+type SecretsProviderSpec struct {
+	Backend             Backend `yaml:"backend"`
+	Addr                string  `yaml:"addr"`
+	Namespace           string  `yaml:"namespace"`
+	RoleIDPath          string  `yaml:"roleIdPath"`
+	WrappedSecretIDPath string  `yaml:"wrappedSecretIdPath"`
 }
 
 type Stack struct {
@@ -133,11 +144,11 @@ type ConfigDecl struct {
 	File     *ReferenceFileTarget `yaml:"file,omitempty"` // default "/<name>"
 }
 
-// SecretDecl supports either a Vault source or a template (rendered in-memory),
+// SecretDecl supports either a SecretsProvider source or a template (rendered in-memory),
 // and mounts as a file (no env secret targets).
 type SecretDecl struct {
 	Name      string               `yaml:"name"`
-	FromVault string               `yaml:"fromVault,omitempty"` // optional direct Vault source
+	FromVault string               `yaml:"fromVault,omitempty"` // optional direct SecretsProvider source
 	Template  string               `yaml:"template,omitempty"`  // optional secret template (in-memory only)
 	File      *ReferenceFileTarget `yaml:"file,omitempty"`      // default "/run/secrets/<name>"
 }

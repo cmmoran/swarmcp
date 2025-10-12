@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/spf13/cobra"
+
 	"github.com/cmmoran/swarmcp/internal/manifest"
 	"github.com/cmmoran/swarmcp/internal/render"
-	"github.com/spf13/cobra"
 )
 
 func init() {

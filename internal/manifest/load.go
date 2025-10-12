@@ -8,11 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/cmmoran/swarmcp/internal/renderx"
 	"github.com/cmmoran/swarmcp/internal/spec"
-	"github.com/cmmoran/swarmcp/internal/vault"
-	"gopkg.in/yaml.v3"
+	"github.com/cmmoran/swarmcp/internal/store"
 )
 
 // Renderer kept for compatibility with callers that supply their own renderer.
@@ -68,30 +69,27 @@ func LoadService(dir string) (*spec.Service, error) {
 }
 
 // ResolveEffective builds the fully merged effective model, renders config templates,
-// and resolves Vault secrets (if vault is configured in the project).
+// and resolves SecretsProvider secrets (if vault is configured in the project).
 func ResolveEffective(ctx context.Context, p *spec.Project, _ Renderer) (*spec.EffectiveProject, error) {
 	if p == nil {
 		return nil, errors.New("nil project")
 	}
 
-	var vcli = vault.NewNoop()
+	var scli store.Client
 	var err error
-	if p.Spec.Vault.Addr != "" {
-		vcli, err = vault.NewFromProject(ctx, p)
+	if p.Spec.SecretsProvider.Addr != "" {
+		scli, err = store.New(p.Spec.SecretsProvider)
 		if err != nil {
 			return nil, err
 		}
-		defer func() {
-			_ = vcli.Close()
-		}()
 	}
 
 	eproj := &spec.EffectiveProject{Project: p}
 	for _, sref := range p.Spec.Stacks {
 		stackDir := filepath.Join(p.Root, sref.Path)
-		stk, err := LoadStack(stackDir)
-		if err != nil {
-			return nil, fmt.Errorf("load stack %s: %w", sref.Name, err)
+		stk, stkerr := LoadStack(stackDir)
+		if stkerr != nil {
+			return nil, fmt.Errorf("load stack %s: %w", sref.Name, stkerr)
 		}
 
 		instances := stk.Spec.Instances
@@ -139,7 +137,7 @@ func ResolveEffective(ctx context.Context, p *spec.Project, _ Renderer) (*spec.E
 				}
 
 				cfgEngine := render.NewEngine(render.WithConfigFuncs(renderx.ConfigFuncMap(getSecretPath)))
-				secEngine := render.NewEngine(render.WithSecretFuncs(renderx.SecretFuncMap(ctx, vcli, getSecretPath)))
+				secEngine := render.NewEngine(render.WithSecretFuncs(renderx.SecretFuncMap(ctx, scli, getSecretPath)))
 
 				effsvc := spec.EffectiveService{
 					Service:  svc,
@@ -153,17 +151,15 @@ func ResolveEffective(ctx context.Context, p *spec.Project, _ Renderer) (*spec.E
 					var bytes []byte
 					if sd.Template != "" && sd.FromVault == "" {
 						path := filepath.Join(serviceDir, sd.Template)
-						out, err := secEngine.RenderFile(path, ctxMap, true)
+						bytes, err = secEngine.RenderFile(path, ctxMap, true)
 						if err != nil {
 							return nil, fmt.Errorf("render secret template %s (%s): %w", sd.Name, path, err)
 						}
-						bytes = out
 					} else if sd.FromVault != "" && sd.Template == "" {
-						out, err := vcli.ResolveSecret(ctx, strings.TrimSpace(sd.FromVault))
+						bytes, err = scli.ResolveSecret(ctx, strings.TrimSpace(sd.FromVault))
 						if err != nil {
 							return nil, fmt.Errorf("vault resolve %q: %w", sd.FromVault, err)
 						}
-						bytes = out
 					} else {
 						return nil, fmt.Errorf("secret %s: only one of FromVault or Template must be set", sd.Name)
 					}
@@ -184,14 +180,15 @@ func ResolveEffective(ctx context.Context, p *spec.Project, _ Renderer) (*spec.E
 						})
 						continue
 					}
+					var bytes []byte
 					path := filepath.Join(serviceDir, cd.Template)
-					out, err := cfgEngine.RenderFile(path, ctxMap)
+					bytes, err = cfgEngine.RenderFile(path, ctxMap)
 					if err != nil {
 						return nil, fmt.Errorf("render config %s (%s): %w", cd.Name, path, err)
 					}
 					effsvc.Configs = append(effsvc.Configs, spec.EffectiveConfig{
 						Name: cd.Name,
-						Data: out,
+						Data: bytes,
 						File: configTargets[cd.Name],
 					})
 				}

@@ -21,10 +21,10 @@ spec:
   vars:
     domain: infamousity.com
     docker_repo: docker.io/chrismoran/infamousity
-  vault:
+  secretsprovider:
     addr: https://inclusion-nuc:8200
-    roleIdPath: /run/vault/role_id
-    wrappedSecretIdPath: /run/vault/secret_id.wrapped
+    roleIdPath: .roleID
+    wrappedSecretIdPath: .secretID.wrapped
   stacks:
     - name: auth
       type: partition

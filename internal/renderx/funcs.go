@@ -6,7 +6,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/cmmoran/swarmcp/internal/vault"
+	"github.com/cmmoran/swarmcp/internal/store"
 )
 
 // GetSecretPath returns the in-container path for a secret name.
@@ -23,8 +23,8 @@ func ConfigFuncMap(getPath GetSecretPath) template.FuncMap {
 	}
 }
 
-// SecretFuncMap secrets may read Vault and also reference secret paths.
-func SecretFuncMap(ctx context.Context, v vault.Client, getPath GetSecretPath) template.FuncMap {
+// SecretFuncMap secrets may read SecretsProvider and also reference secret paths.
+func SecretFuncMap(ctx context.Context, v store.Client, getPath GetSecretPath) template.FuncMap {
 	return template.FuncMap{
 		"secret": func(path string) (string, error) {
 			if v == nil {

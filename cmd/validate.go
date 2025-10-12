@@ -3,8 +3,9 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/cmmoran/swarmcp/internal/manifest"
 	"github.com/spf13/cobra"
+
+	"github.com/cmmoran/swarmcp/internal/manifest"
 )
 
 func init() {

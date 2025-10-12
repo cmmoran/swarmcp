@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/spf13/cobra"
+
 	"github.com/cmmoran/swarmcp/internal/manifest"
 	"github.com/cmmoran/swarmcp/internal/reconcile"
 	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/cmmoran/swarmcp/internal/swarm"
-	"github.com/spf13/cobra"
 )
 
 var planJSON bool

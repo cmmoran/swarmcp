@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"os"
 
+	dswarm "github.com/docker/docker/api/types/swarm"
+
 	"github.com/cmmoran/swarmcp/internal/spec"
 	"github.com/cmmoran/swarmcp/internal/specnorm"
 	"github.com/cmmoran/swarmcp/internal/swarm"
 	"github.com/cmmoran/swarmcp/internal/util"
-	dswarm "github.com/docker/docker/api/types/swarm"
 )
 
 type Reconciler struct {
