@@ -6,6 +6,7 @@ import (
 	"text/template"
 
 	"github.com/Masterminds/sprig/v3"
+	. "github.com/samber/lo"
 )
 
 type Option func(*options)
@@ -13,6 +14,7 @@ type Option func(*options)
 type options struct {
 	configFuncs template.FuncMap
 	secretFuncs template.FuncMap
+	engine      *Engine
 }
 
 func WithConfigFuncs(fn template.FuncMap) Option {
@@ -23,7 +25,14 @@ func WithSecretFuncs(fn template.FuncMap) Option {
 	return func(o *options) { o.secretFuncs = fn }
 }
 
+func WithParent(e *Engine) Option {
+	return func(o *options) {
+		o.engine = e
+	}
+}
+
 type Engine struct {
+	parent                 *Engine
 	configRoot, secretRoot *template.Template
 	funcs                  template.FuncMap
 }
@@ -35,15 +44,19 @@ func NewEngine(o ...Option) *Engine {
 	}
 	txtfuncMap := sprig.TxtFuncMap()
 	e := &Engine{
-		configRoot: template.New("").Funcs(txtfuncMap),
-		secretRoot: template.New("").Funcs(txtfuncMap),
+		parent: opts.engine,
+		configRoot: If(
+			opts.configFuncs != nil,
+			template.New("").Funcs(txtfuncMap).Funcs(opts.configFuncs),
+		).
+			Else(template.New("").Funcs(txtfuncMap)),
+		secretRoot: If(
+			opts.secretFuncs != nil,
+			template.New("").Funcs(txtfuncMap).Funcs(opts.secretFuncs),
+		).
+			Else(template.New("").Funcs(txtfuncMap)),
 	}
-	if opts.configFuncs != nil {
-		e.configRoot.Funcs(opts.configFuncs)
-	}
-	if opts.secretFuncs != nil {
-		e.secretRoot.Funcs(opts.secretFuncs)
-	}
+
 	return e
 }
 

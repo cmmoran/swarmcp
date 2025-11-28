@@ -2,6 +2,8 @@ package reconcile
 
 import (
 	"github.com/docker/docker/api/types/swarm"
+
+	"github.com/cmmoran/swarmcp/internal/spec"
 )
 
 func minServiceSpec(name string, image string, env []string, networks []string, replicas int) swarm.ServiceSpec {
@@ -11,7 +13,9 @@ func minServiceSpec(name string, image string, env []string, networks []string, 
 	}
 	mode := swarm.ServiceMode{}
 	if replicas > 0 {
-		mode.Replicated = &swarm.ReplicatedService{Replicas: uint64Ptr(uint64(replicas))}
+		mode.Replicated = &swarm.ReplicatedService{
+			Replicas: spec.Ptr(uint64(replicas)),
+		}
 	}
 	return swarm.ServiceSpec{
 		Annotations: swarm.Annotations{Name: name},
@@ -24,8 +28,4 @@ func minServiceSpec(name string, image string, env []string, networks []string, 
 			Networks: netAtts,
 		},
 	}
-}
-
-func uint64Ptr(u uint64) *uint64 {
-	return &u
 }

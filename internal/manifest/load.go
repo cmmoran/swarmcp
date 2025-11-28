@@ -16,12 +16,6 @@ import (
 	"github.com/cmmoran/swarmcp/internal/store"
 )
 
-// Renderer kept for compatibility with callers that supply their own renderer.
-type Renderer interface {
-	RenderTemplateString(name, tpl string, data map[string]any, secretMarker ...any) (string, error)
-	RenderFile(path string, data map[string]any, secretMarker ...any) ([]byte, error)
-}
-
 func LoadProject(root string) (*spec.Project, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -39,6 +33,15 @@ func LoadProject(root string) (*spec.Project, error) {
 		return nil, fmt.Errorf("not a Project kind")
 	}
 	p.Root = abs
+
+	prjSecretTargets := make(map[string]spec.ReferenceFileTarget, len(p.Spec.Secrets))
+	for _, sd := range p.Spec.Secrets {
+		prjSecretTargets[sd.Name] = spec.ResolveFileTarget(sd.Name, sd.File, true)
+	}
+	prjConfigTargets := make(map[string]spec.ReferenceFileTarget, len(p.Spec.Configs))
+	for _, cd := range p.Spec.Configs {
+		prjConfigTargets[cd.Name] = spec.ResolveFileTarget(cd.Name, cd.File, false)
+	}
 	return &p, nil
 }
 
@@ -47,12 +50,21 @@ func LoadStack(dir string) (*spec.Stack, error) {
 	if err != nil {
 		return nil, err
 	}
-	var s spec.Stack
-	if err = yaml.Unmarshal(b, &s); err != nil {
+	var stk spec.Stack
+	if err = yaml.Unmarshal(b, &stk); err != nil {
 		return nil, err
 	}
-	s.Dir = dir
-	return &s, nil
+	stk.Dir = dir
+
+	stkSecretTargets := make(map[string]spec.ReferenceFileTarget, len(stk.Spec.Secrets))
+	for _, sd := range stk.Spec.Secrets {
+		stkSecretTargets[sd.Name] = spec.ResolveFileTarget(sd.Name, sd.File, true)
+	}
+	stkConfigTargets := make(map[string]spec.ReferenceFileTarget, len(stk.Spec.Configs))
+	for _, cd := range stk.Spec.Configs {
+		stkConfigTargets[cd.Name] = spec.ResolveFileTarget(cd.Name, cd.File, false)
+	}
+	return &stk, nil
 }
 
 func LoadService(dir string) (*spec.Service, error) {
@@ -65,12 +77,13 @@ func LoadService(dir string) (*spec.Service, error) {
 		return nil, err
 	}
 	svc.Dir = dir
+
 	return &svc, nil
 }
 
 // ResolveEffective builds the fully merged effective model, renders config templates,
-// and resolves SecretsProvider secrets (if vault is configured in the project).
-func ResolveEffective(ctx context.Context, p *spec.Project, _ Renderer) (*spec.EffectiveProject, error) {
+// and resolves SecretsProvider secrets (if configured in the project).
+func ResolveEffective(ctx context.Context, p *spec.Project, renderer spec.Renderer) (*spec.EffectiveProject, error) {
 	if p == nil {
 		return nil, errors.New("nil project")
 	}

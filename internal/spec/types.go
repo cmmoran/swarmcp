@@ -2,6 +2,8 @@ package spec
 
 import (
 	"sort"
+
+	"github.com/cmmoran/swarmcp/internal/render"
 )
 
 type Backend int
@@ -28,7 +30,10 @@ type ProjSpec struct {
 	Defaults        ProjDefaults        `yaml:"defaults"`
 	Vars            map[string]any      `yaml:"vars"`
 	SecretsProvider SecretsProviderSpec `yaml:"secretsprovider"`
+	Configs         []ConfigDecl        `yaml:"configs"`
+	Secrets         []SecretDecl        `yaml:"secrets"`
 	Stacks          []StackRef          `yaml:"stacks"`
+	engine          render.Engine
 }
 
 type ProjDefaults struct {
@@ -50,6 +55,12 @@ type SecretsProviderSpec struct {
 	WrappedSecretIDPath string  `yaml:"wrappedSecretIdPath"`
 }
 
+// Renderer kept for compatibility with callers that supply their own renderer.
+type Renderer interface {
+	RenderTemplateString(name, tpl string, data map[string]any, secretMarker ...any) (string, error)
+	RenderFile(path string, data map[string]any, secretMarker ...any) ([]byte, error)
+}
+
 type Stack struct {
 	APIVersion string    `yaml:"apiVersion"`
 	Kind       string    `yaml:"kind"`
@@ -62,7 +73,10 @@ type StackSpec struct {
 	Type      string        `yaml:"type"`
 	Instances []InstanceRef `yaml:"instances"`
 	Defaults  StackDefaults `yaml:"defaults"`
+	Configs   []ConfigDecl  `yaml:"configs"`
+	Secrets   []SecretDecl  `yaml:"secrets"`
 	Services  []ServiceRef  `yaml:"services"`
+	engine    render.Engine
 }
 
 type InstanceRef struct {
@@ -96,6 +110,7 @@ type ServiceSpec struct {
 	Secrets  []SecretDecl      `yaml:"secrets"`
 	Mounts   []MountDecl       `yaml:"mounts"`
 	Labels   map[string]string `yaml:"labels"`
+	engine   render.Engine
 }
 
 type ImageSpec struct {
@@ -259,4 +274,16 @@ func ifThen[T any](cond bool, t, f T) T {
 		return t
 	}
 	return f
+}
+
+func Ptr[T any](v T) *T {
+	return &v
+}
+
+func Deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
 }
