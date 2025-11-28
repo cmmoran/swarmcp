@@ -3,10 +3,9 @@ package reconcile
 import (
 	"context"
 	"fmt"
-	"os"
 
-	dswarm "github.com/docker/docker/api/types/swarm"
-
+	"github.com/cmmoran/swarmcp/internal/docker"
+	"github.com/cmmoran/swarmcp/internal/model"
 	"github.com/cmmoran/swarmcp/internal/spec"
 	"github.com/cmmoran/swarmcp/internal/specnorm"
 	"github.com/cmmoran/swarmcp/internal/swarm"
@@ -27,54 +26,6 @@ type Plan struct {
 	Summary  []string              `json:"summary"`
 }
 
-func AddMounts(out *dswarm.ServiceSpec, cfgs []spec.EffectiveConfig, secs []spec.EffectiveSecret) {
-	if out.TaskTemplate.ContainerSpec == nil {
-		out.TaskTemplate.ContainerSpec = &dswarm.ContainerSpec{}
-	}
-
-	// Configs
-	if len(cfgs) > 0 {
-		refs := make([]*dswarm.ConfigReference, 0, len(cfgs))
-		for _, c := range cfgs {
-			mode := uint32(0444)
-			if c.File.Mode != nil {
-				mode = *c.File.Mode
-			}
-			refs = append(refs, &dswarm.ConfigReference{
-				ConfigName: c.Name,
-				File: &dswarm.ConfigReferenceFileTarget{
-					Name: c.File.Target,
-					UID:  c.File.UID,
-					GID:  c.File.GID,
-					Mode: os.FileMode(mode),
-				},
-			})
-		}
-		out.TaskTemplate.ContainerSpec.Configs = refs
-	}
-
-	// Secrets
-	if len(secs) > 0 {
-		refs := make([]*dswarm.SecretReference, 0, len(secs))
-		for _, s := range secs {
-			mode := uint32(0400)
-			if s.File.Mode != nil {
-				mode = *s.File.Mode
-			}
-			refs = append(refs, &dswarm.SecretReference{
-				SecretName: s.Name,
-				File: &dswarm.SecretReferenceFileTarget{
-					Name: s.File.Target,
-					UID:  s.File.UID,
-					GID:  s.File.GID,
-					Mode: os.FileMode(mode),
-				},
-			})
-		}
-		out.TaskTemplate.ContainerSpec.Secrets = refs
-	}
-}
-
 func (r *Reconciler) Plan(ctx context.Context, eff *spec.EffectiveProject) (*Plan, error) {
 	pl := &Plan{}
 	for _, st := range eff.Stacks {
@@ -91,26 +42,78 @@ func (r *Reconciler) Plan(ctx context.Context, eff *spec.EffectiveProject) (*Pla
 					Labels: map[string]string{},
 				})
 			}
-			// configs
+			// configs and secrets as rendered model objects
+			renderedConfigs := make([]model.RenderedConfig, 0, len(svc.Configs))
 			for _, cfg := range svc.Configs {
-				pl.Configs = append(pl.Configs, swarm.ConfigPayload{
-					Name:  cfg.Name,
-					Bytes: cfg.Data,
-					Labels: map[string]string{
-						"swarmcp.fingerprint": util.Fingerprint(cfg.Data),
+				rcfg := model.RenderedConfig{
+					Spec: model.ConfigSpec{
+						Name:   cfg.Name,
+						Labels: map[string]string{"swarmcp.fingerprint": util.Fingerprint(cfg.Data)},
+						Target: model.FileTarget{Target: cfg.File.Target, UID: cfg.File.UID, GID: cfg.File.GID, Mode: cfg.File.Mode},
 					},
-				})
+					Data: cfg.Data,
+				}
+				renderedConfigs = append(renderedConfigs, rcfg)
+				pl.Configs = append(pl.Configs, swarm.ConfigPayload{Name: rcfg.Spec.Name, Bytes: rcfg.Data, Labels: rcfg.Spec.Labels})
 			}
+
+			renderedSecrets := make([]model.RenderedSecret, 0, len(svc.Secrets))
+			for _, sec := range svc.Secrets {
+				rsec := model.RenderedSecret{
+					Spec: model.SecretSpec{
+						Name:   sec.Name,
+						Labels: map[string]string{},
+						Target: model.FileTarget{Target: sec.File.Target, UID: sec.File.UID, GID: sec.File.GID, Mode: sec.File.Mode},
+					},
+					Data: sec.Data,
+				}
+				renderedSecrets = append(renderedSecrets, rsec)
+				pl.Secrets = append(pl.Secrets, swarm.SecretPayload{Name: rsec.Spec.Name, Bytes: rsec.Data, Labels: rsec.Spec.Labels})
+			}
+
 			// service
 			n := specnorm.FromManifestSpec(svc.Service.Spec)
 			fp := util.MustFingerprintJSON(n)
-			_ = fp // reserved for label usage later
 			name := formatServiceName(eff.Project.Metadata.Name, st.Stack.Metadata.Name, inst, svc.Name)
-			serviceSpec := minServiceSpec(name, svc.Service.Spec.Image.Repo+":"+svc.Service.Spec.Image.Tag, svc.EnvDecl(), svc.Networks, svc.Service.Spec.Deploy.Replicas)
-			AddMounts(&serviceSpec, svc.Configs, svc.Secrets)
+			specLabels := map[string]string{"swarmcp.fingerprint": fp}
+			if len(svc.Service.Spec.Labels) > 0 {
+				specLabels = map[string]string{}
+				for k, v := range svc.Service.Spec.Labels {
+					specLabels[k] = v
+				}
+				specLabels["swarmcp.fingerprint"] = fp
+			}
+
+			renderedService := model.RenderedService{
+				Spec: model.ServiceSpec{
+					Name:     name,
+					Image:    svc.Service.Spec.Image.Repo + ":" + svc.Service.Spec.Image.Tag,
+					Env:      svc.Env,
+					Networks: svc.Networks,
+					Labels:   specLabels,
+					Configs:  extractConfigSpecs(renderedConfigs),
+					Secrets:  extractSecretSpecs(renderedSecrets),
+					Deployment: model.DeploymentSpec{
+						Replicas:    svc.Service.Spec.Deploy.Replicas,
+						Constraints: svc.Service.Spec.Deploy.Placement.Constraints,
+						Resources: model.Resources{
+							Limits:       model.CPUMem{CPUs: svc.Service.Spec.Deploy.Resources.Limits.CPUs, Memory: svc.Service.Spec.Deploy.Resources.Limits.Memory},
+							Reservations: model.CPUMem{CPUs: svc.Service.Spec.Deploy.Resources.Reservations.CPUs, Memory: svc.Service.Spec.Deploy.Resources.Reservations.Memory},
+						},
+					},
+				},
+				Configs: renderedConfigs,
+				Secrets: renderedSecrets,
+			}
+
+			if err := model.ValidateRenderedService(renderedService); err != nil {
+				return nil, fmt.Errorf("service %s validation failed: %w", name, err)
+			}
+
+			serviceSpec := docker.ServiceSpec(renderedService)
 			pl.Services = append(pl.Services, swarm.ServiceApply{
 				Name:   name,
-				Labels: map[string]string{"swarmcp.fingerprint": fp},
+				Labels: specLabels,
 				Spec:   serviceSpec,
 			})
 		}
@@ -125,4 +128,20 @@ func formatServiceName(project, stack, instance, service string) string {
 		base += ".inst." + instance
 	}
 	return base + ".svc." + service
+}
+
+func extractConfigSpecs(cfgs []model.RenderedConfig) []model.ConfigSpec {
+	specs := make([]model.ConfigSpec, 0, len(cfgs))
+	for _, c := range cfgs {
+		specs = append(specs, c.Spec)
+	}
+	return specs
+}
+
+func extractSecretSpecs(secs []model.RenderedSecret) []model.SecretSpec {
+	specs := make([]model.SecretSpec, 0, len(secs))
+	for _, s := range secs {
+		specs = append(specs, s.Spec)
+	}
+	return specs
 }
