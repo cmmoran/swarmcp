@@ -3,6 +3,7 @@ package spec
 import (
 	"sort"
 
+	"github.com/cmmoran/swarmcp/internal/content"
 	"github.com/cmmoran/swarmcp/internal/render"
 )
 
@@ -48,11 +49,11 @@ type StackRef struct {
 }
 
 type SecretsProviderSpec struct {
-	Backend             Backend `yaml:"backend"`
-	Addr                string  `yaml:"addr"`
-	Namespace           string  `yaml:"namespace"`
-	RoleIDPath          string  `yaml:"roleIdPath"`
-	WrappedSecretIDPath string  `yaml:"wrappedSecretIdPath"`
+	Backend             Backend               `yaml:"backend"`
+	Addr                string                `yaml:"addr"`
+	Namespace           string                `yaml:"namespace"`
+	RoleIDPath          content.FileOrContent `yaml:"roleIdPath"`
+	WrappedSecretIDPath content.FileOrContent `yaml:"wrappedSecretIdPath"`
 }
 
 // Renderer kept for compatibility with callers that supply their own renderer.
