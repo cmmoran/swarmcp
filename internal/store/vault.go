@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -34,19 +33,23 @@ func newVault(cfg spec.SecretsProviderSpec) (Client, error) {
 	if cfg.Namespace != "" {
 		api.SetNamespace(cfg.Namespace)
 	}
-	if cfg.RoleIDPath == "" || cfg.WrappedSecretIDPath == "" {
+	if strings.TrimSpace(cfg.RoleIDPath.String()) == "" || strings.TrimSpace(cfg.WrappedSecretIDPath.String()) == "" {
 		return nil, fmt.Errorf("vault: roleIdPath and wrappedSecretIdPath are required")
 	}
-	roleID, err := os.ReadFile(cfg.RoleIDPath)
+	roleID, err := cfg.RoleIDPath.Read()
 	if err != nil {
 		return nil, fmt.Errorf("vault: read roleIdPath: %w", err)
+	}
+	wrappedSecretID, err := cfg.WrappedSecretIDPath.Read()
+	if err != nil {
+		return nil, fmt.Errorf("vault: read wrappedSecretIdPath: %w", err)
 	}
 	vCli := &vaultClient{api: api}
 
 	roleIDStr := strings.TrimSpace(string(roleID))
 	var appRoleAuth *approle.AppRoleAuth
 	if appRoleAuth, err = approle.NewAppRoleAuth(roleIDStr, &approle.SecretID{
-		FromFile: cfg.WrappedSecretIDPath,
+		FromString: strings.TrimSpace(string(wrappedSecretID)),
 	}, approle.WithWrappingToken()); err != nil {
 		return nil, err
 	}
