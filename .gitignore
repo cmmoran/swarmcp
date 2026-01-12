@@ -1,0 +1,14 @@
+*
+!*/
+!/.gitignore
+!*.go
+!go.sum
+!go.mod
+!*.tmpl
+!*.md
+!LICENSE
+AGENTS.md
+STATE.md
+.cache/
+secrets*.yaml
+/secrets*.yaml

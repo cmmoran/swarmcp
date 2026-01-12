@@ -1,0 +1,53 @@
+project:
+  name: nginx
+  preserve_unused_resources: 5
+  defaults:
+    volumes:
+      base_path: /srv/data
+      node_label_key: swarmcp.volume
+      service_standard: persist
+      service_target: /data
+  configs:
+    server_name:
+      source: values#/server_name
+    index_message:
+      source: values#/index_message
+    nginx_conf:
+      source: examples/nginx/templates/configs/nginx.conf.tmpl
+      target: /etc/nginx/nginx.conf
+    index_html:
+      source: examples/nginx/templates/configs/index.html.tmpl
+      target: /usr/share/nginx/html/index.html
+  secrets:
+    htpasswd:
+      source: |
+        inline:
+          {{ secret_value "htpasswd" }}
+
+stacks:
+  web:
+    mode: shared
+    services:
+      nginx:
+        image: nginx:alpine
+        mode: replicated
+        replicas: 0
+        ports:
+          - target: 80
+            published: 8080
+            protocol: tcp
+            mode: ingress
+        configs:
+          - name: nginx_conf
+            target: /etc/nginx/nginx.conf
+          - name: index_html
+            target: /usr/share/nginx/html/index.html
+        secrets:
+          - name: htpasswd
+            target: /run/secrets/htpasswd
+        volumes:
+          - standard: persist
+            target: /var/cache/nginx
+          - source: /tmp/nginx-logs
+            target: /var/log/nginx
+            readonly: false

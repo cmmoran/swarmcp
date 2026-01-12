@@ -1,0 +1,26 @@
+mode: shared
+services:
+  fpng:
+    image: chrismoran/infamousity:fpng-web__v0.0.1
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.fpng.entrypoints: websecure
+      traefik.http.routers.fpng.middlewares: google-oidc@file
+      traefik.http.routers.fpng.rule: '{{ printf "Host(`fpng.%s`)" (config_value_index "domain" 0) }}'
+      traefik.http.routers.fpng.tls: "true"
+      traefik.http.services.fpng.loadbalancer.server.port: "3000"
+      traefik.swarm.network: '{{ runtime_value "{project}_core" }}'
+  jls:
+    image: chrismoran/infamousity:jls__v1.0.6
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.jls.entrypoints: websecure
+      traefik.http.routers.jls.rule: '{{ printf "Host(`jls.%s`)" (config_value_index "domain" 0) }}'
+      traefik.http.routers.jls.tls: "true"
+      traefik.http.services.jls.loadbalancer.server.port: "8080"
+      traefik.swarm.network: '{{ runtime_value "{project}_core" }}'
+  whoami:
+    source:
+      path: whoami.service.yaml

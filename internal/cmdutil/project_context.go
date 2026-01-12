@@ -1,0 +1,102 @@
+package cmdutil
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/cmmoran/swarmcp/internal/config"
+	"github.com/cmmoran/swarmcp/internal/secrets"
+	"github.com/cmmoran/swarmcp/internal/swarm"
+	"github.com/cmmoran/swarmcp/internal/templates"
+)
+
+type ProjectOptions struct {
+	ConfigPath    string
+	SecretsFile   string
+	ValuesFiles   []string
+	Deployment    string
+	Context       string
+	Partition     string
+	Offline       bool
+	ClientFactory func(string) (swarm.Client, error)
+}
+
+type ProjectContext struct {
+	Config        *config.Config
+	Partition     string
+	Values        any
+	Secrets       *secrets.Store
+	ContextName   string
+	ValuesScope   templates.Scope
+	clientFactory func(string) (swarm.Client, error)
+}
+
+func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets bool) (*ProjectContext, error) {
+	cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline})
+	if err != nil {
+		return nil, err
+	}
+	config.SetBaseDir(cfg, opts.ConfigPath)
+	if opts.Deployment != "" {
+		cfg.Project.Deployment = opts.Deployment
+	}
+	if err := config.ValidateDeployment(cfg); err != nil {
+		return nil, err
+	}
+
+	partition := opts.Partition
+	if partition != "" && !PartitionInProject(cfg, partition) {
+		return nil, fmt.Errorf("partition %q not found in project.partitions", partition)
+	}
+
+	contextName := ResolveContext(cfg, opts.Context)
+	ConfigureTemplateNetworkResolver(contextName)
+
+	ctx := &ProjectContext{
+		Config:      cfg,
+		Partition:   partition,
+		ContextName: contextName,
+		ValuesScope: templates.Scope{
+			Project:        cfg.Project.Name,
+			Deployment:     cfg.Project.Deployment,
+			Partition:      partition,
+			NetworksShared: config.NetworksSharedString(cfg, partition),
+		},
+		clientFactory: opts.ClientFactory,
+	}
+
+	if includeSecrets {
+		secretsFile := InferSecretsFile(cfg, opts.ConfigPath, opts.SecretsFile)
+		store, err := LoadSecretsStore(secretsFile)
+		if err != nil {
+			return nil, err
+		}
+		ctx.Secrets = store
+	}
+
+	if includeValues {
+		valuesFiles := InferValuesFiles(opts.ConfigPath, opts.ValuesFiles)
+		values, err := LoadValuesStore(valuesFiles, ctx.ValuesScope)
+		if err != nil {
+			return nil, err
+		}
+		ctx.Values = values
+	}
+
+	return ctx, nil
+}
+
+func (p *ProjectContext) SwarmClient() (swarm.Client, error) {
+	factory := p.clientFactory
+	if factory == nil {
+		factory = swarm.NewClient
+	}
+	client, err := factory(p.ContextName)
+	if err != nil {
+		if errors.Is(err, swarm.ErrNotImplemented) {
+			return nil, fmt.Errorf("swarm client not implemented (context %q)", p.ContextName)
+		}
+		return nil, err
+	}
+	return client, nil
+}

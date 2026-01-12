@@ -1,0 +1,119 @@
+tls:
+  options:
+    default:
+      clientAuth:
+        caFiles:
+          - {{ config_ref "ca_chain" }}
+        clientAuthType: VerifyClientCertIfGiven
+  stores:
+    default:
+      defaultGeneratedCert:
+        resolver: leresolver
+        domain:
+{{- with (config_value_index "domain" 0) }}
+          main: "{{.}}"
+          sans:
+            - "*.{{.}}"
+{{- end }}
+tcp:
+  middlewares:
+    local-tcp-allowlist:
+      ipAllowList:
+        sourceRange:
+{{- range config_value "ip_whitelist" }}
+         - "{{ . }}"
+{{- end }}
+  routers:
+    yugabyte-ysql:
+      entryPoints:
+        - ybsql
+      rule: HostSNI(`yb.{{ config_value_index "domain" 0 }}`)
+      tls: {}
+      middlewares:
+        - local-tcp-allowlist
+      service: yugabyte-ysql
+  services:
+    yugabyte-ysql:
+      loadBalancer:
+        servers:
+          - address: '{{ runtime_value "{project}_ext_yb-tserver1:5433" }}'
+          - address: '{{ runtime_value "{project}_ext_yb-tserver2:5433" }}'
+          - address: '{{ runtime_value "{project}_ext_yb-tserver3:5433" }}'
+http:
+  middlewares:
+    api-key-auth:
+      apiKey:
+        keySource:
+          headerAuthScheme: Bearer
+          header: Authorization
+        secretNonBase64Encoded: true
+        secretValues:
+          - {{ secret_ref "api_key_values" }}
+    google-oidc:
+      oidc:
+        issuer: "https://accounts.google.com"
+        redirectUrl: "/callback"
+        clientID: "{{ config_value "google_oidc_client_id" }}"
+        clientSecret: "{{ secret_ref "google_oidc_client_secret"}}"
+        scopes:
+          - openid
+          - email
+          - profile
+        claims: 'Equals(`email`, `{{ config_value "google_oidc_valid_email" }}`)'
+    inject-geoip:
+      geoIP:
+        debug: true
+        setRealIP: true
+        ipStrategy:
+          excludedIPs:
+{{- range (config_value "cloudflare_ranges") }}
+            - "{{ . }}"
+{{- end }}
+        dbPath:
+          - /etc/geoip/geolite2-city.mmdb
+          - /etc/geoip/geolite2-asn.mmdb
+    add-context-id:
+      headers:
+        customRequestHeaders:
+          x-correlation-id: "{{ escape_template `default (uuidv4) (.Header.Get "X-Correlation-ID")` }}"
+    deny-all:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+        rejectStatusCode: 404
+    lb-allowlist:
+      ipAllowList:
+        sourceRange:
+          - "0.0.0.0/0"
+        ipStrategy:
+          excludedIPs:
+{{- range (config_value "cloudflare_ranges") }}
+            - "{{ . }}"
+{{- end }}
+    local-allowlist:
+      ipAllowList:
+        sourceRange:
+{{- range config_value "ip_whitelist" }}
+          - "{{ . }}"
+{{- end }}
+  routers:
+    catchall:
+      entryPoints:
+        - websecure
+      rule: "PathPrefix(`/`)"
+      priority: 1
+      middlewares:
+        - deny-all
+      service: unavailable
+    dashboard:
+      entryPoints:
+        - websecure
+      rule: "Host(`traefik.{{ config_value_index "domain" 0 }}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`) || PathPrefix(`/callback`))"
+      middlewares:
+        - google-oidc
+      service: api@internal
+      tls: {}
+  services:
+    unavailable:
+      loadBalancer:
+        servers: {}

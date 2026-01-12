@@ -1,0 +1,144 @@
+project:
+  name: primary
+  preserve_unused_resources: 1
+  nodes:
+    inclusion-awu:
+      roles: [manager]
+      labels:
+        ingress: "true"
+        swarmcp.volume.core.ingress: "true"
+        swarmcp.volume.core.portainer: "true"
+        swarmcp.volume.ext.yb-master1: "true"
+        swarmcp.volume.ext.yb-tserver1: "true"
+      volumes:
+        - core.ingress
+        - core.portainer
+        - ext.yb-master1
+        - ext.yb-tserver1
+      platform:
+        os: linux
+        arch: amd64
+    inclusion-nuc:
+      roles: [manager]
+      labels:
+        swarmcp.volume.ext.yb-master2: "true"
+        swarmcp.volume.ext.yb-tserver2: "true"
+      volumes:
+        - ext.yb-master2
+        - ext.yb-tserver2
+      platform:
+        os: linux
+        arch: amd64
+    inclusion-sa:
+      roles: [manager]
+      labels:
+        swarmcp.volume.ext.yb-master3: "true"
+        swarmcp.volume.ext.yb-tserver3: "true"
+      volumes:
+        - ext.yb-master3
+        - ext.yb-tserver3
+      platform:
+        os: linux
+        arch: amd64
+  secrets_engine:
+    provider: bao
+    addr: https://10.10.1.7:8200
+    auth:
+      method: approle
+    vault:
+      mount: kv
+      path_template: "{project}/{partition}/{stack}/{service}"
+  partitions: [dev, qa]
+  deployments: [nonprod, prod]
+  deployment: nonprod
+  contexts:
+    nonprod: default
+    prod: default
+  configs:
+    ca_chain:
+      source: templates/configs/ca_chain.pem
+      target: /etc/ssl/certs/ca-chain.pem
+    vault_url:
+      source: values#/vault_url
+    domain:
+      source: values#/domain
+    ip_whitelist:
+      source: values#/ip_whitelist
+    cloudflare_ranges:
+      source: values#/cloudflare_ranges
+  deployment_targets:
+    nonprod:
+      include:
+        names:
+          - inclusion-awu
+          - inclusion-nuc
+          - inclusion-sa
+    prod:
+      include:
+        names:
+          - inclusion-awu
+          - inclusion-nuc
+          - inclusion-sa
+  defaults:
+    networks:
+      shared:
+        - "{project}_core"
+    volumes:
+      driver: local
+      base_path: /srv/data
+      node_label_key: swarmcp.volume
+      service_standard: persist
+      service_target: /data
+      standards:
+        host:
+          source: /
+          target: /host
+          readonly: false
+        docker_volumes:
+          source: /var/lib/docker/volumes
+          target: /var/lib/docker/volumes
+          readonly: false
+        docker_sock:
+          source: /var/run/docker.sock
+          target: /var/run/docker.sock
+          readonly: true
+          requires:
+            roles: [ manager ]
+overlays:
+  deployments:
+    nonprod:
+      project:
+        configs:
+          ca_chain:
+            source: templates/configs/ca_chain.pem
+            target: /etc/ssl/certs/ca-chain.pem
+    prod:
+      project:
+        configs:
+          ca_chain:
+            source: templates/configs/ca_chain.pem
+            target: /etc/ssl/certs/ca-chain.pem
+  partitions:
+    dev:
+      project:
+        configs:
+          ip_whitelist:
+            source: values#/ip_whitelist
+            target: /etc/traefik/ip_whitelist_dev
+    qa:
+      project:
+        configs:
+          ip_whitelist:
+            source: values#/ip_whitelist
+            target: /etc/traefik/ip_whitelist_qa
+stacks:
+  core:
+    source:
+      path: core.stack.yaml
+
+  tools:
+    source:
+      path: tools.stack.yaml
+  ext:
+    source:
+      path: ext.stack.yaml

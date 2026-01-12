@@ -1,0 +1,16 @@
+image: traefik/whoami:v1.11
+replicas: 1
+args:
+  - --port=2001
+  - --verbose
+ports:
+  - mode: ingress
+    target: 2001
+labels:
+  traefik.enable: "true"
+  traefik.http.routers.whoami.entrypoints: websecure
+  traefik.http.routers.whoami.middlewares: google-oidc@file
+  traefik.http.routers.whoami.rule: {{ printf "Host(`whoami.%s`)" (config_value_index "domain" 0) }}
+  traefik.http.routers.whoami.tls: "true"
+  traefik.http.services.whoami.loadbalancer.server.port: "2001"
+  traefik.swarm.network: {{ runtime_value `{project}_core` }}

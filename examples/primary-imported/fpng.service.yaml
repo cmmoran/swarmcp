@@ -1,0 +1,13 @@
+image: chrismoran/infamousity:fpng-web__v0.0.1
+replicas: 1
+ports:
+  - mode: ingress
+    target: 3000
+labels:
+  traefik.enable: "true"
+  traefik.http.routers.fpng.entrypoints: websecure
+  traefik.http.routers.fpng.middlewares: google-oidc@file
+  traefik.http.routers.fpng.rule: {{ printf "Host(`fpng.%s`)" (config_value_index "domain" 0) }}
+  traefik.http.routers.fpng.tls: "true"
+  traefik.http.services.fpng.loadbalancer.server.port: "3000"
+  traefik.swarm.network: {{ runtime_value `{project}_core` }}

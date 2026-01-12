@@ -1,0 +1,148 @@
+mode: shared
+services:
+  yb-master1:
+    image: chrismoran/infamousity:yugabyte.-yugabyte__2025.2.0.0-b131
+    command:
+      - /home/yugabyte/bin/yb-master
+    args:
+      - --callhome_enabled=false
+      - --logtostderr=true
+      - --fs_data_dirs=/mnt/disk0
+      - --master_addresses={{ runtime_value "{project}_{stack}_yb-master1:7100" }},{{ runtime_value "{project}_{stack}_yb-master2:7100" }},{{ runtime_value "{project}_{stack}_yb-master3:7100" }}
+      - --server_broadcast_addresses={{ runtime_value "{project}_{stack}_{service}:7100" }}
+      - --rpc_bind_addresses=0.0.0.0:7100
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.yb-master1.entrypoints: websecure
+      traefik.http.routers.yb-master1.rule: '{{ printf "Host(`yb-master1.%s`)" (config_value_index "domain" 0) }}'
+      traefik.http.routers.yb-master1.tls: "true"
+      traefik.http.routers.yb-master1.middlewares: google-oidc@file
+      traefik.http.services.yb-master1.loadbalancer.server.port: "7000"
+      traefik.swarm.network: '{{ runtime_value "{project}_core" }}'
+    volumes:
+      - standard: persist
+        target: /mnt/disk0
+
+  yb-master2:
+    image: chrismoran/infamousity:yugabyte.-yugabyte__2025.2.0.0-b131
+    command:
+      - /home/yugabyte/bin/yb-master
+    args:
+      - --callhome_enabled=false
+      - --logtostderr=true
+      - --fs_data_dirs=/mnt/disk0
+      - --master_addresses={{ runtime_value "{project}_{stack}_yb-master1:7100" }},{{ runtime_value "{project}_{stack}_yb-master2:7100" }},{{ runtime_value "{project}_{stack}_yb-master3:7100" }}
+      - --server_broadcast_addresses={{ runtime_value "{project}_{stack}_{service}:7100" }}
+      - --rpc_bind_addresses=0.0.0.0:7100
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.yb-master2.entrypoints: websecure
+      traefik.http.routers.yb-master2.rule: '{{ printf "Host(`yb-master2.%s`)" (config_value_index "domain" 0) }}'
+      traefik.http.routers.yb-master2.tls: "true"
+      traefik.http.routers.yb-master2.middlewares: google-oidc@file
+      traefik.http.services.yb-master2.loadbalancer.server.port: "7000"
+      traefik.swarm.network: '{{ runtime_value "{project}_core" }}'
+    volumes:
+      - standard: persist
+        target: /mnt/disk0
+
+  yb-master3:
+    image: chrismoran/infamousity:yugabyte.-yugabyte__2025.2.0.0-b131
+    command:
+      - /home/yugabyte/bin/yb-master
+    args:
+      - --callhome_enabled=false
+      - --logtostderr=true
+      - --fs_data_dirs=/mnt/disk0
+      - --master_addresses={{ runtime_value "{project}_{stack}_yb-master1:7100" }},{{ runtime_value "{project}_{stack}_yb-master2:7100" }},{{ runtime_value "{project}_{stack}_yb-master3:7100" }}
+      - --server_broadcast_addresses={{ runtime_value "{project}_{stack}_{service}:7100" }}
+      - --rpc_bind_addresses=0.0.0.0:7100
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.yb-master3.entrypoints: websecure
+      traefik.http.routers.yb-master3.rule: '{{ printf "Host(`yb-master3.%s`)" (config_value_index "domain" 0) }}'
+      traefik.http.routers.yb-master3.tls: "true"
+      traefik.http.routers.yb-master3.middlewares: google-oidc@file
+      traefik.http.services.yb-master3.loadbalancer.server.port: "7000"
+      traefik.swarm.network: '{{ runtime_value "{project}_core" }}'
+    volumes:
+      - standard: persist
+        target: /mnt/disk0
+
+  yb-tserver1:
+    image: chrismoran/infamousity:yugabyte.-yugabyte__2025.2.0.0-b131
+    command:
+      - /home/yugabyte/bin/yb-tserver
+    args:
+      - --callhome_enabled=false
+      - --logtostderr=true
+      - --fs_data_dirs=/mnt/disk0
+      - --start_pgsql_proxy
+      - --tserver_master_addrs={{ runtime_value "{project}_{stack}_yb-master1:7100" }},{{ runtime_value "{project}_{stack}_yb-master2:7100" }},{{ runtime_value "{project}_{stack}_yb-master3:7100" }}
+      - --server_broadcast_addresses={{ runtime_value "{project}_{stack}_{service}:9100" }}
+      - --rpc_bind_addresses=0.0.0.0:9100
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.yb-tserver1.entrypoints: websecure
+      traefik.http.routers.yb-tserver1.rule: '{{ printf "Host(`yb-tserver1.%s`)" (config_value_index "domain" 0) }}'
+      traefik.http.routers.yb-tserver1.tls: "true"
+      traefik.http.routers.yb-tserver1.middlewares: google-oidc@file
+      traefik.http.services.yb-tserver1.loadbalancer.server.port: "9000"
+      traefik.swarm.network: '{{ runtime_value "{project}_core" }}'
+    volumes:
+      - standard: persist
+        target: /mnt/disk0
+
+  yb-tserver2:
+    image: chrismoran/infamousity:yugabyte.-yugabyte__2025.2.0.0-b131
+    command:
+      - /home/yugabyte/bin/yb-tserver
+    args:
+      - --callhome_enabled=false
+      - --logtostderr=true
+      - --fs_data_dirs=/mnt/disk0
+      - --start_pgsql_proxy
+      - --tserver_master_addrs={{ runtime_value "{project}_{stack}_yb-master1:7100" }},{{ runtime_value "{project}_{stack}_yb-master2:7100" }},{{ runtime_value "{project}_{stack}_yb-master3:7100" }}
+      - --server_broadcast_addresses={{ runtime_value "{project}_{stack}_{service}:9100" }}
+      - --rpc_bind_addresses=0.0.0.0:9100
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.yb-tserver2.entrypoints: websecure
+      traefik.http.routers.yb-tserver2.rule: '{{ printf "Host(`yb-tserver2.%s`)" (config_value_index "domain" 0) }}'
+      traefik.http.routers.yb-tserver2.tls: "true"
+      traefik.http.routers.yb-tserver2.middlewares: google-oidc@file
+      traefik.http.services.yb-tserver2.loadbalancer.server.port: "9000"
+      traefik.swarm.network: '{{ runtime_value "{project}_core" }}'
+    volumes:
+      - standard: persist
+        target: /mnt/disk0
+
+  yb-tserver3:
+    image: chrismoran/infamousity:yugabyte.-yugabyte__2025.2.0.0-b131
+    command:
+      - /home/yugabyte/bin/yb-tserver
+    args:
+      - --callhome_enabled=false
+      - --logtostderr=true
+      - --fs_data_dirs=/mnt/disk0
+      - --start_pgsql_proxy
+      - --tserver_master_addrs={{ runtime_value "{project}_{stack}_yb-master1:7100" }},{{ runtime_value "{project}_{stack}_yb-master2:7100" }},{{ runtime_value "{project}_{stack}_yb-master3:7100" }}
+      - --server_broadcast_addresses={{ runtime_value "{project}_{stack}_{service}:9100" }}
+      - --rpc_bind_addresses=0.0.0.0:9100
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.yb-tserver3.entrypoints: websecure
+      traefik.http.routers.yb-tserver3.rule: '{{ printf "Host(`yb-tserver3.%s`)" (config_value_index "domain" 0) }}'
+      traefik.http.routers.yb-tserver3.tls: "true"
+      traefik.http.routers.yb-tserver3.middlewares: google-oidc@file
+      traefik.http.services.yb-tserver3.loadbalancer.server.port: "9000"
+      traefik.swarm.network: '{{ runtime_value "{project}_core" }}'
+    volumes:
+      - standard: persist
+        target: /mnt/disk0

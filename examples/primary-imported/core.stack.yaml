@@ -1,0 +1,100 @@
+configs:
+  domain:
+    source: values#/domain
+  log_level:
+    source: values#/log_level
+  google_oidc_client_id:
+    source: values#/google_oidc_client_id
+  google_oidc_valid_email:
+    source: values#/google_oidc_valid_email
+mode: shared
+services:
+  agent:
+    image: chrismoran/infamousity:portainer.-agent__2.33.6
+    egress: true
+    env:
+      AGENT_CLUSTER_ADDR: tasks.agent
+      LOG_LEVEL: DEBUG
+    ports:
+      - target: 9001
+        published: 9001
+        protocol: tcp
+        mode: host
+    volumes:
+      - standard: docker_sock
+      - standard: docker_volumes
+      - standard: host
+    mode: global
+    placement:
+      constraints:
+        - node.platform.os == linux
+    labels:
+      traefik.enable: "false"
+  portainer:
+    image: chrismoran/infamousity:portainer.-portainer-ee__2.33.6
+    args:
+      - -H
+      - tcp://tasks.agent:9001
+      - --tlsskipverify
+    egress: true
+    volumes:
+      - standard: persist
+        target: /data
+      - standard: docker_sock
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.portainer.entrypoints: websecure
+      traefik.http.routers.portainer.middlewares: google-oidc@file
+      traefik.http.routers.portainer.rule: {{ printf "Host(`m.%s`)" (config_value_index "domain" 0) }}
+      traefik.http.routers.portainer.service: portainer
+      traefik.http.routers.portainer.tls: "true"
+      traefik.http.services.portainer.loadbalancer.server.port: "9000"
+      traefik.swarm.network: {{ runtime_value `{project}_{stack}` }}
+  ingress:
+    image: chrismoran/infamousity:traefik__v3.6.7f
+    egress: true
+    mode: global
+    env:
+      CF_DNS_API_TOKEN_FILE: {{ secret_ref "cf_dns_api_token" }}
+      CF_ZONE_API_TOKEN_FILE: {{ secret_ref "cf_dns_api_token" }}
+      VAULT_LOCK_ID: {{ escape_swarm_template ".Service.Name" }}.{{ escape_swarm_template ".Task.Slot" }}
+    labels:
+      traefik.enable: "false"
+      traefik.swarm.lbswarm: "true"
+    volumes:
+      - source: /var/log/traefik
+        target: /var/log
+        readonly: false
+      - standard: docker_sock
+      - standard: persist
+        target: /etc/geoip
+    ports:
+      - target: 80
+        published: 80
+        mode: host
+      - target: 443
+        published: 443
+        mode: host
+      - target: 54333
+        published: 54333
+        mode: host
+    configs:
+      - name: domain
+      - name: ca_chain
+        target: /etc/ssl/certs/ca-chain.pem
+      - name: vault_client_crt
+        source: templates/stacks/core/services/ingress/configs/vault_client.crt
+        target: /vault_client.crt
+      - name: traefik_yml
+        source: templates/stacks/core/services/ingress/configs/traefik.yml.tmpl
+        target: /etc/traefik/traefik.yml
+      - name: dynamic_yml
+        source: templates/stacks/core/services/ingress/configs/dynamic.yml.tmpl
+        target: /etc/traefik/dynamic.yml
+    secrets:
+      - name: api_key_values
+      - name: vault_client_key
+        target: /run/secrets/vault_client.key
+      - name: cf_dns_api_token
+      - name: google_oidc_client_secret

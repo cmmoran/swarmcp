@@ -1,0 +1,21 @@
+worker_processes  1;
+
+events {
+  worker_connections  1024;
+}
+
+http {
+  server {
+    listen 80;
+    server_name {{ config_value "server_name" }};
+
+    auth_basic "restricted";
+    auth_basic_user_file {{ secret_ref "htpasswd" }};
+
+    location / {
+      root /usr/share/nginx/html;
+      index index.html;
+      add_header X-Example-Message "{{ config_value "index_message" }}";
+    }
+  }
+}
