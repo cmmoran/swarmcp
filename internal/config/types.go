@@ -5,6 +5,9 @@ type Config struct {
 	Stacks   map[string]Stack `yaml:"stacks"`
 	Overlays Overlays         `yaml:"overlays"`
 	BaseDir  string           `yaml:"-"`
+	CacheDir string           `yaml:"-"`
+	Offline  bool             `yaml:"-"`
+	Debug    bool             `yaml:"-"`
 }
 
 type Project struct {
@@ -91,9 +94,9 @@ type Stack struct {
 }
 
 type StackPartition struct {
-	Sources Sources              `yaml:"sources"`
-	Configs ConfigDefsOrRefs     `yaml:"configs"`
-	Secrets SecretDefsOrRefs     `yaml:"secrets"`
+	Sources Sources          `yaml:"sources"`
+	Configs ConfigDefsOrRefs `yaml:"configs"`
+	Secrets SecretDefsOrRefs `yaml:"secrets"`
 }
 
 type Service struct {

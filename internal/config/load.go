@@ -101,6 +101,7 @@ func escapeSingleQuotes(value string) string {
 type LoadOptions struct {
 	Offline  bool
 	CacheDir string
+	Debug    bool
 }
 
 func Load(path string) (*Config, error) {
@@ -125,6 +126,9 @@ func LoadWithOptions(path string, opts LoadOptions) (*Config, error) {
 
 	SetBaseDir(&cfg, configPath)
 	opts = normalizeLoadOptions(opts, cfg.BaseDir)
+	cfg.CacheDir = opts.CacheDir
+	cfg.Offline = opts.Offline
+	cfg.Debug = opts.Debug
 	if err := ResolveImports(&cfg, opts); err != nil {
 		return nil, err
 	}

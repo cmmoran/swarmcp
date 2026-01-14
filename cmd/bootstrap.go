@@ -26,6 +26,7 @@ var bootstrapNetworksCmd = &cobra.Command{
 			Context:    opts.Context,
 			Partition:  opts.Partition,
 			Offline:    opts.Offline,
+			Debug:      opts.Debug,
 		}, false, false)
 		if err != nil {
 			return err
@@ -90,6 +91,7 @@ var bootstrapLabelsCmd = &cobra.Command{
 			Context:    opts.Context,
 			Partition:  opts.Partition,
 			Offline:    opts.Offline,
+			Debug:      opts.Debug,
 		}, false, false)
 		if err != nil {
 			return err

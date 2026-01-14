@@ -2,7 +2,6 @@ package templates
 
 import (
 	"fmt"
-	"os"
 	"text/template"
 	"text/template/parse"
 
@@ -99,6 +98,7 @@ func addTemplateEdges(cfg *config.Config, graph *Graph, scope scopeKey, configs 
 		Partition:  scope.partition,
 		Service:    scope.service,
 	}
+	opts := config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug}
 
 	for name, def := range configs {
 		if def.Source == "" {
@@ -109,7 +109,7 @@ func addTemplateEdges(cfg *config.Config, graph *Graph, scope scopeKey, configs 
 		if !IsTemplateSource(basePath) {
 			continue
 		}
-		content, err := os.ReadFile(basePath)
+		content, err := config.ReadSourceFile(basePath, cfg.BaseDir, opts)
 		if err != nil {
 			return fmt.Errorf("%s config %q: %w", scope.String(), name, err)
 		}
@@ -169,7 +169,7 @@ func addTemplateEdges(cfg *config.Config, graph *Graph, scope scopeKey, configs 
 		if !IsTemplateSource(basePath) {
 			continue
 		}
-		content, err := os.ReadFile(basePath)
+		content, err := config.ReadSourceFile(basePath, cfg.BaseDir, opts)
 		if err != nil {
 			return fmt.Errorf("%s secret %q: %w", scope.String(), name, err)
 		}

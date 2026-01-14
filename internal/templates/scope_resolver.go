@@ -76,7 +76,7 @@ func (r *ScopeResolver) ConfigValue(name string) (any, error) {
 	defer delete(r.inProgress, name)
 
 	engine := New(r)
-	rendered, err := ResolveSource(def.Source, r.scope, r.data, engine, r.values, r.cfg.BaseDir)
+	rendered, err := ResolveSource(def.Source, r.scope, r.data, engine, r.values, r.cfg.BaseDir, config.LoadOptions{Offline: r.cfg.Offline, CacheDir: r.cfg.CacheDir, Debug: r.cfg.Debug})
 	if err != nil {
 		return "", err
 	}

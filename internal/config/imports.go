@@ -153,7 +153,7 @@ func loadSourceMap(ref SourceRef, baseDir string, opts LoadOptions) (map[string]
 	if err != nil {
 		return nil, "", err
 	}
-	data, err := os.ReadFile(path)
+	data, err := ReadSourceFile(path, "", opts)
 	if err != nil {
 		return nil, "", err
 	}
@@ -183,9 +183,12 @@ func resolveSourceFile(ref SourceRef, baseDir string, opts LoadOptions) (string,
 		}
 	}
 	if filepath.IsAbs(ref.Path) {
+		if ref.URL != "" {
+			return "", fmt.Errorf("source.path must be relative for git sources")
+		}
 		return resolveAbsolutePath(ref.Path)
 	}
-	return resolvePathWithin(root, ref.Path)
+	return resolvePathWithin(root, ref.Path, opts)
 }
 
 func resolveAbsolutePath(path string) (string, error) {

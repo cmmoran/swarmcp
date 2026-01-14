@@ -18,6 +18,7 @@ type ProjectOptions struct {
 	Context       string
 	Partition     string
 	Offline       bool
+	Debug         bool
 	ClientFactory func(string) (swarm.Client, error)
 }
 
@@ -32,7 +33,7 @@ type ProjectContext struct {
 }
 
 func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets bool) (*ProjectContext, error) {
-	cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline})
+	cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 	if err != nil {
 		return nil, err
 	}

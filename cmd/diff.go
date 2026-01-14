@@ -27,6 +27,7 @@ var diffCmd = &cobra.Command{
 			Context:     opts.Context,
 			Partition:   opts.Partition,
 			Offline:     opts.Offline,
+			Debug:       opts.Debug,
 		}, true, true)
 		if err != nil {
 			return err

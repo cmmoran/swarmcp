@@ -2,7 +2,6 @@ package render
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -88,7 +87,7 @@ func InferTemplateRefDeps(cfg *config.Config, scope templates.Scope, configRefs 
 			continue
 		}
 
-		refs, err := templateRefsFromSource(cfg.BaseDir, defScope, source)
+		refs, err := templateRefsFromSource(cfg.BaseDir, defScope, source, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -129,7 +128,7 @@ func InferTemplateRefDeps(cfg *config.Config, scope templates.Scope, configRefs 
 	return extraConfigs, extraSecrets, nil
 }
 
-func templateRefsFromSource(baseDir string, scope templates.Scope, source string) ([]templates.TemplateRef, error) {
+func templateRefsFromSource(baseDir string, scope templates.Scope, source string, opts config.LoadOptions) ([]templates.TemplateRef, error) {
 	if source == "" {
 		return nil, nil
 	}
@@ -142,13 +141,13 @@ func templateRefsFromSource(baseDir string, scope templates.Scope, source string
 	}
 	templatePath := templates.ExpandSourcePathTokens(source, scope)
 	basePath, _ := templates.SplitSource(templatePath)
-	if baseDir != "" && !filepath.IsAbs(basePath) {
+	if baseDir != "" && !config.IsGitSource(baseDir) && !config.IsGitSource(basePath) && !filepath.IsAbs(basePath) {
 		basePath = filepath.Join(baseDir, basePath)
 	}
 	if !templates.IsTemplateSource(basePath) {
 		return nil, nil
 	}
-	content, err := os.ReadFile(basePath)
+	content, err := config.ReadSourceFile(basePath, baseDir, opts)
 	if err != nil {
 		return nil, err
 	}

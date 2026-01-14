@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cmmoran/swarmcp/internal/config"
 )
 
 type stubResolver struct{}
@@ -22,7 +24,7 @@ func (s stubResolver) RuntimeValue(args ...string) (string, error) {
 func TestResolveSourceInline(t *testing.T) {
 	engine := New(stubResolver{})
 	data := map[string]string{"Name": "world"}
-	out, err := ResolveSource("inline:hello {{ .Name }}", Scope{Project: "demo"}, data, engine, nil, "")
+	out, err := ResolveSource("inline:hello {{ .Name }}", Scope{Project: "demo"}, data, engine, nil, "", config.LoadOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -35,7 +37,7 @@ func TestResolveSourceInlineTrimBlock(t *testing.T) {
 	engine := New(stubResolver{})
 	data := map[string]string{"Name": "block"}
 	source := "inline:\n  hello {{ .Name }}\n"
-	out, err := ResolveSource(source, Scope{Project: "demo"}, data, engine, nil, "")
+	out, err := ResolveSource(source, Scope{Project: "demo"}, data, engine, nil, "", config.LoadOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +57,7 @@ func TestResolveSourceUsesBaseDir(t *testing.T) {
 	if err := os.WriteFile(path, []byte("hello {{ .Name }}"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	out, err := ResolveSource("configs/app.tmpl", Scope{Project: "demo"}, data, engine, nil, baseDir)
+	out, err := ResolveSource("configs/app.tmpl", Scope{Project: "demo"}, data, engine, nil, baseDir, config.LoadOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

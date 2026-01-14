@@ -24,7 +24,7 @@ var secretsCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Report missing secrets required by templates",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline})
+		cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 		if err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ var secretsPutCmd = &cobra.Command{
 	Short: "Write a secret value to the secrets file or engine",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline})
+		cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 		if err != nil {
 			return err
 		}

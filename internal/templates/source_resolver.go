@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cmmoran/swarmcp/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
-func ResolveSource(source string, scope Scope, data any, engine *Engine, values any, baseDir string) (string, error) {
+func ResolveSource(source string, scope Scope, data any, engine *Engine, values any, baseDir string, opts config.LoadOptions) (string, error) {
 	if source == "" {
 		return "", nil
 	}
@@ -25,14 +26,25 @@ func ResolveSource(source string, scope Scope, data any, engine *Engine, values 
 		return ResolveValuesFragment(values, fragment, scope)
 	}
 	templatePath := ExpandSourcePathTokens(source, scope)
-	if baseDir != "" {
-		basePath, fragment := SplitSource(templatePath)
-		if !filepath.IsAbs(basePath) {
-			basePath = filepath.Join(baseDir, basePath)
-		}
-		templatePath = basePath + fragment
+	basePath, fragment := SplitSource(templatePath)
+	if baseDir != "" && !config.IsGitSource(baseDir) && !config.IsGitSource(basePath) && !filepath.IsAbs(basePath) {
+		basePath = filepath.Join(baseDir, basePath)
 	}
-	return engine.RenderFile(templatePath, data)
+	content, err := config.ReadSourceFile(basePath, baseDir, opts)
+	if err != nil {
+		return "", err
+	}
+	rendered := string(content)
+	if IsTemplateSource(basePath) {
+		rendered, err = engine.Render(basePath, rendered, data)
+		if err != nil {
+			return "", err
+		}
+	}
+	if fragment == "" || fragment == "#" {
+		return rendered, nil
+	}
+	return ResolveYAMLFragment(rendered, fragment)
 }
 
 func ResolveFragment(root any, fragment string) (string, error) {

@@ -28,6 +28,7 @@ var planCmd = &cobra.Command{
 			Context:     opts.Context,
 			Partition:   opts.Partition,
 			Offline:     opts.Offline,
+			Debug:       opts.Debug,
 		}, true, true)
 		if err != nil {
 			return err
@@ -224,12 +225,12 @@ var planCmd = &cobra.Command{
 			}
 			if opts.Debug {
 				for _, item := range summary.RuntimeRefs {
-				qualifier := ""
-				if item.Missing {
-					qualifier = " inferred"
+					qualifier := ""
+					if item.Missing {
+						qualifier = " inferred"
+					}
+					fmt.Fprintf(out, "  - runtime%s %s %q -> %s %q (from %s via %s)\n", qualifier, item.FromKind, item.FromName, item.ToKind, item.ToName, cmdutil.ScopeLabel(item.From), item.FuncName)
 				}
-				fmt.Fprintf(out, "  - runtime%s %s %q -> %s %q (from %s via %s)\n", qualifier, item.FromKind, item.FromName, item.ToKind, item.ToName, cmdutil.ScopeLabel(item.From), item.FuncName)
-			}
 			}
 		}
 		if err := state.Write(statePath, planSnapshot); err != nil {

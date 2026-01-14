@@ -1,6 +1,8 @@
 package templates
 
 import (
+	"net/url"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 )
@@ -32,7 +34,16 @@ func ValuesFragment(source string) (string, bool) {
 	return fragment, true
 }
 
-func IsTemplateSource(path string) bool {
-	base, _ := SplitSource(path)
+func IsTemplateSource(p string) bool {
+	base, _ := SplitSource(p)
+	if strings.HasPrefix(base, "git:") {
+		parts := strings.SplitN(strings.TrimPrefix(base, "git:"), "|", 3)
+		if len(parts) == 3 {
+			if decoded, err := url.QueryUnescape(parts[2]); err == nil {
+				ext := pathpkg.Ext(decoded)
+				return ext == ".tmpl" || ext == ".tpl"
+			}
+		}
+	}
 	return filepath.Ext(base) == ".tmpl" || filepath.Ext(base) == ".tpl"
 }

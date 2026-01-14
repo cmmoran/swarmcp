@@ -67,11 +67,11 @@ func ApplySourceBaseDir(cfg *Config, opts LoadOptions) error {
 	if err != nil {
 		return err
 	}
-	cfg.Project.Configs, err = applyConfigDefSources(cfg.Project.Configs, projectRoot)
+	cfg.Project.Configs, err = applyConfigDefSources(cfg.Project.Configs, projectRoot, opts)
 	if err != nil {
 		return err
 	}
-	cfg.Project.Secrets, err = applySecretDefSources(cfg.Project.Secrets, projectRoot)
+	cfg.Project.Secrets, err = applySecretDefSources(cfg.Project.Secrets, projectRoot, opts)
 	if err != nil {
 		return err
 	}
@@ -82,11 +82,11 @@ func ApplySourceBaseDir(cfg *Config, opts LoadOptions) error {
 		if err != nil {
 			return err
 		}
-		stack.Configs.Defs, err = applyConfigDefSources(stack.Configs.Defs, stackRoot)
+		stack.Configs.Defs, err = applyConfigDefSources(stack.Configs.Defs, stackRoot, opts)
 		if err != nil {
 			return err
 		}
-		stack.Secrets.Defs, err = applySecretDefSources(stack.Secrets.Defs, stackRoot)
+		stack.Secrets.Defs, err = applySecretDefSources(stack.Secrets.Defs, stackRoot, opts)
 		if err != nil {
 			return err
 		}
@@ -139,11 +139,11 @@ func applyOverlaySources(overlays map[string]Overlay, fallback Sources, opts Loa
 		if err != nil {
 			return nil, err
 		}
-		overlay.Project.Configs, err = applyConfigDefSources(overlay.Project.Configs, projectRoot)
+		overlay.Project.Configs, err = applyConfigDefSources(overlay.Project.Configs, projectRoot, opts)
 		if err != nil {
 			return nil, err
 		}
-		overlay.Project.Secrets, err = applySecretDefSources(overlay.Project.Secrets, projectRoot)
+		overlay.Project.Secrets, err = applySecretDefSources(overlay.Project.Secrets, projectRoot, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -153,11 +153,11 @@ func applyOverlaySources(overlays map[string]Overlay, fallback Sources, opts Loa
 			if err != nil {
 				return nil, err
 			}
-			stack.Configs.Defs, err = applyConfigDefSources(stack.Configs.Defs, stackRoot)
+			stack.Configs.Defs, err = applyConfigDefSources(stack.Configs.Defs, stackRoot, opts)
 			if err != nil {
 				return nil, err
 			}
-			stack.Secrets.Defs, err = applySecretDefSources(stack.Secrets.Defs, stackRoot)
+			stack.Secrets.Defs, err = applySecretDefSources(stack.Secrets.Defs, stackRoot, opts)
 			if err != nil {
 				return nil, err
 			}
@@ -167,11 +167,11 @@ func applyOverlaySources(overlays map[string]Overlay, fallback Sources, opts Loa
 				if err != nil {
 					return nil, err
 				}
-				partition.Configs.Defs, err = applyConfigDefSources(partition.Configs.Defs, partitionRoot)
+				partition.Configs.Defs, err = applyConfigDefSources(partition.Configs.Defs, partitionRoot, opts)
 				if err != nil {
 					return nil, err
 				}
-				partition.Secrets.Defs, err = applySecretDefSources(partition.Secrets.Defs, partitionRoot)
+				partition.Secrets.Defs, err = applySecretDefSources(partition.Secrets.Defs, partitionRoot, opts)
 				if err != nil {
 					return nil, err
 				}
@@ -194,11 +194,11 @@ func applyPartitionSources(partitions map[string]StackPartition, fallback Source
 		if err != nil {
 			return nil, err
 		}
-		partition.Configs.Defs, err = applyConfigDefSources(partition.Configs.Defs, partitionRoot)
+		partition.Configs.Defs, err = applyConfigDefSources(partition.Configs.Defs, partitionRoot, opts)
 		if err != nil {
 			return nil, err
 		}
-		partition.Secrets.Defs, err = applySecretDefSources(partition.Secrets.Defs, partitionRoot)
+		partition.Secrets.Defs, err = applySecretDefSources(partition.Secrets.Defs, partitionRoot, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +219,7 @@ func applyServiceSources(services map[string]Service, fallback Sources, opts Loa
 		}
 		if len(service.Configs) > 0 {
 			for i, ref := range service.Configs {
-				ref.Source, err = makeSourceAbsolute(ref.Source, serviceRoot)
+				ref.Source, err = makeSourceAbsolute(ref.Source, serviceRoot, opts)
 				if err != nil {
 					return nil, err
 				}
@@ -228,7 +228,7 @@ func applyServiceSources(services map[string]Service, fallback Sources, opts Loa
 		}
 		if len(service.Secrets) > 0 {
 			for i, ref := range service.Secrets {
-				ref.Source, err = makeSourceAbsolute(ref.Source, serviceRoot)
+				ref.Source, err = makeSourceAbsolute(ref.Source, serviceRoot, opts)
 				if err != nil {
 					return nil, err
 				}
@@ -240,13 +240,13 @@ func applyServiceSources(services map[string]Service, fallback Sources, opts Loa
 	return services, nil
 }
 
-func applyConfigDefSources(defs map[string]ConfigDef, root string) (map[string]ConfigDef, error) {
+func applyConfigDefSources(defs map[string]ConfigDef, root string, opts LoadOptions) (map[string]ConfigDef, error) {
 	if len(defs) == 0 {
 		return defs, nil
 	}
 	for name, def := range defs {
 		var err error
-		def.Source, err = makeSourceAbsolute(def.Source, root)
+		def.Source, err = makeSourceAbsolute(def.Source, root, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -255,13 +255,13 @@ func applyConfigDefSources(defs map[string]ConfigDef, root string) (map[string]C
 	return defs, nil
 }
 
-func applySecretDefSources(defs map[string]SecretDef, root string) (map[string]SecretDef, error) {
+func applySecretDefSources(defs map[string]SecretDef, root string, opts LoadOptions) (map[string]SecretDef, error) {
 	if len(defs) == 0 {
 		return defs, nil
 	}
 	for name, def := range defs {
 		var err error
-		def.Source, err = makeSourceAbsolute(def.Source, root)
+		def.Source, err = makeSourceAbsolute(def.Source, root, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -270,7 +270,7 @@ func applySecretDefSources(defs map[string]SecretDef, root string) (map[string]S
 	return defs, nil
 }
 
-func makeSourceAbsolute(source string, root string) (string, error) {
+func makeSourceAbsolute(source string, root string, opts LoadOptions) (string, error) {
 	if source == "" || root == "" {
 		return source, nil
 	}
@@ -281,7 +281,7 @@ func makeSourceAbsolute(source string, root string) (string, error) {
 	if base == "" {
 		return source, nil
 	}
-	resolved, err := resolvePathWithin(root, base)
+	resolved, err := resolvePathWithin(root, base, opts)
 	if err != nil {
 		return "", err
 	}
@@ -311,7 +311,7 @@ func resolveSourcesRoot(s Sources, opts LoadOptions) (string, error) {
 		if s.Path == "" {
 			return repoRoot, nil
 		}
-		return resolvePathWithin(repoRoot, s.Path)
+		return resolvePathWithin(repoRoot, s.Path, opts)
 	}
 	if s.Path == "" {
 		return base, nil
@@ -319,15 +319,18 @@ func resolveSourcesRoot(s Sources, opts LoadOptions) (string, error) {
 	if filepath.IsAbs(s.Path) {
 		return resolveAbsolutePath(s.Path)
 	}
-	return resolvePathWithin(base, s.Path)
+	return resolvePathWithin(base, s.Path, opts)
 }
 
-func resolvePathWithin(root string, path string) (string, error) {
+func resolvePathWithin(root string, path string, opts LoadOptions) (string, error) {
 	if root == "" {
 		return "", fmt.Errorf("source root is empty")
 	}
 	if path == "" {
 		return root, nil
+	}
+	if IsGitSource(root) {
+		return resolveGitPathWithin(root, path, opts)
 	}
 	candidate := path
 	if !filepath.IsAbs(candidate) {
