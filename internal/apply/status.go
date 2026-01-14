@@ -139,11 +139,11 @@ func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, d
 		if !isManagedProject(cfg.Labels, projectName) {
 			continue
 		}
-		if _, ok := desiredConfigNames[cfg.Name]; ok {
-			continue
-		}
 		if _, ok := inUseConfigIDs[cfg.ID]; ok {
 			report.SkippedDeletes.Configs++
+			continue
+		}
+		if _, ok := desiredConfigNames[cfg.Name]; ok {
 			continue
 		}
 		report.StaleConfigs = append(report.StaleConfigs, cfg)
@@ -152,11 +152,11 @@ func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, d
 		if !isManagedProject(sec.Labels, projectName) {
 			continue
 		}
-		if _, ok := desiredSecretNames[sec.Name]; ok {
-			continue
-		}
 		if _, ok := inUseSecretIDs[sec.ID]; ok {
 			report.SkippedDeletes.Secrets++
+			continue
+		}
+		if _, ok := desiredSecretNames[sec.Name]; ok {
 			continue
 		}
 		report.StaleSecrets = append(report.StaleSecrets, sec)
@@ -207,6 +207,12 @@ func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, d
 		if infer {
 			renderedService.Configs = mergeConfigRefs(renderedService.Configs, inferredConfigs)
 			renderedService.Secrets = mergeSecretRefs(renderedService.Secrets, inferredSecrets)
+			extraConfigs, extraSecrets, err := render.InferTemplateRefDeps(cfg, scope, renderedService.Configs, renderedService.Secrets)
+			if err != nil {
+				return StatusReport{}, err
+			}
+			renderedService.Configs = mergeConfigRefs(renderedService.Configs, extraConfigs)
+			renderedService.Secrets = mergeSecretRefs(renderedService.Secrets, extraSecrets)
 		}
 
 		configMounts, err := desiredConfigMounts(resolver, engine, templateData, defIndex, scope, renderedService.Configs, infer)

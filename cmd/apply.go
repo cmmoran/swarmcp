@@ -112,6 +112,12 @@ var applyCmd = &cobra.Command{
 			return err
 		}
 		stackNames, serviceCreates, serviceUpdates := planDeploySummary(plan.StackDeploys)
+		if len(stackNames) == 0 {
+			stackNames = nil
+		}
+		planSummary.ServicesCreated = serviceCreates
+		planSummary.ServicesUpdated = serviceUpdates
+		planSummary.StackNames = stackNames
 		stateSnapshot := state.State{
 			Version:     state.CurrentVersion,
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -120,19 +126,7 @@ var applyCmd = &cobra.Command{
 			Project:     cfg.Project.Name,
 			Deployment:  cfg.Project.Deployment,
 			Partition:   partitionFilter,
-			Plan: state.PlanSummary{
-				NetworksCreated: planSummary.NetworksCreated,
-				ConfigsCreated:  planSummary.ConfigsCreated,
-				SecretsCreated:  planSummary.SecretsCreated,
-				StacksDeployed:  planSummary.StacksDeployed,
-				StackNames:      stackNames,
-				ConfigsRemoved:  planSummary.ConfigsRemoved,
-				SecretsRemoved:  planSummary.SecretsRemoved,
-				ConfigsSkipped:  planSummary.ConfigsSkipped,
-				SecretsSkipped:  planSummary.SecretsSkipped,
-				ServicesCreated: serviceCreates,
-				ServicesUpdated: serviceUpdates,
-			},
+			Plan:        planSummary,
 		}
 		if err := state.Write(statePath, stateSnapshot); err != nil {
 			return err

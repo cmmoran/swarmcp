@@ -1347,19 +1347,19 @@ func createService(ctx context.Context, client swarm.Client, create ServiceCreat
 
 func buildConfigRefs(serviceName string, mounts []ServiceMount, configIDs map[string]string) ([]*dockerapi.ConfigReference, error) {
 	configRefs := make([]*dockerapi.ConfigReference, 0, len(mounts))
-	for _, mount := range mounts {
-		id, ok := configIDs[mount.Name]
+	for _, serviceMount := range mounts {
+		id, ok := configIDs[serviceMount.Name]
 		if !ok {
-			return nil, fmt.Errorf("service %q config %q: id not found", serviceName, mount.Name)
+			return nil, fmt.Errorf("service %q config %q: id not found", serviceName, serviceMount.Name)
 		}
 		configRefs = append(configRefs, &dockerapi.ConfigReference{
 			ConfigID:   id,
-			ConfigName: mount.Name,
+			ConfigName: serviceMount.Name,
 			File: &dockerapi.ConfigReferenceFileTarget{
-				Name: mount.Target,
-				UID:  mount.UID,
-				GID:  mount.GID,
-				Mode: mount.Mode,
+				Name: serviceMount.Target,
+				UID:  serviceMount.UID,
+				GID:  serviceMount.GID,
+				Mode: serviceMount.Mode,
 			},
 		})
 	}
@@ -1369,19 +1369,19 @@ func buildConfigRefs(serviceName string, mounts []ServiceMount, configIDs map[st
 
 func buildSecretRefs(serviceName string, mounts []ServiceMount, secretIDs map[string]string) ([]*dockerapi.SecretReference, error) {
 	secretRefs := make([]*dockerapi.SecretReference, 0, len(mounts))
-	for _, mount := range mounts {
-		id, ok := secretIDs[mount.Name]
+	for _, serviceMount := range mounts {
+		id, ok := secretIDs[serviceMount.Name]
 		if !ok {
-			return nil, fmt.Errorf("service %q secret %q: id not found", serviceName, mount.Name)
+			return nil, fmt.Errorf("service %q secret %q: id not found", serviceName, serviceMount.Name)
 		}
 		secretRefs = append(secretRefs, &dockerapi.SecretReference{
 			SecretID:   id,
-			SecretName: mount.Name,
+			SecretName: serviceMount.Name,
 			File: &dockerapi.SecretReferenceFileTarget{
-				Name: mount.Target,
-				UID:  mount.UID,
-				GID:  mount.GID,
-				Mode: mount.Mode,
+				Name: serviceMount.Target,
+				UID:  serviceMount.UID,
+				GID:  serviceMount.GID,
+				Mode: serviceMount.Mode,
 			},
 		})
 	}

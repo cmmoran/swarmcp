@@ -3,7 +3,9 @@ package cmd
 import (
 	"errors"
 	"flag"
+	"github.com/cmmoran/swarmcp/internal/fsutil"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -36,7 +38,14 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&opts.ConfigPath, "config", "swarmcp.yaml", "Path to project config")
+	rootCmd.PersistentFlags().StringVar(&opts.ConfigPath, "config", "", "Path to project config")
+	if absFile, err := filepath.Abs(".swarmcp.project"); err == nil {
+		if ok := fsutil.FileExists(absFile); len(opts.ConfigPath) == 0 && ok {
+			if cfg, cerr := os.ReadFile(".swarmcp.project"); cerr == nil {
+				opts.ConfigPath = strings.TrimSpace(string(cfg))
+			}
+		}
+	}
 	rootCmd.PersistentFlags().BoolVar(&opts.NoWarnUnmanaged, "no-warn-unmanaged", false, "Suppress warnings for unmanaged resources")
 	rootCmd.PersistentFlags().BoolVar(&opts.SkipHealthcheck, "skip-healthcheck", false, "Skip healthcheck requirement (not recommended)")
 	rootCmd.PersistentFlags().StringVar(&opts.SecretsFile, "secrets-file", "", "Path to secrets values file (YAML)")
