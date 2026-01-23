@@ -2,6 +2,7 @@ package apply
 
 import (
 	"context"
+	"sort"
 
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/render"
@@ -16,6 +17,7 @@ type Plan struct {
 	DeleteSecrets  []swarm.Secret
 	SkippedDeletes SkippedDeletes
 	StackDeploys   []StackDeploy
+	PruneStacks    []string
 }
 
 type SkippedDeletes struct {
@@ -66,6 +68,20 @@ func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, des
 	inUseConfigIDs, inUseSecretIDs := collectInUseIDs(existingServices, configIDs, secretIDs)
 	desiredConfigNames := make(map[string]struct{}, len(desired.Configs))
 	desiredSecretNames := make(map[string]struct{}, len(desired.Secrets))
+	desiredServiceKeys := make(map[string]struct{})
+	expected, err := expectedServices(cfg, partitionFilter)
+	if err != nil {
+		return Plan{}, err
+	}
+	for _, svc := range expected {
+		key := serviceKey{
+			project:   cfg.Project.Name,
+			stack:     svc.Stack,
+			partition: svc.Partition,
+			service:   svc.Name,
+		}
+		desiredServiceKeys[key.labelKey()] = struct{}{}
+	}
 
 	var plan Plan
 	for _, cfg := range desired.Configs {
@@ -147,10 +163,60 @@ func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, des
 		plan.StackDeploys = stackDeploys
 	}
 
+	pruneStacks := make(map[string]struct{})
+	for _, svc := range existingServices {
+		if !isManagedProject(svc.Labels, projectName) {
+			continue
+		}
+		stack := svc.Labels[render.LabelStack]
+		service := svc.Labels[render.LabelService]
+		partition := svc.Labels[render.LabelPartition]
+		if stack == "" || service == "" || partition == "" {
+			continue
+		}
+		stackCfg, ok := cfg.Stacks[stack]
+		if !ok {
+			continue
+		}
+		partitionName := partition
+		if partitionName == "none" {
+			partitionName = ""
+		}
+		if stackCfg.Mode == "partitioned" && partitionFilter != "" && partitionName != partitionFilter {
+			continue
+		}
+		key := serviceKey{
+			project:   projectName,
+			stack:     stack,
+			partition: partitionName,
+			service:   service,
+		}
+		if _, ok := desiredServiceKeys[key.labelKey()]; ok {
+			continue
+		}
+		name := config.StackInstanceName(cfg.Project.Name, stack, partitionName, stackCfg.Mode)
+		pruneStacks[name] = struct{}{}
+	}
+	if len(pruneStacks) > 0 {
+		plan.PruneStacks = sortedKeys(pruneStacks)
+	}
+
 	return plan, nil
 }
 
-func Apply(ctx context.Context, client swarm.Client, plan Plan, contextName string, pruneServices bool) error {
+func sortedKeys(values map[string]struct{}) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func Apply(ctx context.Context, client swarm.Client, plan Plan, contextName string, pruneServices bool, stackParallel int, noUI bool) error {
 	for _, net := range plan.CreateNetworks {
 		if _, err := client.CreateNetwork(ctx, net); err != nil {
 			return err
@@ -166,7 +232,7 @@ func Apply(ctx context.Context, client swarm.Client, plan Plan, contextName stri
 			return err
 		}
 	}
-	if err := DeployStacks(ctx, plan.StackDeploys, contextName, pruneServices); err != nil {
+	if err := DeployStacks(ctx, plan.StackDeploys, contextName, pruneServices, stackParallel, noUI); err != nil {
 		return err
 	}
 	for _, cfg := range plan.DeleteConfigs {

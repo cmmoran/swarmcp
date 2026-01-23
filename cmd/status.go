@@ -9,6 +9,7 @@ import (
 
 	"github.com/cmmoran/swarmcp/internal/apply"
 	"github.com/cmmoran/swarmcp/internal/cmdutil"
+	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +43,14 @@ var statusCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
-		report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilter, !opts.NoInfer)
+		preserve := config.PreserveUnusedResources(cfg)
+		if flag := cmd.Flags().Lookup("preserve"); flag != nil && flag.Changed {
+			preserve = opts.Preserve
+		}
+		if preserve < 0 {
+			return fmt.Errorf("preserve must be >= 0")
+		}
+		report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilter, !opts.NoInfer, preserve)
 		if err != nil {
 			return err
 		}
@@ -51,7 +59,7 @@ var statusCmd = &cobra.Command{
 		sortServiceStates(report.Services)
 		out := cmd.OutOrStdout()
 		cmdutil.PrintWarnings(out, warnings)
-		fmt.Fprintf(out, "status OK\nconfigs missing: %d\nsecrets missing: %d\nnetworks missing: %d\nconfigs stale: %d\nsecrets stale: %d\nconfigs drift: %d\nsecrets drift: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), len(report.DriftConfigs), len(report.DriftSecrets), report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets)
+		fmt.Fprintf(out, "status OK\nconfigs missing: %d\nsecrets missing: %d\nnetworks missing: %d\nconfigs stale: %d\nsecrets stale: %d\nconfigs drift: %d\nsecrets drift: %d\nconfigs preserved: %d\nsecrets preserved: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), len(report.DriftConfigs), len(report.DriftSecrets), report.Preserved.ConfigsPreserved, report.Preserved.SecretsPreserved, report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets)
 		printServiceSummary(out, report.Services)
 		printServiceStates(out, report.Services)
 		if opts.Debug {

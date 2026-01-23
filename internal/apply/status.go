@@ -50,11 +50,12 @@ type StatusReport struct {
 	StaleSecrets    []swarm.Secret
 	DriftConfigs    []DriftItem
 	DriftSecrets    []DriftItem
+	Preserved       PruneResult
 	SkippedDeletes  SkippedDeletes
 	Services        []ServiceState
 }
 
-func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, desired DesiredState, values any, partitionFilter string, infer bool) (StatusReport, error) {
+func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, desired DesiredState, values any, partitionFilter string, infer bool, preserve int) (StatusReport, error) {
 	existingConfigs, err := client.ListConfigs(ctx)
 	if err != nil {
 		return StatusReport{}, err
@@ -160,6 +161,9 @@ func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, d
 			continue
 		}
 		report.StaleSecrets = append(report.StaleSecrets, sec)
+	}
+	if preserve > 0 {
+		report.StaleConfigs, report.StaleSecrets, report.Preserved = PruneStaleResources(report.StaleConfigs, report.StaleSecrets, preserve)
 	}
 
 	serviceIndex := indexServices(existingServices, cfg.Project.Name)

@@ -61,6 +61,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&opts.Prune, "prune", false, "Remove unused managed configs/secrets and prune removed services")
 	rootCmd.PersistentFlags().BoolVar(&opts.PruneServices, "prune-services", false, "Prune removed services without touching configs/secrets")
 	rootCmd.PersistentFlags().IntVar(&opts.Preserve, "preserve", 0, "Preserve the most recent unused configs/secrets when pruning (0 for none)")
+	rootCmd.PersistentFlags().IntVar(&opts.StackParallel, "stack-parallel", 1, "Number of stacks to deploy in parallel during apply")
+	rootCmd.PersistentFlags().BoolVar(&opts.NoUI, "no-ui", false, "Disable stack deployment UI and emit buffered output per stack")
 	rootCmd.PersistentFlags().BoolVar(&opts.NoConfirm, "no-confirm", false, "Skip confirmation prompts")
 	rootCmd.PersistentFlags().BoolVar(&opts.Offline, "offline", false, "Disable remote fetches; use cached sources only")
 

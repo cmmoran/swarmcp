@@ -10,6 +10,7 @@ import (
 
 	"github.com/cmmoran/swarmcp/internal/apply"
 	"github.com/cmmoran/swarmcp/internal/cmdutil"
+	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/state"
 	"github.com/cmmoran/swarmcp/internal/swarm"
 	"github.com/spf13/cobra"
@@ -45,7 +46,14 @@ var diffCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
-		report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilter, !opts.NoInfer)
+		preserve := config.PreserveUnusedResources(cfg)
+		if flag := cmd.Flags().Lookup("preserve"); flag != nil && flag.Changed {
+			preserve = opts.Preserve
+		}
+		if preserve < 0 {
+			return fmt.Errorf("preserve must be >= 0")
+		}
+		report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilter, !opts.NoInfer, preserve)
 		if err != nil {
 			return err
 		}
@@ -63,7 +71,7 @@ var diffCmd = &cobra.Command{
 
 		out := cmd.OutOrStdout()
 		cmdutil.PrintWarnings(out, warnings)
-		fmt.Fprintf(out, "diff OK\nconfigs to create: %d\nsecrets to create: %d\nnetworks to create: %d\nconfigs to delete: %d\nsecrets to delete: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\nservices to update: %d\nservices missing: %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets, len(changedServices), len(missingServices))
+		fmt.Fprintf(out, "diff OK\nconfigs to create: %d\nsecrets to create: %d\nnetworks to create: %d\nconfigs to delete: %d\nsecrets to delete: %d\nconfigs preserved: %d\nsecrets preserved: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\nservices to update: %d\nservices missing: %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), report.Preserved.ConfigsPreserved, report.Preserved.SecretsPreserved, report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets, len(changedServices), len(missingServices))
 
 		if len(report.MissingConfigs) > 0 {
 			fmt.Fprintln(out, "configs to create:")

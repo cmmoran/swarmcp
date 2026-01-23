@@ -28,6 +28,19 @@ func PrunePlan(plan Plan, preserve int) (Plan, PruneResult) {
 	}
 }
 
+func PruneStaleResources(configs []swarm.Config, secrets []swarm.Secret, preserve int) ([]swarm.Config, []swarm.Secret, PruneResult) {
+	if preserve < 0 {
+		preserve = 0
+	}
+	prunedConfigs, configsPreserved := pruneConfigs(configs, preserve)
+	prunedSecrets, secretsPreserved := pruneSecrets(secrets, preserve)
+	return prunedConfigs, prunedSecrets, PruneResult{
+		PreserveCount:    preserve,
+		ConfigsPreserved: configsPreserved,
+		SecretsPreserved: secretsPreserved,
+	}
+}
+
 func pruneConfigs(configs []swarm.Config, preserve int) ([]swarm.Config, int) {
 	if len(configs) == 0 {
 		return nil, 0

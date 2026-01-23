@@ -82,11 +82,24 @@ var applyCmd = &cobra.Command{
 			plan.DeleteSecrets = nil
 		}
 		if pruneServices {
-			pruneDeploys, err := apply.BuildStackDeploys(cfg, desired, values, partitionFilter, nil, nil, nil, !opts.NoInfer)
-			if err != nil {
-				return err
+			existingDeploys := make(map[string]struct{}, len(plan.StackDeploys))
+			for _, deploy := range plan.StackDeploys {
+				existingDeploys[deploy.Name] = struct{}{}
 			}
-			plan.StackDeploys = mergeStackDeploys(plan.StackDeploys, pruneDeploys)
+			pruneOnly := make(map[string]struct{})
+			for _, name := range plan.PruneStacks {
+				if _, ok := existingDeploys[name]; ok {
+					continue
+				}
+				pruneOnly[name] = struct{}{}
+			}
+			if len(pruneOnly) > 0 {
+				pruneDeploys, err := apply.BuildStackDeploys(cfg, desired, values, partitionFilter, pruneOnly, nil, nil, !opts.NoInfer)
+				if err != nil {
+					return err
+				}
+				plan.StackDeploys = mergeStackDeploys(plan.StackDeploys, pruneDeploys)
+			}
 		}
 		if pruneServices && len(plan.StackDeploys) > 0 && !opts.NoConfirm {
 			message := fmt.Sprintf("Prune removed services via stack deploy --prune? stacks=%d", len(plan.StackDeploys))
@@ -103,7 +116,7 @@ var applyCmd = &cobra.Command{
 		cached, cacheOK := loadStateCache(opts.ConfigPath, cfg, partitionFilter)
 		skipApply := cacheOK && cached.Command == "apply" && planSummaryZero(planSummary) && planSummariesEqual(cached.Plan, planSummary)
 		if !skipApply {
-			if err := apply.Apply(ctx, client, plan, contextName, pruneServices); err != nil {
+			if err := apply.Apply(ctx, client, plan, contextName, pruneServices, opts.StackParallel, opts.NoUI); err != nil {
 				return err
 			}
 		}

@@ -217,26 +217,33 @@ func (v *vaultProvider) ensureToken(ctx context.Context) error {
 	}
 	method := strings.ToLower(strings.TrimSpace(v.auth.Method))
 	if method == "" {
-		return fmt.Errorf("VAULT_TOKEN is required for vault provider")
+		return fmt.Errorf("secrets engine authentication failed: VAULT_TOKEN is required for vault provider")
 	}
 	path := normalizeAuthPath(method, v.auth.Path)
 	if path == "" {
-		return fmt.Errorf("secrets_engine.auth.path is required for auth method %q", method)
+		return fmt.Errorf("secrets engine authentication failed: secrets_engine.auth.path is required for auth method %q", method)
 	}
 	switch method {
 	case "jwt":
-		return v.loginJWT(ctx, path, v.auth.Role, v.auth.Audience)
+		if err := v.loginJWT(ctx, path, v.auth.Role, v.auth.Audience); err != nil {
+			return fmt.Errorf("secrets engine authentication failed: %w", err)
+		}
 	case "kubernetes":
-		return v.loginKubernetes(ctx, path, v.auth.Role)
+		if err := v.loginKubernetes(ctx, path, v.auth.Role); err != nil {
+			return fmt.Errorf("secrets engine authentication failed: %w", err)
+		}
 	case "approle":
-		return v.loginAppRole(ctx, path)
+		if err := v.loginAppRole(ctx, path); err != nil {
+			return fmt.Errorf("secrets engine authentication failed: %w", err)
+		}
 	case "oidc":
-		return fmt.Errorf("oidc auth is not supported in non-interactive mode")
+		return fmt.Errorf("secrets engine authentication failed: oidc auth is not supported in non-interactive mode")
 	case "tls":
-		return fmt.Errorf("tls auth is not supported yet")
+		return fmt.Errorf("secrets engine authentication failed: tls auth is not supported yet")
 	default:
-		return fmt.Errorf("unknown auth method %q", method)
+		return fmt.Errorf("secrets engine authentication failed: unknown auth method %q", method)
 	}
+	return nil
 }
 
 func normalizeAuthPath(method string, path string) string {

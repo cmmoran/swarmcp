@@ -1,6 +1,7 @@
 package apply
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/render"
@@ -293,29 +296,228 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 	return deploys, nil
 }
 
-func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string, pruneServices bool) error {
+func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string, pruneServices bool, parallel int, noUI bool) error {
+	if len(stacks) == 0 {
+		return nil
+	}
+	if parallel < 1 {
+		parallel = 1
+	}
+
+	var once sync.Once
+	var firstErr error
+	sem := make(chan struct{}, parallel)
+	wg := sync.WaitGroup{}
+	outputs := make(map[string]*bytes.Buffer, len(stacks))
+	statuses := make(map[string]string, len(stacks))
 	for _, deploy := range stacks {
-		path, err := writeStackCompose(deploy)
-		if err != nil {
-			return err
-		}
-		defer os.Remove(path)
-		args := []string{"stack", "deploy", "--with-registry-auth", "--detach=false"}
-		if pruneServices {
-			args = append(args, "--prune")
-		}
-		args = append(args, "-c", path, deploy.Name)
-		if contextName != "" {
-			args = append([]string{"--context", contextName}, args...)
-		}
-		cmd := exec.CommandContext(ctx, "docker", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("stack deploy %q: %w", deploy.Name, err)
+		statuses[deploy.Name] = "queued"
+	}
+	uiEnabled := !noUI && stdoutIsTTY()
+	var ui *stackUI
+	if uiEnabled {
+		ui = newStackUI(os.Stdout, statuses)
+		ui.Render()
+	}
+	var uiDone chan struct{}
+	if uiEnabled {
+		uiDone = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					ui.Render()
+				case <-uiDone:
+					return
+				}
+			}
+		}()
+	}
+	printMutex := sync.Mutex{}
+	trackError := func(name string, err error) {
+		once.Do(func() { firstErr = fmt.Errorf("stack deploy %q: %w", name, err) })
+		if uiEnabled {
+			ui.Update(name, "error")
 		}
 	}
+
+	for _, deploy := range stacks {
+		deploy := deploy
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if uiEnabled {
+				ui.Update(deploy.Name, "running")
+			}
+			path, err := writeStackCompose(deploy)
+			if err != nil {
+				trackError(deploy.Name, err)
+				return
+			}
+			defer os.Remove(path)
+
+			args := []string{"stack", "deploy", "--with-registry-auth", "--detach=false"}
+			if pruneServices {
+				args = append(args, "--prune")
+			}
+			args = append(args, "-c", path, deploy.Name)
+			if contextName != "" {
+				args = append([]string{"--context", contextName}, args...)
+			}
+			cmd := exec.CommandContext(ctx, "docker", args...)
+			var buf bytes.Buffer
+			cmd.Stdout = &buf
+			cmd.Stderr = &buf
+			if err := cmd.Run(); err != nil {
+				outputs[deploy.Name] = &buf
+				trackError(deploy.Name, err)
+				return
+			}
+			outputs[deploy.Name] = &buf
+			if uiEnabled {
+				ui.Update(deploy.Name, "done")
+			} else {
+				printMutex.Lock()
+				if buf.Len() > 0 {
+					fmt.Fprintf(os.Stdout, "stack %s output:\n%s\n", deploy.Name, strings.TrimRight(buf.String(), "\n"))
+				}
+				printMutex.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
+	if uiEnabled {
+		close(uiDone)
+		ui.Render()
+	}
+	if firstErr != nil && !uiEnabled {
+		return firstErr
+	}
+	if firstErr != nil {
+		for _, deploy := range stacks {
+			buf := outputs[deploy.Name]
+			if buf == nil || buf.Len() == 0 {
+				continue
+			}
+			fmt.Fprintf(os.Stdout, "stack %s output:\n%s\n", deploy.Name, strings.TrimRight(buf.String(), "\n"))
+		}
+		return firstErr
+	}
 	return nil
+}
+
+type stackUI struct {
+	out      *os.File
+	order    []string
+	statuses map[string]string
+	mu       sync.Mutex
+	inited   bool
+	started  map[string]time.Time
+	ended    map[string]time.Time
+}
+
+func newStackUI(out *os.File, statuses map[string]string) *stackUI {
+	order := make([]string, 0, len(statuses))
+	for name := range statuses {
+		order = append(order, name)
+	}
+	sort.Strings(order)
+	return &stackUI{
+		out:      out,
+		order:    order,
+		statuses: statuses,
+		started:  make(map[string]time.Time),
+		ended:    make(map[string]time.Time),
+	}
+}
+
+func (ui *stackUI) Update(name, status string) {
+	ui.mu.Lock()
+	defer ui.mu.Unlock()
+	if _, ok := ui.statuses[name]; !ok {
+		return
+	}
+	ui.statuses[name] = status
+	if status == "running" {
+		ui.started[name] = time.Now()
+	}
+	if status == "done" || status == "error" {
+		ui.ended[name] = time.Now()
+	}
+	ui.renderLocked()
+}
+
+func (ui *stackUI) Render() {
+	ui.mu.Lock()
+	defer ui.mu.Unlock()
+	ui.renderLocked()
+}
+
+func (ui *stackUI) renderLocked() {
+	lines := len(ui.order)
+	if lines == 0 {
+		return
+	}
+	if ui.inited {
+		fmt.Fprintf(ui.out, "\x1b[%dA", lines)
+	} else {
+		ui.inited = true
+	}
+	for _, name := range ui.order {
+		status := ui.statuses[name]
+		elapsed := ui.elapsedString(name, status)
+		if elapsed != "" {
+			elapsed = " " + elapsed
+		}
+		fmt.Fprintf(ui.out, "\x1b[2K[%s] %s%s\n", status, name, elapsed)
+	}
+}
+
+func stdoutIsTTY() bool {
+	info, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+func (ui *stackUI) elapsedString(name, status string) string {
+	start, ok := ui.started[name]
+	if !ok {
+		return ""
+	}
+	switch status {
+	case "running":
+		return formatDuration(time.Since(start))
+	case "done", "error":
+		if end, ok := ui.ended[name]; ok {
+			return formatDuration(end.Sub(start))
+		}
+	}
+	return ""
+}
+
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("(%ds)", int(d.Round(time.Second).Seconds()))
+	}
+	if d < time.Hour {
+		mins := int(d.Minutes())
+		secs := int(d.Round(time.Second).Seconds()) % 60
+		return fmt.Sprintf("(%dm%ds)", mins, secs)
+	}
+	hours := int(d.Hours())
+	mins := int(d.Minutes()) % 60
+	return fmt.Sprintf("(%dh%dm)", hours, mins)
 }
 
 func writeStackCompose(deploy StackDeploy) (string, error) {

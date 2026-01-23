@@ -190,8 +190,8 @@ Template functions (draft):
 - `runtime_value "<template>"`
 - `runtime_value "standard_volumes" ["standard=<name>[,<name>...]"] ["category=<name>[,<name>...]"] ["_format=csv|json|yaml"]`
 - `external_ip`
-- `escape_template "<expression>" ["<expression>"]...`
-- `escape_swarm_template "<expression>" ["<expression>"]...`
+- `escape_template "<expression-or-text>" ["<levels-or-open-delim>"] ["<open-delim>"] ["<close-delim>"]`
+- `escape_swarm_template "<expression-or-text>" ["<levels-or-open-delim>"] ["<open-delim>"] ["<close-delim>"]`
 - `swarm_network_cidrs [name]`
 
 `config_value` and `config_ref` resolve names using the same scope hierarchy as config references. When inference is enabled, `config_value` falls back to `values#/name` if no config definition exists.
@@ -202,8 +202,18 @@ Template functions (draft):
 `{networks_shared}` expands to a comma-separated list of rendered shared networks for the current partition scope.
 `{network_ephemeral}` expands to the service-scoped ephemeral network name when configured; otherwise it is empty.
 `external_ip` fetches the current WAN IP from `https://ifconfig.me/ip` at render time (dev/operator use).
-`escape_template` emits Go template expressions as literal strings for downstream renderers.
-`escape_swarm_template` emits Go template expressions without backtick escaping so Swarm can evaluate them.
+`escape_template` emits Go template expressions as literal strings for downstream renderers. If the input contains one or more `{{ ... }}` actions, each action is escaped independently and the surrounding text is preserved. If the input does not contain `{{ ... }}`, it is treated as a Go template action expression and wrapped before escaping (so `escape_template "foo"` yields a literal `{{ foo }}` downstream).
+`levels` controls how many template passes the output survives: `levels=1` returns a literal Go template action that will execute on the next pass, while higher levels add additional escaping layers so the action survives multiple passes.
+Example pass counts:
+- `escape_template "{{ .Service.Name }}.{{ .Task.Slot }}" "1"` produces `{{ .Service.Name }}.{{ .Task.Slot }}` after 1 pass.
+- `escape_template "{{ .Service.Name }}.{{ .Task.Slot }}" "2"` produces `{{ "{{ .Service.Name }}" }}.{{ "{{ .Task.Slot }}" }}` after 1 pass, then `{{ .Service.Name }}.{{ .Task.Slot }}` after 2 passes.
+`escape_template` arguments: the first parameter is the input text/expression; the optional second parameter is either an integer `levels` or the open delimiter. When a `levels` is provided, the open/close delimiters shift to parameters 3 and 4; otherwise they are parameters 2 and 3. Delimiters default to `{{` and `}}`. The delimiter parameters define the Go template delimiters that will be used by downstream engines; those engines must be configured to the same delimiters for the escaped output to render correctly.
+`escape_swarm_template` is an alias of `escape_template` and shares the same semantics.
+
+YAML quoting guidance:
+- Use backticks for the input expression when possible to avoid YAML escaping (`value: "{{ escape_template \`default (uuidv4) (.Header.Get \"X-Correlation-ID\")\` }}"`).
+- If backticks are not viable, you can build the expression using Sprig helpers like `quote`:
+  - Example: `value: '{{ escape_template (printf "default (uuidv4) (.Header.Get %s)" (quote "X-Correlation-ID")) }}'`
 `swarm_network_cidrs` returns the CIDR subnets for a named Swarm network or all Swarm-scoped overlay networks when no name is provided.
 
 Service labels are rendered as templates using the service scope.

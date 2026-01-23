@@ -17,6 +17,8 @@ type Options struct {
 	Prune           bool
 	PruneServices   bool
 	Preserve        int
+	StackParallel   int
+	NoUI            bool
 	NoConfirm       bool
 	Offline         bool
 	PruneAutoLabels bool
