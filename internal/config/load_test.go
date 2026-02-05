@@ -73,8 +73,13 @@ func TestValidatePartitionOverlayMissingPartition(t *testing.T) {
 			Partitions: []string{"dev"},
 		},
 		Overlays: Overlays{
-			Partitions: map[string]Overlay{
-				"qa": {},
+			Partitions: PartitionOverlays{
+				Rules: []PartitionOverlay{
+					{
+						Name:  "qa",
+						Match: OverlayMatch{Partition: OverlayMatchPartition{Pattern: "qa"}},
+					},
+				},
 			},
 		},
 	}

@@ -283,13 +283,3 @@ func collectInUseIDs(services []swarm.Service, configIDs map[string]string, secr
 	}
 	return inUseConfigs, inUseSecrets
 }
-
-func isManagedProject(labels map[string]string, projectName string) bool {
-	if len(labels) == 0 {
-		return false
-	}
-	if labels[render.LabelManaged] != "true" {
-		return false
-	}
-	return labels[render.LabelProject] == projectName
-}

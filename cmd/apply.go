@@ -55,19 +55,15 @@ var applyCmd = &cobra.Command{
 		}
 
 		prune := opts.Prune
-		preserve := config.PreserveUnusedResources(cfg)
-		if flag := cmd.Flags().Lookup("preserve"); flag != nil && flag.Changed {
-			preserve = opts.Preserve
-		}
-		if preserve < 0 {
-			return fmt.Errorf("preserve must be >= 0")
+		preserve, err := resolvePreserve(cmd, cfg, opts)
+		if err != nil {
+			return err
 		}
 		var pruneResult apply.PruneResult
 		if prune {
 			plan, pruneResult = apply.PrunePlan(plan, preserve)
-			if !opts.NoConfirm {
-				message := fmt.Sprintf("Prune unused configs/secrets? configs=%d secrets=%d preserve=%d", len(plan.DeleteConfigs), len(plan.DeleteSecrets), preserve)
-				confirmed, err := cmdutil.ConfirmPrompt(cmd.InOrStdin(), cmd.OutOrStdout(), message)
+			if opts.Confirm {
+				confirmed, err := confirmPruneConfigs(cmd, plan, preserve, opts.Confirm)
 				if err != nil {
 					return err
 				}
@@ -101,9 +97,8 @@ var applyCmd = &cobra.Command{
 				plan.StackDeploys = mergeStackDeploys(plan.StackDeploys, pruneDeploys)
 			}
 		}
-		if pruneServices && len(plan.StackDeploys) > 0 && !opts.NoConfirm {
-			message := fmt.Sprintf("Prune removed services via stack deploy --prune? stacks=%d", len(plan.StackDeploys))
-			confirmed, err := cmdutil.ConfirmPrompt(cmd.InOrStdin(), cmd.OutOrStdout(), message)
+		if pruneServices && len(plan.StackDeploys) > 0 && opts.Confirm {
+			confirmed, err := confirmPruneServices(cmd, len(plan.StackDeploys), opts.Confirm)
 			if err != nil {
 				return err
 			}
@@ -116,7 +111,11 @@ var applyCmd = &cobra.Command{
 		cached, cacheOK := loadStateCache(opts.ConfigPath, cfg, partitionFilter)
 		skipApply := cacheOK && cached.Command == "apply" && planSummaryZero(planSummary) && planSummariesEqual(cached.Plan, planSummary)
 		if !skipApply {
-			if err := apply.Apply(ctx, client, plan, contextName, pruneServices, opts.StackParallel, opts.NoUI); err != nil {
+			stackParallel := 0
+			if opts.Serial {
+				stackParallel = 1
+			}
+			if err := apply.Apply(ctx, client, plan, contextName, pruneServices, stackParallel, opts.NoUI); err != nil {
 				return err
 			}
 		}

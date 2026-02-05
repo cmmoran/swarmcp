@@ -21,6 +21,14 @@ type TemplateData struct {
 	Service    string
 }
 
+type NoopResolver struct{}
+
+func (NoopResolver) ConfigValue(string) (any, error)             { return "", nil }
+func (NoopResolver) ConfigRef(string) (string, error)            { return "", nil }
+func (NoopResolver) SecretValue(string) (string, error)          { return "", nil }
+func (NoopResolver) SecretRef(string) (string, error)            { return "", nil }
+func (NoopResolver) RuntimeValue(args ...string) (string, error) { return "", nil }
+
 func (t TemplateData) EscapeTemplate(input string) string {
 	return templates.EscapeTemplate(input)
 }

@@ -43,6 +43,10 @@ func (f *fakeClient) ListNodes(ctx context.Context) ([]swarm.Node, error) {
 	return nil, nil
 }
 
+func (f *fakeClient) ConfigContent(ctx context.Context, id string) ([]byte, error) {
+	return nil, nil
+}
+
 func (f *fakeClient) CreateNetwork(ctx context.Context, spec swarm.NetworkSpec) (string, error) {
 	return "network-id", nil
 }

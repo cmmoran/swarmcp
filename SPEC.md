@@ -152,10 +152,9 @@ Resolution is hierarchical and stops at the first match:
 3) stack level
 4) project level
 
-Within a given scope, overlays are applied in this order:
-1) partition overlay (when a partition is in scope)
-2) deployment overlay
-3) base definition
+Overlays apply after base definitions. Precedence is narrow-to-broad (service -> partition -> stack -> project).
+Sealed overlays are applied last within their scope and override non-sealed values. If multiple sealed values
+conflict, the broadest scope wins (project > stack > partition > service).
 
 Service-level definitions live under `services.<service>.configs` and `services.<service>.secrets` when the entry includes `source`.
 
@@ -230,20 +229,27 @@ Config/secret mount defaults and overrides:
 - Engine defaults: secrets mount to `/run/secrets/<name>`; configs mount to `/<name>`.
 
 ## Overlays (Deployment + Partition)
-Overlays let you override config/secret definitions without changing the base structure.
+Overlays let you override config/secret definitions and selected service fields without changing the base structure.
 
 Types:
 - **Deployment overlay**: selected by `project.deployment`.
-- **Partition overlay**: keyed by partition name and applied automatically when rendering for that partition.
+- **Partition overlay**: selected by `match.partition` against the active partition.
+  - Partition overlays may be defined as a **map** keyed by partition name (exact match), or a **list** of rules
+    with `match.partition` (preferred; supports exact, glob, or regexp).
 
-Overlay precedence:
-- partition overlay > deployment overlay > base definition.
+Overlay precedence (default):
+- base definitions are applied first, then overlays.
+- unsealed overlay order is project deployment, project partition (rule order), stack deployment, stack partition (rule order), service deployment, service partition (rule order).
+- sealed overlays apply last within their scope; deployment and partition order are preserved.
+- if multiple sealed values conflict, the broadest scope wins (project > stack > service).
 
 Overlay scope (draft):
 - Project, stack, and stack partition config/secret definitions.
-- Stack service overrides via overlays (`overlays.*.stacks.<stack>.services.<service>`).
-  - Overlay services merge into the base service definition.
-  - Overlay services do not support `source` or `overrides` (use base imports for that).
+- Stack service overrides via overlays (`overlays.*.stacks.<stack>.services.<service>`); overlay services merge into the base service definition and do not support `source` or `overrides`.
+- Stack-level overlay definitions are supported at `stacks.<stack>.overlays.<name>` with the same rules as `overlays.*.stacks.<stack>`.
+- Stack/service templates may also define `overlays` (`stacks.<stack>.overlays` inside stack templates, `services.<service>.overlays` inside service templates).
+- Service template overlays are service-scoped maps (no `services:` nesting); service partition overlays may be a map (exact match) or a list with `match.partition`.
+- `sealed: true` may be set on project/stack/service overlay blocks; sealed fields override non-sealed values even if they are narrower in scope.
 
 Overlay use case:
 - "Values as configs": define base value configs, then override `source` per overlay.
@@ -268,6 +274,71 @@ stacks:
             target: /etc/traefik/traefik.yml
             mode: "0440"
 ```
+
+Partition overlay rule example:
+```yaml
+overlays:
+  partitions:
+    - name: prod-defaults
+      match:
+        partition: prod
+      stacks:
+        core:
+          services:
+            api:
+              image: my-api:prod
+    - name: canary-any
+      match:
+        partition: "canary-*"
+      stacks:
+        edge:
+          services:
+            web:
+              replicas: 1
+    - name: regexp-partitions
+      match:
+        partition:
+          type: regexp
+          pattern: "^prod-\\d+$"
+      stacks:
+        core:
+          services:
+            api:
+              replicas: 2
+```
+
+Service template overlay example:
+```yaml
+services:
+  api:
+    image: ghcr.io/example/api:latest
+    overlays:
+      deployments:
+        prod:
+          replicas: 3
+          labels:
+            env: prod
+      partitions:
+        - name: dev
+          match:
+            partition: dev
+          replicas: 1
+        - name: canary
+          match:
+            partition: "canary-*"
+          sealed: true
+          env:
+            FEATURE_FLAG: "true"
+```
+
+Partition contract inference (draft):
+- Stack imports assume project partition names are canonical.
+- The tool may infer required partition-scoped values/secrets/refs by tracing template references and scope usage.
+- `runtime_value` calls that include `{partition}` mark a stack as partition-sensitive but do not imply required
+  values/secrets paths.
+- Dynamic/unresolvable partition references are errors by default.
+- If a project overlay provides an explicit value for the same field path, the error is downgraded to a warning
+  (templated values are allowed).
 
 ## Configs and Secrets (Swarm)
 - Swarm configs/secrets are immutable.
@@ -310,9 +381,72 @@ Optional:
 - `ports` (`target`, `published`, `protocol`, `mode`)
 - `mode` (`replicated` or `global`) and `replicas`
 - `healthcheck`, `depends_on`, `egress`
+- `restart_policy` (`condition`, `delay`, `max_attempts`, `window`)
+- `update_config` (`parallelism`, `delay`, `failure_action`, `monitor`, `max_failure_ratio`, `order`)
+- `rollback_config` (`parallelism`, `delay`, `failure_action`, `monitor`, `max_failure_ratio`, `order`)
 - `labels` (merged with managed labels; `swarmcp.io/*` reserved)
 - `placement.constraints` (Swarm placement constraint expressions)
 - `configs`, `secrets`, `sources`
+
+Restart policy inheritance:
+- `project.restart_policy` provides the default.
+- `stacks.<stack>.restart_policy` overrides project.
+- `stacks.<stack>.partitions.<partition>.restart_policy` overrides stack.
+- `stacks.<stack>.services.<service>.restart_policy` overrides partition.
+
+Restart policy fields:
+- `condition`: `none`, `on-failure`, or `any`.
+- `delay`: duration string (e.g. `5s`, `1m`).
+- `max_attempts`: non-negative integer.
+- `window`: duration string (e.g. `10s`, `1m`).
+
+Example:
+```yaml
+project:
+  restart_policy:
+    condition: on-failure
+    delay: 5s
+    max_attempts: 1
+    window: 2m
+stacks:
+  api:
+    restart_policy:
+      delay: 10s
+    partitions:
+      dev:
+        restart_policy:
+          max_attempts: 3
+    services:
+      web:
+        restart_policy:
+          condition: any
+```
+
+Update/rollback config inheritance:
+- `project.update_config` / `project.rollback_config` provide defaults.
+- `stacks.<stack>.update_config` / `stacks.<stack>.rollback_config` override project.
+- `stacks.<stack>.partitions.<partition>.update_config` / `stacks.<stack>.partitions.<partition>.rollback_config` override stack.
+- `stacks.<stack>.services.<service>.update_config` / `stacks.<stack>.services.<service>.rollback_config` override partition.
+
+Update/rollback config fields:
+- `parallelism`: non-negative integer (0 = unlimited parallelism).
+- `delay`: duration string (e.g. `5s`, `1m`).
+- `failure_action`: `pause`, `continue`, or `rollback`.
+- `monitor`: duration string (e.g. `30s`, `2m`).
+- `max_failure_ratio`: float between 0 and 1.
+- `order`: `stop-first` or `start-first`.
+
+Example:
+```yaml
+project:
+  update_config:
+    parallelism: 2
+    delay: 10s
+    failure_action: rollback
+    monitor: 30s
+    max_failure_ratio: 0.1
+    order: start-first
+```
 
 Derived (not configurable at service scope yet):
 - `networks`: computed from stack mode + partition + `egress`
@@ -460,7 +594,7 @@ Managed diff/status scope (current):
 - `apply`: reconcile to desired state.
   - `--prune`: remove unused managed configs/secrets.
   - `--preserve <n>`: keep the most recent `n` unused configs/secrets when pruning.
-  - `--no-confirm`: skip confirmation prompts.
+  - `--confirm`: enable confirmation prompts for prune operations.
 - `status`: show managed resources, mount drift, and service health (desired/running task counts; desired=0 treated as disabled).
 - `secrets check`: report missing secrets required by templates.
 - `secrets put`: write a secret value to the secrets file or secrets engine.
@@ -582,6 +716,7 @@ overlays:
   deployments:
     <name>:
       project:
+        sealed: <bool>
         sources:
           url: <string>
           ref: <string>
@@ -602,6 +737,7 @@ overlays:
             mode: <string>
       stacks:
         <stack>:
+          sealed: <bool>
           sources:
             url: <string>
             ref: <string>
@@ -609,6 +745,7 @@ overlays:
           services:
             <service>:
               # overrides only; no source/overrides in overlays
+              sealed: <bool>
               image: <string>
               env:
                 <key>: <value>
@@ -632,6 +769,7 @@ overlays:
               mode: <string>
           partitions:
             <partition>:
+              sealed: <bool>
               sources:
                 url: <string>
                 ref: <string>
@@ -643,16 +781,25 @@ overlays:
                   uid: <string>
                   gid: <string>
                   mode: <string>
-              secrets:
-                <name>:
-                  source: <path>
-                  target: <path>
-                  uid: <string>
-                  gid: <string>
-                  mode: <string>
+          secrets:
+            <name>:
+              source: <path>
+              target: <path>
+              uid: <string>
+              gid: <string>
+              mode: <string>
   partitions:
-    <partition>:
+    # list form (preferred)
+    - name: <string>
+      match:
+        # string form infers exact or glob
+        partition: <string|glob>
+        # map form allows explicit type selection
+        # partition:
+        #   type: exact|glob|regexp
+        #   pattern: <string>
       project:
+        sealed: <bool>
         sources:
           url: <string>
           ref: <string>
@@ -673,6 +820,7 @@ overlays:
             mode: <string>
       stacks:
         <stack>:
+          sealed: <bool>
           sources:
             url: <string>
             ref: <string>
@@ -680,6 +828,7 @@ overlays:
           services:
             <service>:
               # overrides only; no source/overrides in overlays
+              sealed: <bool>
               image: <string>
               env:
                 <key>: <value>
@@ -703,6 +852,7 @@ overlays:
               mode: <string>
           partitions:
             <partition>:
+              sealed: <bool>
               sources:
                 url: <string>
                 ref: <string>
@@ -721,6 +871,10 @@ overlays:
                   uid: <string>
                   gid: <string>
                   mode: <string>
+    # map form (legacy; exact match)
+    <partition>:
+      project: <same as list entry>
+      stacks: <same as list entry>
 
 stacks:
   <stack>:
@@ -755,6 +909,60 @@ stacks:
             uid: <string>
             gid: <string>
             mode: <string>
+    overlays:
+      <name>:
+        sealed: <bool>
+        sources:
+          url: <string>
+          ref: <string>
+          path: <string>
+        services:
+          <service>:
+            # overrides only; no source/overrides in overlays
+            sealed: <bool>
+            image: <string>
+            env:
+              <key>: <value>
+            labels:
+              <key>: <value>
+            replicas: <int>
+            mode: replicated|global
+        configs:
+          <name>:
+            source: <path>
+            target: <path>
+            uid: <string>
+            gid: <string>
+            mode: <string>
+        secrets:
+          <name>:
+            source: <path>
+            target: <path>
+            uid: <string>
+            gid: <string>
+            mode: <string>
+        partitions:
+          <partition>:
+            sealed: <bool>
+            sources:
+              url: <string>
+              ref: <string>
+              path: <string>
+            configs:
+              <name>:
+                source: <path>
+                target: <path>
+                uid: <string>
+                gid: <string>
+                mode: <string>
+            secrets:
+              <name>:
+                source: <path>
+                target: <path>
+                uid: <string>
+                gid: <string>
+                mode: <string>
+# Note: `stacks.<stack>.overlays` is supported in stack templates as well as the project file.
     sources:
       url: <string>
       ref: <string>
@@ -833,6 +1041,31 @@ stacks:
             readonly: <bool> # optional; ad-hoc bind (no base path or placement rules)
           - standard: <name> # uses defaults.volumes.standards
             category: <string> # optional; used by runtime_value standard_volumes filters
+        overlays:
+          deployments:
+            <name>:
+              sealed: <bool>
+              # overrides only; no source/overrides in overlays
+              image: <string>
+              env:
+                <key>: <value>
+              labels:
+                <key>: <value>
+              replicas: <int>
+              mode: replicated|global
+          partitions:
+            - name: <string>
+              match:
+                partition: <string|glob>
+              sealed: <bool>
+              # overrides only; no source/overrides in overlays
+              image: <string>
+              env:
+                <key>: <value>
+              labels:
+                <key>: <value>
+              replicas: <int>
+              mode: replicated|global
         sources:
           url: <string>
           ref: <string>
@@ -848,6 +1081,10 @@ Note: secret sources are files like config sources. Secrets engine lookups occur
 If a secret definition omits `source`, it defaults to `inline: {{ secret_value "<name>" }}`. Service-level secrets without a source use this default only when no definition exists in higher scopes.
 Sources inherit by scope: service overrides partition overrides stack overrides project.
 Service entries without `source` are treated as mount refs unless no higher-scope definition exists.
+Simple token expansion (`{project}`, `{deployment}`, `{partition}`, `{stack}`, `{service}`) is applied to:
+- service label keys
+- service env keys
+- placement constraint strings
 Stack and partition `secrets` accept either:
 - a map of definitions (`name: {source: ...}`), or
 - a list of secret entries (`- name: foo`, optional `source/target/uid/gid/mode`, or a scalar `- foo`).

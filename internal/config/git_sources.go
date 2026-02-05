@@ -39,8 +39,8 @@ const gitSourcePrefix = "git:"
 
 var errExactSHA1NotSupported = errors.New("git server does not allow exact object fetch")
 
-// sourceMetadata records the git subtree fingerprint for a path.
-type sourceMetadata struct {
+// SourceMetadata records the git subtree fingerprint for a path.
+type SourceMetadata struct {
 	URL       string `json:"url"`
 	Ref       string `json:"ref"`
 	Commit    string `json:"commit"`
@@ -50,6 +50,13 @@ type sourceMetadata struct {
 }
 
 type gitSource struct {
+	URL  string
+	Ref  string
+	Path string
+}
+
+// GitSource is a parsed git source reference.
+type GitSource struct {
 	URL  string
 	Ref  string
 	Path string
@@ -134,6 +141,22 @@ func ReadSourceFile(path string, baseDir string, opts LoadOptions) ([]byte, erro
 	return os.ReadFile(resolved)
 }
 
+// ReadGitSourceFiles loads file contents for a git source at the given ref.
+func ReadGitSourceFiles(url, ref, pathValue string, opts LoadOptions) (map[string][]byte, error) {
+	if url == "" {
+		return nil, fmt.Errorf("source url is required")
+	}
+	cleanPath, err := cleanGitPath(pathValue)
+	if err != nil {
+		return nil, err
+	}
+	result, err := readGitPath(context.Background(), url, ref, cleanPath, opts)
+	if err != nil {
+		return nil, err
+	}
+	return result.Files, nil
+}
+
 func IsGitSource(value string) bool {
 	return strings.HasPrefix(value, gitSourcePrefix)
 }
@@ -163,6 +186,15 @@ func encodeGitSource(rawURL string, ref string, p string) string {
 	return gitSourcePrefix + url.QueryEscape(rawURL) + "|" + url.QueryEscape(ref) + "|" + url.QueryEscape(p)
 }
 
+// ParseGitSource parses an encoded git source reference.
+func ParseGitSource(value string) (GitSource, bool, error) {
+	parsed, ok, err := parseGitSource(value)
+	if err != nil || !ok {
+		return GitSource{}, ok, err
+	}
+	return GitSource{URL: parsed.URL, Ref: parsed.Ref, Path: parsed.Path}, true, nil
+}
+
 func parseGitSource(value string) (gitSource, bool, error) {
 	if !IsGitSource(value) {
 		return gitSource{}, false, nil
@@ -188,6 +220,57 @@ func parseGitSource(value string) (gitSource, bool, error) {
 		return gitSource{}, false, err
 	}
 	return gitSource{URL: rawURL, Ref: ref, Path: clean}, true, nil
+}
+
+// FetchGitSource fetches the git source to the local cache and returns metadata about the fetched content.
+func FetchGitSource(url, ref, pathValue string, opts LoadOptions) (SourceMetadata, error) {
+	if url == "" {
+		return SourceMetadata{}, fmt.Errorf("source url is required")
+	}
+	cleanPath, err := cleanGitPath(pathValue)
+	if err != nil {
+		return SourceMetadata{}, err
+	}
+	result, err := readGitPath(context.Background(), url, ref, cleanPath, opts)
+	if err != nil {
+		return SourceMetadata{}, err
+	}
+	if result.CommitHash != plumbing.ZeroHash && opts.CacheDir != "" {
+		repoDir := filepath.Join(opts.CacheDir, "repos", hashKey(url))
+		if repo, err := git.PlainOpen(repoDir); err == nil {
+			rememberRef(repo, ref, result.CommitHash, opts)
+		}
+	}
+	meta, _, err := ReadSourceMetadata(url, ref, cleanPath, opts)
+	if err != nil {
+		return SourceMetadata{}, err
+	}
+	return meta, nil
+}
+
+// ReadSourceMetadata loads cached git source metadata if available.
+func ReadSourceMetadata(url, ref, pathValue string, opts LoadOptions) (SourceMetadata, bool, error) {
+	if url == "" {
+		return SourceMetadata{}, false, fmt.Errorf("source url is required")
+	}
+	if opts.CacheDir == "" {
+		return SourceMetadata{}, false, fmt.Errorf("cache dir is required for metadata read")
+	}
+	repoDir := filepath.Join(opts.CacheDir, "repos", hashKey(url))
+	metaDir := filepath.Join(repoDir, ".swarmcp_sources")
+	metaPath := filepath.Join(metaDir, hashKey(url+"|"+ref+"|"+pathValue)+".json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return SourceMetadata{}, false, nil
+		}
+		return SourceMetadata{}, false, err
+	}
+	var meta SourceMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return SourceMetadata{}, false, err
+	}
+	return meta, true, nil
 }
 
 func cleanGitPath(p string) (string, error) {
@@ -336,6 +419,7 @@ func resolveRefHash(ctx context.Context, repo *git.Repository, rawURL, ref strin
 		if adv.Head == nil {
 			return plumbing.ZeroHash, fmt.Errorf("ref HEAD not advertised by remote")
 		}
+		rememberRef(repo, "HEAD", *adv.Head, opts)
 		return *adv.Head, nil
 	}
 	if plumbing.IsHash(ref) {
@@ -357,12 +441,16 @@ func resolveRefHash(ctx context.Context, repo *git.Repository, rawURL, ref strin
 	if !ok {
 		return plumbing.ZeroHash, fmt.Errorf("ref %q not found in remote", ref)
 	}
+	rememberRef(repo, ref, hash, opts)
 	return hash, nil
 }
 
 func resolveLocalHEAD(repo *git.Repository) (plumbing.Hash, bool) {
 	head, err := repo.Head()
 	if err != nil {
+		if hash, ok := resolveLocalSwarmcpRef(repo, "HEAD"); ok {
+			return hash, true
+		}
 		return plumbing.ZeroHash, false
 	}
 	return head.Hash(), true
@@ -404,7 +492,8 @@ func peelTag(ctx context.Context, repo *git.Repository, rawURL string, auth tran
 		if err := ensureObject(ctx, repo, rawURL, auth, hash, opts); err != nil {
 			return plumbing.ZeroHash, err
 		}
-		return peelTag(ctx, repo, rawURL, auth, hash, opts)
+		// Not a tag object; return the original hash after ensuring it's present.
+		return hash, nil
 	}
 	return hash, nil
 }
@@ -421,13 +510,52 @@ func resolveRefFromAdv(adv *packp.AdvRefs, ref string) (plumbing.Hash, bool) {
 	return plumbing.ZeroHash, false
 }
 
+const swarmcpRefPrefix = "refs/swarmcp/"
+
 func refCandidates(ref string) []string {
 	if strings.HasPrefix(ref, "refs/") {
 		return []string{ref}
 	}
 	return []string{
+		swarmcpRefPrefix + ref,
 		"refs/heads/" + ref,
 		"refs/tags/" + ref,
+	}
+}
+
+func resolveLocalSwarmcpRef(repo *git.Repository, ref string) (plumbing.Hash, bool) {
+	if strings.TrimSpace(ref) == "" {
+		return plumbing.ZeroHash, false
+	}
+	name := plumbing.ReferenceName(swarmcpRefPrefix + ref)
+	resolved, err := repo.Reference(name, true)
+	if err != nil {
+		return plumbing.ZeroHash, false
+	}
+	return resolved.Hash(), true
+}
+
+func rememberRef(repo *git.Repository, ref string, hash plumbing.Hash, opts LoadOptions) {
+	if hash == plumbing.ZeroHash {
+		return
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" || strings.EqualFold(ref, "HEAD") {
+		name := plumbing.ReferenceName(swarmcpRefPrefix + "HEAD")
+		_ = repo.Storer.SetReference(plumbing.NewHashReference(name, hash))
+		return
+	}
+	if plumbing.IsHash(ref) {
+		return
+	}
+	var name plumbing.ReferenceName
+	if strings.HasPrefix(ref, "refs/") {
+		name = plumbing.ReferenceName(ref)
+	} else {
+		name = plumbing.ReferenceName(swarmcpRefPrefix + ref)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(name, hash)); err == nil {
+		debugf(opts, "git: remember ref=%s hash=%s", name.String(), hash.String())
 	}
 }
 
@@ -1170,7 +1298,7 @@ func splitShellArgs(input string) []string {
 }
 
 func writeSourceMetadata(repoDir, url, ref, commit, pathValue, subtree string) error {
-	data := sourceMetadata{
+	data := SourceMetadata{
 		URL:       url,
 		Ref:       ref,
 		Commit:    commit,

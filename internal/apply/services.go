@@ -74,79 +74,16 @@ func buildServiceChanges(cfg *config.Config, desired DesiredState, values any, s
 				}
 				current, ok := serviceIndex[key.labelKey()]
 
-				networkEphemeral := ""
-				if service.NetworkEphemeral != nil {
-					networkEphemeral = config.EphemeralNetworkName(cfg, stackName, stack.Mode, partitionName, serviceName)
-				}
-				scope := templates.Scope{
-					Project:          cfg.Project.Name,
-					Deployment:       cfg.Project.Deployment,
-					Stack:            stackName,
-					Partition:        partitionName,
-					Service:          serviceName,
-					NetworksShared:   config.NetworksSharedString(cfg, partitionName),
-					NetworkEphemeral: networkEphemeral,
-				}
-				var inferredConfigs map[string]struct{}
-				var inferredSecrets map[string]struct{}
-				var trace func(templates.TraceCall)
-				if infer {
-					inferredConfigs = make(map[string]struct{})
-					inferredSecrets = make(map[string]struct{})
-					trace = func(call templates.TraceCall) {
-						switch call.Func {
-						case "config_ref":
-							inferredConfigs[call.Name] = struct{}{}
-						case "secret_ref":
-							inferredSecrets[call.Name] = struct{}{}
-						}
-					}
-				}
-				resolver, engine, data := render.NewServiceTemplateEngine(cfg, scope, values, infer, trace)
-
-				renderedService, err := render.RenderServiceTemplates(engine, data, service)
+				build, err := buildServiceIntent(cfg, stackName, stack, partitionName, serviceName, service, values, infer, index)
 				if err != nil {
 					return nil, nil, err
 				}
-				if infer {
-					renderedService.Configs = mergeConfigRefs(renderedService.Configs, inferredConfigs)
-					renderedService.Secrets = mergeSecretRefs(renderedService.Secrets, inferredSecrets)
-					extraConfigs, extraSecrets, err := render.InferTemplateRefDeps(cfg, scope, renderedService.Configs, renderedService.Secrets)
-					if err != nil {
-						return nil, nil, err
-					}
-					renderedService.Configs = mergeConfigRefs(renderedService.Configs, extraConfigs)
-					renderedService.Secrets = mergeSecretRefs(renderedService.Secrets, extraSecrets)
-				}
-
-				configMounts, err := desiredConfigMounts(resolver, engine, data, index, scope, renderedService.Configs, infer)
-				if err != nil {
-					return nil, nil, err
-				}
-				secretMounts, err := desiredSecretMounts(resolver, engine, data, index, scope, renderedService.Secrets, infer)
-				if err != nil {
-					return nil, nil, err
-				}
-				volumeMounts, err := desiredVolumeMounts(cfg, engine, data, stackName, stack, partitionName, serviceName, renderedService)
-				if err != nil {
-					return nil, nil, err
-				}
-				serviceNetworks := desiredServiceNetworks(cfg, stackName, stack.Mode, partitionName, serviceName, renderedService)
-
-				labels, err := serviceLabels(scope, serviceName, renderedService.Labels, resolver, data)
-				if err != nil {
-					return nil, nil, err
-				}
-				constraints := desiredPlacementConstraints(cfg, stackName, stack, partitionName, serviceName, renderedService)
-				desiredIntent, err := intentFromConfig(renderedService, labels, constraints, configMounts, secretMounts, volumeMounts, serviceNetworks)
-				if err != nil {
-					return nil, nil, err
-				}
+				desiredIntent := build.Intent
 				if !ok {
 					spec := dockerapi.ServiceSpec{
 						Annotations: dockerapi.Annotations{
 							Name:   serviceFullName(cfg.Project.Name, stackName, partitionName, serviceName),
-							Labels: labels,
+							Labels: build.Labels,
 						},
 					}
 					spec = applyIntentToSpec(spec, desiredIntent)
@@ -155,8 +92,8 @@ func buildServiceChanges(cfg *config.Config, desired DesiredState, values any, s
 						Partition: partitionName,
 						Name:      spec.Annotations.Name,
 						Spec:      spec,
-						Configs:   configMounts,
-						Secrets:   secretMounts,
+						Configs:   build.ConfigMounts,
+						Secrets:   build.SecretMounts,
 					})
 					continue
 				}
@@ -171,8 +108,8 @@ func buildServiceChanges(cfg *config.Config, desired DesiredState, values any, s
 					Partition: partitionName,
 					Service:   current,
 					Spec:      applyIntentToSpec(current.Spec, desiredIntent),
-					Configs:   configMounts,
-					Secrets:   secretMounts,
+					Configs:   build.ConfigMounts,
+					Secrets:   build.SecretMounts,
 				})
 			}
 		}
@@ -182,21 +119,24 @@ func buildServiceChanges(cfg *config.Config, desired DesiredState, values any, s
 }
 
 type serviceIntent struct {
-	Image       string
-	Command     []string
-	Args        []string
-	Workdir     string
-	Env         []string
-	Ports       []portIntent
-	Mode        string
-	Replicas    uint64
-	Labels      map[string]string
-	Constraints []string
-	Healthcheck *container.HealthConfig
-	Configs     []ServiceMount
-	Secrets     []ServiceMount
-	Volumes     []mount.Mount
-	Networks    []string
+	Image          string
+	Command        []string
+	Args           []string
+	Workdir        string
+	Env            []string
+	Ports          []portIntent
+	Mode           string
+	Replicas       uint64
+	Labels         map[string]string
+	Constraints    []string
+	Healthcheck    *container.HealthConfig
+	RestartPolicy  *dockerapi.RestartPolicy
+	UpdateConfig   *dockerapi.UpdateConfig
+	RollbackConfig *dockerapi.UpdateConfig
+	Configs        []ServiceMount
+	Secrets        []ServiceMount
+	Volumes        []mount.Mount
+	Networks       []string
 }
 
 type portIntent struct {
@@ -206,13 +146,25 @@ type portIntent struct {
 	Mode      dockerapi.PortConfigPublishMode
 }
 
-func intentFromConfig(service config.Service, labels map[string]string, constraints []string, configs []ServiceMount, secrets []ServiceMount, volumes []mount.Mount, networks []string) (serviceIntent, error) {
+func intentFromConfig(service config.Service, labels map[string]string, constraints []string, configs []ServiceMount, secrets []ServiceMount, volumes []mount.Mount, networks []string, restartPolicy *config.RestartPolicy, updateConfig *config.UpdatePolicy, rollbackConfig *config.UpdatePolicy) (serviceIntent, error) {
 	env := envSlice(service.Env)
 	ports, err := portIntents(service.Ports)
 	if err != nil {
 		return serviceIntent{}, err
 	}
 	healthcheck, err := parseHealthcheck(service.Healthcheck)
+	if err != nil {
+		return serviceIntent{}, err
+	}
+	policy, err := swarmRestartPolicy(restartPolicy)
+	if err != nil {
+		return serviceIntent{}, err
+	}
+	updateSpec, err := swarmUpdateConfig(updateConfig)
+	if err != nil {
+		return serviceIntent{}, err
+	}
+	rollbackSpec, err := swarmUpdateConfig(rollbackConfig)
 	if err != nil {
 		return serviceIntent{}, err
 	}
@@ -225,21 +177,24 @@ func intentFromConfig(service config.Service, labels map[string]string, constrai
 		replicas = 0
 	}
 	return serviceIntent{
-		Image:       service.Image,
-		Command:     cloneStrings(service.Command),
-		Args:        cloneStrings(service.Args),
-		Workdir:     service.Workdir,
-		Env:         env,
-		Ports:       ports,
-		Mode:        mode,
-		Replicas:    replicas,
-		Labels:      cloneLabels(labels),
-		Constraints: cloneStrings(constraints),
-		Healthcheck: healthcheck,
-		Configs:     configs,
-		Secrets:     secrets,
-		Volumes:     volumes,
-		Networks:    networks,
+		Image:          service.Image,
+		Command:        cloneStrings(service.Command),
+		Args:           cloneStrings(service.Args),
+		Workdir:        service.Workdir,
+		Env:            env,
+		Ports:          ports,
+		Mode:           mode,
+		Replicas:       replicas,
+		Labels:         cloneLabels(labels),
+		Constraints:    cloneStrings(constraints),
+		Healthcheck:    healthcheck,
+		RestartPolicy:  policy,
+		UpdateConfig:   updateSpec,
+		RollbackConfig: rollbackSpec,
+		Configs:        configs,
+		Secrets:        secrets,
+		Volumes:        volumes,
+		Networks:       networks,
 	}, nil
 }
 
@@ -280,21 +235,24 @@ func intentFromSpec(spec dockerapi.ServiceSpec, networkTargets map[string]string
 	networks := networksFromSpec(spec.TaskTemplate.Networks, networkTargets)
 	mode, replicas := modeFromSpec(spec.Mode)
 	return serviceIntent{
-		Image:       image,
-		Command:     command,
-		Args:        args,
-		Workdir:     workdir,
-		Env:         env,
-		Ports:       ports,
-		Mode:        mode,
-		Replicas:    replicas,
-		Labels:      labels,
-		Constraints: constraints,
-		Healthcheck: healthcheck,
-		Configs:     configs,
-		Secrets:     secrets,
-		Volumes:     mounts,
-		Networks:    networks,
+		Image:          image,
+		Command:        command,
+		Args:           args,
+		Workdir:        workdir,
+		Env:            env,
+		Ports:          ports,
+		Mode:           mode,
+		Replicas:       replicas,
+		Labels:         labels,
+		Constraints:    constraints,
+		Healthcheck:    healthcheck,
+		RestartPolicy:  cloneRestartPolicy(spec.TaskTemplate.RestartPolicy),
+		UpdateConfig:   cloneUpdateConfig(spec.UpdateConfig),
+		RollbackConfig: cloneUpdateConfig(spec.RollbackConfig),
+		Configs:        configs,
+		Secrets:        secrets,
+		Volumes:        mounts,
+		Networks:       networks,
 	}
 }
 
@@ -311,6 +269,9 @@ func applyIntentToSpec(spec dockerapi.ServiceSpec, intent serviceIntent) dockera
 	spec.TaskTemplate.ContainerSpec.Healthcheck = intent.Healthcheck
 	spec.TaskTemplate.ContainerSpec.Mounts = cloneMounts(intent.Volumes)
 	spec.TaskTemplate.Placement = applyPlacement(spec.TaskTemplate.Placement, intent.Constraints)
+	spec.TaskTemplate.RestartPolicy = cloneRestartPolicy(intent.RestartPolicy)
+	spec.UpdateConfig = cloneUpdateConfig(intent.UpdateConfig)
+	spec.RollbackConfig = cloneUpdateConfig(intent.RollbackConfig)
 	spec.EndpointSpec = applyPorts(spec.EndpointSpec, intent.Ports)
 	spec.TaskTemplate.Networks = applyNetworks(spec.TaskTemplate.Networks, intent.Networks)
 	spec.Mode = applyMode(spec.Mode, intent.Mode, intent.Replicas)
@@ -348,6 +309,15 @@ func intentEqual(current, desired serviceIntent) bool {
 		return false
 	}
 	if !healthcheckEqual(current.Healthcheck, desired.Healthcheck) {
+		return false
+	}
+	if !restartPoliciesEqual(current.RestartPolicy, desired.RestartPolicy) {
+		return false
+	}
+	if !updateConfigsEqual(current.UpdateConfig, desired.UpdateConfig) {
+		return false
+	}
+	if !updateConfigsEqual(current.RollbackConfig, desired.RollbackConfig) {
 		return false
 	}
 	if !mountSlicesEqual(current.Configs, desired.Configs) {
@@ -1193,7 +1163,7 @@ func serviceLabels(scope templates.Scope, serviceName string, userLabels map[str
 		return managed, nil
 	}
 	engine := templates.New(resolver)
-	rendered, err := renderLabelTemplates(engine, data, userLabels)
+	rendered, err := renderLabelTemplates(engine, data, scope, userLabels)
 	if err != nil {
 		return nil, fmt.Errorf("service %q labels: %w", serviceName, err)
 	}
@@ -1215,14 +1185,24 @@ func cloneLabels(values map[string]string) map[string]string {
 	return out
 }
 
-func renderLabelTemplates(engine *templates.Engine, data render.TemplateData, labels map[string]string) (map[string]string, error) {
+func renderLabelTemplates(engine *templates.Engine, data render.TemplateData, scope templates.Scope, labels map[string]string) (map[string]string, error) {
 	rendered := make(map[string]string, len(labels))
 	for key, value := range labels {
-		result, err := engine.Render("label:"+key, value, data)
-		if err != nil {
-			return nil, fmt.Errorf("label %q: %w", key, err)
+		expandedKey := templates.ExpandTokens(key, scope)
+		if strings.TrimSpace(expandedKey) == "" {
+			return nil, fmt.Errorf("label %q: key is empty after token expansion", key)
 		}
-		rendered[key] = result
+		if strings.HasPrefix(expandedKey, "swarmcp.io/") {
+			return nil, fmt.Errorf("label %q: key uses reserved prefix swarmcp.io/", expandedKey)
+		}
+		if _, ok := rendered[expandedKey]; ok {
+			return nil, fmt.Errorf("label %q: duplicate key after token expansion", expandedKey)
+		}
+		result, err := engine.Render("label:"+expandedKey, value, data)
+		if err != nil {
+			return nil, fmt.Errorf("label %q: %w", expandedKey, err)
+		}
+		rendered[expandedKey] = result
 	}
 	return rendered, nil
 }

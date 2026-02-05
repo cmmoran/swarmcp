@@ -28,6 +28,7 @@ type Client interface {
 	ListServices(ctx context.Context) ([]Service, error)
 	ListNetworks(ctx context.Context) ([]Network, error)
 	ListNodes(ctx context.Context) ([]Node, error)
+	ConfigContent(ctx context.Context, id string) ([]byte, error)
 	CreateNetwork(ctx context.Context, spec NetworkSpec) (string, error)
 	CreateService(ctx context.Context, spec dockerapi.ServiceSpec) (string, error)
 	CreateConfig(ctx context.Context, spec ConfigSpec) (string, error)
@@ -186,6 +187,11 @@ func (c *apiClient) ListNodes(ctx context.Context) ([]Node, error) {
 		})
 	}
 	return out, nil
+}
+
+func (c *apiClient) ConfigContent(ctx context.Context, id string) ([]byte, error) {
+	_, raw, err := c.cli.ConfigInspectWithRaw(ctx, id)
+	return raw, err
 }
 
 func (c *apiClient) CreateNetwork(ctx context.Context, spec NetworkSpec) (string, error) {

@@ -18,6 +18,9 @@ type Project struct {
 	Contexts                map[string]string    `yaml:"contexts"`
 	Targets                 DeploymentTargets    `yaml:"deployment_targets"`
 	Defaults                ProjectDefaults      `yaml:"defaults"`
+	RestartPolicy           *RestartPolicy       `yaml:"restart_policy"`
+	UpdateConfig            *UpdatePolicy        `yaml:"update_config"`
+	RollbackConfig          *UpdatePolicy        `yaml:"rollback_config"`
 	PreserveUnusedResources *int                 `yaml:"preserve_unused_resources"`
 	Nodes                   map[string]Node      `yaml:"nodes"`
 	Sources                 Sources              `yaml:"sources"`
@@ -81,22 +84,29 @@ type NodePlatform struct {
 }
 
 type Stack struct {
-	Source     *SourceRef                `yaml:"source"`
-	Overrides  map[string]any            `yaml:"overrides"`
-	Mode       string                    `yaml:"mode"`
-	Partitions map[string]StackPartition `yaml:"partitions"`
-	Sources    Sources                   `yaml:"sources"`
-	Configs    ConfigDefsOrRefs          `yaml:"configs"`
-	Secrets    SecretDefsOrRefs          `yaml:"secrets"`
-	Volumes    map[string]VolumeDef      `yaml:"volumes"`
-	Services   map[string]Service        `yaml:"services"`
-	BaseDir    string                    `yaml:"-"`
+	Source         *SourceRef                `yaml:"source"`
+	Overrides      map[string]any            `yaml:"overrides"`
+	Mode           string                    `yaml:"mode"`
+	RestartPolicy  *RestartPolicy            `yaml:"restart_policy"`
+	UpdateConfig   *UpdatePolicy             `yaml:"update_config"`
+	RollbackConfig *UpdatePolicy             `yaml:"rollback_config"`
+	Partitions     map[string]StackPartition `yaml:"partitions"`
+	Overlays       StackOverlays             `yaml:"overlays"`
+	Sources        Sources                   `yaml:"sources"`
+	Configs        ConfigDefsOrRefs          `yaml:"configs"`
+	Secrets        SecretDefsOrRefs          `yaml:"secrets"`
+	Volumes        map[string]VolumeDef      `yaml:"volumes"`
+	Services       map[string]Service        `yaml:"services"`
+	BaseDir        string                    `yaml:"-"`
 }
 
 type StackPartition struct {
-	Sources Sources          `yaml:"sources"`
-	Configs ConfigDefsOrRefs `yaml:"configs"`
-	Secrets SecretDefsOrRefs `yaml:"secrets"`
+	RestartPolicy  *RestartPolicy   `yaml:"restart_policy"`
+	UpdateConfig   *UpdatePolicy    `yaml:"update_config"`
+	RollbackConfig *UpdatePolicy    `yaml:"rollback_config"`
+	Sources        Sources          `yaml:"sources"`
+	Configs        ConfigDefsOrRefs `yaml:"configs"`
+	Secrets        SecretDefsOrRefs `yaml:"secrets"`
 }
 
 type Service struct {
@@ -110,6 +120,9 @@ type Service struct {
 	Ports            []Port                   `yaml:"ports"`
 	Mode             string                   `yaml:"mode"`
 	Replicas         int                      `yaml:"replicas"`
+	RestartPolicy    *RestartPolicy           `yaml:"restart_policy"`
+	UpdateConfig     *UpdatePolicy            `yaml:"update_config"`
+	RollbackConfig   *UpdatePolicy            `yaml:"rollback_config"`
 	Labels           map[string]string        `yaml:"labels"`
 	Placement        Placement                `yaml:"placement"`
 	Healthcheck      map[string]any           `yaml:"healthcheck"`
@@ -120,6 +133,7 @@ type Service struct {
 	Configs          []ConfigRef              `yaml:"configs"`
 	Secrets          []SecretRef              `yaml:"secrets"`
 	Volumes          []VolumeRef              `yaml:"volumes"`
+	Overlays         ServiceOverlays          `yaml:"overlays"`
 	Sources          Sources                  `yaml:"sources"`
 	BaseDir          string                   `yaml:"-"`
 }
@@ -131,6 +145,22 @@ type ServiceNetworkEphemeral struct {
 
 type Placement struct {
 	Constraints []string `yaml:"constraints"`
+}
+
+type RestartPolicy struct {
+	Condition   *string `yaml:"condition"`
+	Delay       *string `yaml:"delay"`
+	MaxAttempts *int    `yaml:"max_attempts"`
+	Window      *string `yaml:"window"`
+}
+
+type UpdatePolicy struct {
+	Parallelism     *int     `yaml:"parallelism"`
+	Delay           *string  `yaml:"delay"`
+	FailureAction   *string  `yaml:"failure_action"`
+	Monitor         *string  `yaml:"monitor"`
+	MaxFailureRatio *float64 `yaml:"max_failure_ratio"`
+	Order           *string  `yaml:"order"`
 }
 
 type ConfigRef struct {

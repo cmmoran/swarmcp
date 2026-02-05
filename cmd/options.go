@@ -17,9 +17,10 @@ type Options struct {
 	Prune           bool
 	PruneServices   bool
 	Preserve        int
-	StackParallel   int
+	Serial          bool
 	NoUI            bool
-	NoConfirm       bool
+	Confirm         bool
 	Offline         bool
 	PruneAutoLabels bool
+	DiffSources     bool
 }

@@ -61,7 +61,7 @@ Edit `examples/nginx/values/values.yaml.tmpl` and change `index_message`, then r
 `swarmcp apply` only removes stale managed configs/secrets when `--prune` is set.
 To clean up this example:
 1) Remove or rename the config/secret entries in `examples/nginx/project.yaml`.
-2) Re-run `swarmcp apply --prune` with the same flags (add `--no-confirm` to skip the prompt).
+2) Re-run `swarmcp apply --prune` with the same flags (add `--confirm` to enable the prompt).
 3) Optionally pass `--preserve 0` to remove all unused resources; otherwise the default
    preserve count applies.
 

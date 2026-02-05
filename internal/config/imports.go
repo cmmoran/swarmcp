@@ -253,7 +253,12 @@ func applyStackBaseDirs(stack Stack) Stack {
 
 func hasStackLocalFields(stack Stack) bool {
 	if stack.Mode != "" ||
+		stack.RestartPolicy != nil ||
+		stack.UpdateConfig != nil ||
+		stack.RollbackConfig != nil ||
 		len(stack.Partitions) > 0 ||
+		len(stack.Overlays.Deployments) > 0 ||
+		len(stack.Overlays.Partitions.Rules) > 0 ||
 		hasSources(stack.Sources) ||
 		len(stack.Configs.Defs) > 0 ||
 		len(stack.Secrets.Defs) > 0 ||
@@ -273,6 +278,9 @@ func hasServiceLocalFields(service Service) bool {
 		len(service.Ports) > 0 ||
 		service.Mode != "" ||
 		service.Replicas != 0 ||
+		service.RestartPolicy != nil ||
+		service.UpdateConfig != nil ||
+		service.RollbackConfig != nil ||
 		len(service.Labels) > 0 ||
 		len(service.Placement.Constraints) > 0 ||
 		service.Healthcheck != nil ||
@@ -283,6 +291,8 @@ func hasServiceLocalFields(service Service) bool {
 		len(service.Configs) > 0 ||
 		len(service.Secrets) > 0 ||
 		len(service.Volumes) > 0 ||
+		len(service.Overlays.Deployments) > 0 ||
+		len(service.Overlays.Partitions.Rules) > 0 ||
 		hasSources(service.Sources) {
 		return true
 	}

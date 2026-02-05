@@ -7,10 +7,8 @@ import (
 	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/config"
-	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/cmmoran/swarmcp/internal/sliceutil"
 	"github.com/cmmoran/swarmcp/internal/swarm"
-	"github.com/cmmoran/swarmcp/internal/templates"
 	"github.com/docker/docker/api/types/mount"
 	dockerapi "github.com/docker/docker/api/types/swarm"
 )
@@ -24,10 +22,22 @@ type ServiceState struct {
 	IntentMatch   bool
 	IntentDiffs   []string
 	IntentDetails []IntentDetail
+	IntentCurrent *ServiceIntentSnapshot
+	IntentDesired *ServiceIntentSnapshot
 	Unmanaged     []string
 	Desired       int
 	Running       int
 	Health        string
+}
+
+type ServiceIntentSnapshot struct {
+	Labels  map[string]string
+	Env     []string
+	Command []string
+	Args    []string
+	Configs []ServiceMount
+	Secrets []ServiceMount
+	Volumes []mount.Mount
 }
 
 type IntentDetail struct {
@@ -173,65 +183,10 @@ func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, d
 		return StatusReport{}, err
 	}
 	for _, expected := range expectedServices {
-		networkEphemeral := ""
-		if expected.Service.NetworkEphemeral != nil {
-			stack := cfg.Stacks[expected.Stack]
-			networkEphemeral = config.EphemeralNetworkName(cfg, expected.Stack, stack.Mode, expected.Partition, expected.Name)
-		}
-		scope := templates.Scope{
-			Project:          cfg.Project.Name,
-			Deployment:       cfg.Project.Deployment,
-			Stack:            expected.Stack,
-			Partition:        expected.Partition,
-			Service:          expected.Name,
-			NetworksShared:   config.NetworksSharedString(cfg, expected.Partition),
-			NetworkEphemeral: networkEphemeral,
-		}
-		var inferredConfigs map[string]struct{}
-		var inferredSecrets map[string]struct{}
-		var trace func(templates.TraceCall)
-		if infer {
-			inferredConfigs = make(map[string]struct{})
-			inferredSecrets = make(map[string]struct{})
-			trace = func(call templates.TraceCall) {
-				switch call.Func {
-				case "config_ref":
-					inferredConfigs[call.Name] = struct{}{}
-				case "secret_ref":
-					inferredSecrets[call.Name] = struct{}{}
-				}
-			}
-		}
-		resolver, engine, templateData := render.NewServiceTemplateEngine(cfg, scope, values, infer, trace)
-
-		renderedService, err := render.RenderServiceTemplates(engine, templateData, expected.Service)
+		build, err := buildServiceIntent(cfg, expected.Stack, cfg.Stacks[expected.Stack], expected.Partition, expected.Name, expected.Service, values, infer, defIndex)
 		if err != nil {
 			return StatusReport{}, err
 		}
-		if infer {
-			renderedService.Configs = mergeConfigRefs(renderedService.Configs, inferredConfigs)
-			renderedService.Secrets = mergeSecretRefs(renderedService.Secrets, inferredSecrets)
-			extraConfigs, extraSecrets, err := render.InferTemplateRefDeps(cfg, scope, renderedService.Configs, renderedService.Secrets)
-			if err != nil {
-				return StatusReport{}, err
-			}
-			renderedService.Configs = mergeConfigRefs(renderedService.Configs, extraConfigs)
-			renderedService.Secrets = mergeSecretRefs(renderedService.Secrets, extraSecrets)
-		}
-
-		configMounts, err := desiredConfigMounts(resolver, engine, templateData, defIndex, scope, renderedService.Configs, infer)
-		if err != nil {
-			return StatusReport{}, err
-		}
-		secretMounts, err := desiredSecretMounts(resolver, engine, templateData, defIndex, scope, renderedService.Secrets, infer)
-		if err != nil {
-			return StatusReport{}, err
-		}
-		volumeMounts, err := desiredVolumeMounts(cfg, engine, templateData, expected.Stack, cfg.Stacks[expected.Stack], expected.Partition, expected.Name, renderedService)
-		if err != nil {
-			return StatusReport{}, err
-		}
-		serviceNetworks := desiredServiceNetworks(cfg, expected.Stack, cfg.Stacks[expected.Stack].Mode, expected.Partition, expected.Name, renderedService)
 
 		key := serviceKey{
 			project:   cfg.Project.Name,
@@ -252,20 +207,14 @@ func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, d
 			continue
 		}
 
-		labels, err := serviceLabels(scope, expected.Name, renderedService.Labels, resolver, templateData)
-		if err != nil {
-			return StatusReport{}, err
-		}
-		constraints := desiredPlacementConstraints(cfg, expected.Stack, cfg.Stacks[expected.Stack], expected.Partition, expected.Name, renderedService)
-		desiredIntent, err := intentFromConfig(renderedService, labels, constraints, configMounts, secretMounts, volumeMounts, serviceNetworks)
-		if err != nil {
-			return StatusReport{}, err
-		}
+		desiredIntent := build.Intent
 		currentIntent := intentFromSpec(current.Spec, networkTargets)
 		compareCurrent := canonicalizeIntentForCompare(currentIntent)
 		compareDesired := canonicalizeIntentForCompare(desiredIntent)
 		state.IntentDiffs = intentDiffs(compareCurrent, compareDesired)
 		state.IntentDetails = intentDetails(currentIntent, desiredIntent, state.IntentDiffs)
+		state.IntentCurrent = intentSnapshot(compareCurrent)
+		state.IntentDesired = intentSnapshot(compareDesired)
 		state.MountsMatch = mountSlicesEqual(compareCurrent.Configs, compareDesired.Configs) &&
 			mountSlicesEqual(compareCurrent.Secrets, compareDesired.Secrets) &&
 			volumeMountsEqual(compareCurrent.Volumes, compareDesired.Volumes)
@@ -277,28 +226,6 @@ func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, d
 	}
 
 	return report, nil
-}
-
-func configLabelDrift(expected, actual map[string]string, projectName string) string {
-	if len(actual) == 0 {
-		return "labels missing"
-	}
-	if !isManagedProject(actual, projectName) {
-		return "unmanaged resource with matching name"
-	}
-	if expected == nil {
-		return ""
-	}
-	if expected[render.LabelName] != "" && actual[render.LabelName] != expected[render.LabelName] {
-		return "logical name label mismatch"
-	}
-	if expected[render.LabelProject] != "" && actual[render.LabelProject] != expected[render.LabelProject] {
-		return "project label mismatch"
-	}
-	if expected[render.LabelHash] != "" && actual[render.LabelHash] != expected[render.LabelHash] {
-		return "hash label mismatch"
-	}
-	return ""
 }
 
 func intentDiffs(current, desired serviceIntent) []string {
@@ -335,6 +262,15 @@ func intentDiffs(current, desired serviceIntent) []string {
 	if !healthcheckEqual(current.Healthcheck, desired.Healthcheck) {
 		diffs = append(diffs, "healthcheck")
 	}
+	if !restartPoliciesEqual(current.RestartPolicy, desired.RestartPolicy) {
+		diffs = append(diffs, "restart_policy")
+	}
+	if !updateConfigsEqual(current.UpdateConfig, desired.UpdateConfig) {
+		diffs = append(diffs, "update_config")
+	}
+	if !updateConfigsEqual(current.RollbackConfig, desired.RollbackConfig) {
+		diffs = append(diffs, "rollback_config")
+	}
 	if !mountSlicesEqual(current.Configs, desired.Configs) {
 		diffs = append(diffs, "configs")
 	}
@@ -352,15 +288,6 @@ func intentDiffs(current, desired serviceIntent) []string {
 
 func unmanagedSpecDiffs(spec dockerapi.ServiceSpec) []string {
 	var diffs []string
-	if spec.UpdateConfig != nil {
-		diffs = append(diffs, "update_config")
-	}
-	if spec.RollbackConfig != nil {
-		diffs = append(diffs, "rollback_config")
-	}
-	if spec.TaskTemplate.RestartPolicy != nil {
-		diffs = append(diffs, "restart_policy")
-	}
 	if spec.TaskTemplate.Resources != nil {
 		if spec.TaskTemplate.Resources.Limits != nil || spec.TaskTemplate.Resources.Reservations != nil {
 			diffs = append(diffs, "resources")
@@ -431,6 +358,24 @@ func intentDetails(current, desired serviceIntent, diffs []string) []IntentDetai
 				Current: fmt.Sprintf("%v", current.Healthcheck),
 				Desired: fmt.Sprintf("%v", desired.Healthcheck),
 			})
+		case "restart_policy":
+			details = append(details, IntentDetail{
+				Field:   diff,
+				Current: formatRestartPolicy(current.RestartPolicy),
+				Desired: formatRestartPolicy(desired.RestartPolicy),
+			})
+		case "update_config":
+			details = append(details, IntentDetail{
+				Field:   diff,
+				Current: formatUpdateConfig(current.UpdateConfig),
+				Desired: formatUpdateConfig(desired.UpdateConfig),
+			})
+		case "rollback_config":
+			details = append(details, IntentDetail{
+				Field:   diff,
+				Current: formatUpdateConfig(current.RollbackConfig),
+				Desired: formatUpdateConfig(desired.RollbackConfig),
+			})
 		case "configs":
 			details = append(details, IntentDetail{
 				Field:   diff,
@@ -461,6 +406,27 @@ func intentDetails(current, desired serviceIntent, diffs []string) []IntentDetai
 		return nil
 	}
 	return details
+}
+
+func intentSnapshot(intent serviceIntent) *ServiceIntentSnapshot {
+	return &ServiceIntentSnapshot{
+		Labels:  cloneLabels(intent.Labels),
+		Env:     cloneStrings(intent.Env),
+		Command: cloneStrings(intent.Command),
+		Args:    cloneStrings(intent.Args),
+		Configs: cloneServiceMounts(intent.Configs),
+		Secrets: cloneServiceMounts(intent.Secrets),
+		Volumes: cloneMounts(intent.Volumes),
+	}
+}
+
+func cloneServiceMounts(items []ServiceMount) []ServiceMount {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]ServiceMount, len(items))
+	copy(out, items)
+	return out
 }
 
 func formatStringSlice(values []string) string {

@@ -30,6 +30,22 @@ func SetSourcesBaseDir(cfg *Config) {
 			service.Sources.Base = service.BaseDir
 			stack.Services[serviceName] = service
 		}
+		for name, overlay := range stack.Overlays.Deployments {
+			overlay.Sources.Base = stack.BaseDir
+			for partitionName, partition := range overlay.Partitions {
+				partition.Sources.Base = stack.BaseDir
+				overlay.Partitions[partitionName] = partition
+			}
+			stack.Overlays.Deployments[name] = overlay
+		}
+		for i, rule := range stack.Overlays.Partitions.Rules {
+			rule.Sources.Base = stack.BaseDir
+			for partitionName, partition := range rule.Partitions {
+				partition.Sources.Base = stack.BaseDir
+				rule.Partitions[partitionName] = partition
+			}
+			stack.Overlays.Partitions.Rules[i] = rule
+		}
 		cfg.Stacks[stackName] = stack
 	}
 	for name, overlay := range cfg.Overlays.Deployments {
@@ -44,17 +60,17 @@ func SetSourcesBaseDir(cfg *Config) {
 		}
 		cfg.Overlays.Deployments[name] = overlay
 	}
-	for name, overlay := range cfg.Overlays.Partitions {
-		overlay.Project.Sources.Base = cfg.BaseDir
-		for stackName, stack := range overlay.Stacks {
+	for i, rule := range cfg.Overlays.Partitions.Rules {
+		rule.Project.Sources.Base = cfg.BaseDir
+		for stackName, stack := range rule.Stacks {
 			stack.Sources.Base = cfg.BaseDir
 			for partitionName, partition := range stack.Partitions {
 				partition.Sources.Base = cfg.BaseDir
 				stack.Partitions[partitionName] = partition
 			}
-			overlay.Stacks[stackName] = stack
+			rule.Stacks[stackName] = stack
 		}
-		cfg.Overlays.Partitions[name] = overlay
+		cfg.Overlays.Partitions.Rules[i] = rule
 	}
 }
 
@@ -98,6 +114,14 @@ func ApplySourceBaseDir(cfg *Config, opts LoadOptions) error {
 		if err != nil {
 			return err
 		}
+		stack.Overlays.Deployments, err = applyStackOverlaySources(stack.Overlays.Deployments, stackSources, opts)
+		if err != nil {
+			return err
+		}
+		stack.Overlays.Partitions, err = applyStackPartitionOverlaySources(stack.Overlays.Partitions, stackSources, opts)
+		if err != nil {
+			return err
+		}
 		cfg.Stacks[stackName] = stack
 	}
 
@@ -105,7 +129,7 @@ func ApplySourceBaseDir(cfg *Config, opts LoadOptions) error {
 	if err != nil {
 		return err
 	}
-	cfg.Overlays.Partitions, err = applyOverlaySources(cfg.Overlays.Partitions, projectSources, opts)
+	cfg.Overlays.Partitions, err = applyPartitionOverlaySources(cfg.Overlays.Partitions, projectSources, opts)
 	if err != nil {
 		return err
 	}
@@ -180,6 +204,79 @@ func applyOverlaySources(overlays map[string]Overlay, fallback Sources, opts Loa
 			overlay.Stacks[stackName] = stack
 		}
 		overlays[name] = overlay
+	}
+	return overlays, nil
+}
+
+func applyPartitionOverlaySources(overlays PartitionOverlays, fallback Sources, opts LoadOptions) (PartitionOverlays, error) {
+	if len(overlays.Rules) == 0 {
+		return overlays, nil
+	}
+	for i, rule := range overlays.Rules {
+		overlay, err := applyOverlaySources(map[string]Overlay{"rule": rule.Overlay}, fallback, opts)
+		if err != nil {
+			return overlays, err
+		}
+		if applied, ok := overlay["rule"]; ok {
+			rule.Overlay = applied
+		}
+		overlays.Rules[i] = rule
+	}
+	return overlays, nil
+}
+
+func applyStackOverlaySources(overlays map[string]OverlayStack, fallback Sources, opts LoadOptions) (map[string]OverlayStack, error) {
+	if len(overlays) == 0 {
+		return overlays, nil
+	}
+	for name, overlay := range overlays {
+		stackSources := effectiveSources(overlay.Sources, fallback)
+		stackRoot, err := resolveSourcesRoot(stackSources, opts)
+		if err != nil {
+			return nil, err
+		}
+		overlay.Configs.Defs, err = applyConfigDefSources(overlay.Configs.Defs, stackRoot, opts)
+		if err != nil {
+			return nil, err
+		}
+		overlay.Secrets.Defs, err = applySecretDefSources(overlay.Secrets.Defs, stackRoot, opts)
+		if err != nil {
+			return nil, err
+		}
+		for partitionName, partition := range overlay.Partitions {
+			partitionSources := effectiveSources(partition.Sources, stackSources)
+			partitionRoot, err := resolveSourcesRoot(partitionSources, opts)
+			if err != nil {
+				return nil, err
+			}
+			partition.Configs.Defs, err = applyConfigDefSources(partition.Configs.Defs, partitionRoot, opts)
+			if err != nil {
+				return nil, err
+			}
+			partition.Secrets.Defs, err = applySecretDefSources(partition.Secrets.Defs, partitionRoot, opts)
+			if err != nil {
+				return nil, err
+			}
+			overlay.Partitions[partitionName] = partition
+		}
+		overlays[name] = overlay
+	}
+	return overlays, nil
+}
+
+func applyStackPartitionOverlaySources(overlays StackPartitionOverlays, fallback Sources, opts LoadOptions) (StackPartitionOverlays, error) {
+	if len(overlays.Rules) == 0 {
+		return overlays, nil
+	}
+	for i, rule := range overlays.Rules {
+		overlay, err := applyStackOverlaySources(map[string]OverlayStack{"rule": rule.OverlayStack}, fallback, opts)
+		if err != nil {
+			return overlays, err
+		}
+		if applied, ok := overlay["rule"]; ok {
+			rule.OverlayStack = applied
+		}
+		overlays.Rules[i] = rule
 	}
 	return overlays, nil
 }
@@ -320,6 +417,11 @@ func resolveSourcesRoot(s Sources, opts LoadOptions) (string, error) {
 		return resolveAbsolutePath(s.Path)
 	}
 	return resolvePathWithin(base, s.Path, opts)
+}
+
+// ResolveSourcesRoot resolves the effective root path for a Sources definition.
+func ResolveSourcesRoot(s Sources, opts LoadOptions) (string, error) {
+	return resolveSourcesRoot(s, opts)
 }
 
 func resolvePathWithin(root string, path string, opts LoadOptions) (string, error) {

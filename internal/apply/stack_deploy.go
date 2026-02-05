@@ -13,9 +13,7 @@ import (
 	"time"
 
 	"github.com/cmmoran/swarmcp/internal/config"
-	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/cmmoran/swarmcp/internal/sliceutil"
-	"github.com/cmmoran/swarmcp/internal/templates"
 	"github.com/docker/docker/api/types/mount"
 	"gopkg.in/yaml.v3"
 )
@@ -89,10 +87,13 @@ type composeNetwork struct {
 }
 
 type composeDeploy struct {
-	Mode      string            `yaml:"mode,omitempty"`
-	Replicas  *int              `yaml:"replicas,omitempty"`
-	Labels    map[string]string `yaml:"labels,omitempty"`
-	Placement *composePlacement `yaml:"placement,omitempty"`
+	Mode           string                `yaml:"mode,omitempty"`
+	Replicas       *int                  `yaml:"replicas,omitempty"`
+	Labels         map[string]string     `yaml:"labels,omitempty"`
+	Placement      *composePlacement     `yaml:"placement,omitempty"`
+	RestartPolicy  *composeRestartPolicy `yaml:"restart_policy,omitempty"`
+	UpdateConfig   *composeUpdateConfig  `yaml:"update_config,omitempty"`
+	RollbackConfig *composeUpdateConfig  `yaml:"rollback_config,omitempty"`
 }
 
 type composeExternal struct {
@@ -161,63 +162,14 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 			networks := make(map[string]composeNetwork)
 			volumes := make(map[string]composeVolume)
 			for serviceName, service := range services {
-				networkEphemeral := ""
-				if service.NetworkEphemeral != nil {
-					networkEphemeral = config.EphemeralNetworkName(cfg, stackName, stack.Mode, partitionName, serviceName)
-				}
-				scope := templates.Scope{
-					Project:          cfg.Project.Name,
-					Deployment:       cfg.Project.Deployment,
-					Stack:            stackName,
-					Partition:        partitionName,
-					Service:          serviceName,
-					NetworksShared:   config.NetworksSharedString(cfg, partitionName),
-					NetworkEphemeral: networkEphemeral,
-				}
-				var inferredConfigs map[string]struct{}
-				var inferredSecrets map[string]struct{}
-				var trace func(templates.TraceCall)
-				if infer {
-					inferredConfigs = make(map[string]struct{})
-					inferredSecrets = make(map[string]struct{})
-					trace = func(call templates.TraceCall) {
-						switch call.Func {
-						case "config_ref":
-							inferredConfigs[call.Name] = struct{}{}
-						case "secret_ref":
-							inferredSecrets[call.Name] = struct{}{}
-						}
-					}
-				}
-				resolver, engine, templateData := render.NewServiceTemplateEngine(cfg, scope, values, infer, trace)
-
-				renderedService, err := render.RenderServiceTemplates(engine, templateData, service)
+				build, err := buildServiceIntent(cfg, stackName, stack, partitionName, serviceName, service, values, infer, index)
 				if err != nil {
 					return nil, err
 				}
-				if infer {
-					renderedService.Configs = mergeConfigRefs(renderedService.Configs, inferredConfigs)
-					renderedService.Secrets = mergeSecretRefs(renderedService.Secrets, inferredSecrets)
-					extraConfigs, extraSecrets, err := render.InferTemplateRefDeps(cfg, scope, renderedService.Configs, renderedService.Secrets)
-					if err != nil {
-						return nil, err
-					}
-					renderedService.Configs = mergeConfigRefs(renderedService.Configs, extraConfigs)
-					renderedService.Secrets = mergeSecretRefs(renderedService.Secrets, extraSecrets)
-				}
-
-				configMounts, err := desiredConfigMounts(resolver, engine, templateData, index, scope, renderedService.Configs, infer)
-				if err != nil {
-					return nil, err
-				}
-				secretMounts, err := desiredSecretMounts(resolver, engine, templateData, index, scope, renderedService.Secrets, infer)
-				if err != nil {
-					return nil, err
-				}
-				volumeMounts, err := desiredVolumeMounts(cfg, engine, templateData, stackName, stack, partitionName, serviceName, renderedService)
-				if err != nil {
-					return nil, err
-				}
+				renderedService := build.Rendered
+				configMounts := build.ConfigMounts
+				secretMounts := build.SecretMounts
+				volumeMounts := build.VolumeMounts
 				if err := addComposeVolumes(cfg, stackName, stack, partitionName, serviceName, renderedService, volumes); err != nil {
 					return nil, err
 				}
@@ -234,12 +186,11 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 						}
 					}
 				}
-				constraints := desiredPlacementConstraints(cfg, stackName, stack, partitionName, serviceName, renderedService)
-				labels, err := serviceLabels(scope, serviceName, renderedService.Labels, resolver, templateData)
+
+				deploySpec, err := composeDeploySpec(renderedService, build.Constraints, build.Labels, renderedService.RestartPolicy, renderedService.UpdateConfig, renderedService.RollbackConfig)
 				if err != nil {
 					return nil, err
 				}
-
 				composeService := composeService{
 					Image:       renderedService.Image,
 					Entrypoint:  cloneStrings(renderedService.Command),
@@ -252,7 +203,7 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 					Volumes:     composeMounts(volumeMounts),
 					Networks:    serviceNetworks,
 					Healthcheck: renderedService.Healthcheck,
-					Deploy:      composeDeploySpec(renderedService, constraints, labels),
+					Deploy:      deploySpec,
 				}
 				compose.Services[serviceName] = composeService
 
@@ -301,7 +252,10 @@ func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string,
 		return nil
 	}
 	if parallel < 1 {
-		parallel = 1
+		parallel = len(stacks)
+		if parallel < 1 {
+			parallel = 1
+		}
 	}
 
 	var once sync.Once
@@ -537,7 +491,7 @@ func writeStackCompose(deploy StackDeploy) (string, error) {
 	return filepath.Clean(file.Name()), nil
 }
 
-func composeDeploySpec(service config.Service, constraints []string, labels map[string]string) *composeDeploy {
+func composeDeploySpec(service config.Service, constraints []string, labels map[string]string, restartPolicy *config.RestartPolicy, updatePolicy *config.UpdatePolicy, rollbackPolicy *config.UpdatePolicy) (*composeDeploy, error) {
 	mode := strings.TrimSpace(strings.ToLower(service.Mode))
 	if mode == "" {
 		mode = "replicated"
@@ -546,6 +500,27 @@ func composeDeploySpec(service config.Service, constraints []string, labels map[
 		Mode:   mode,
 		Labels: labels,
 	}
+	if restartPolicy != nil {
+		policy, err := composeRestartPolicySpec(restartPolicy)
+		if err != nil {
+			return nil, err
+		}
+		deploy.RestartPolicy = policy
+	}
+	if updatePolicy != nil {
+		configSpec, err := composeUpdateConfigSpec(updatePolicy, "update_config")
+		if err != nil {
+			return nil, err
+		}
+		deploy.UpdateConfig = configSpec
+	}
+	if rollbackPolicy != nil {
+		configSpec, err := composeUpdateConfigSpec(rollbackPolicy, "rollback_config")
+		if err != nil {
+			return nil, err
+		}
+		deploy.RollbackConfig = configSpec
+	}
 	if mode != "global" {
 		replicas := service.Replicas
 		deploy.Replicas = &replicas
@@ -553,7 +528,7 @@ func composeDeploySpec(service config.Service, constraints []string, labels map[
 	if len(constraints) > 0 {
 		deploy.Placement = &composePlacement{Constraints: cloneStrings(constraints)}
 	}
-	return deploy
+	return deploy, nil
 }
 
 func ephemeralNetworkSettings(spec *config.ServiceNetworkEphemeral) (bool, bool) {

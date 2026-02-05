@@ -3,9 +3,11 @@ package config
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/dlclark/regexp2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -190,6 +192,9 @@ func Validate(cfg *Config) error {
 	if err := validateSecretDefs("project.secrets", cfg.Project.Secrets); err != nil {
 		errs = append(errs, err.Error())
 	}
+	errs = append(errs, validateRestartPolicy("project.restart_policy", cfg.Project.RestartPolicy)...)
+	errs = append(errs, validateUpdatePolicy("project.update_config", cfg.Project.UpdateConfig)...)
+	errs = append(errs, validateUpdatePolicy("project.rollback_config", cfg.Project.RollbackConfig)...)
 	if err := validateSecretsEngine(cfg.Project.SecretsEngine); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -208,7 +213,7 @@ func Validate(cfg *Config) error {
 		if err := validateLogicalName("stack "+stackName, stackName); err != nil {
 			errs = append(errs, err.Error())
 		}
-		if err := validateStack(stackName, stack, cfg.Project.Defaults.Volumes.Standards, serviceStandard); err != nil {
+		if err := validateStack(cfg, stackName, stack, cfg.Project.Defaults.Volumes.Standards, serviceStandard); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
@@ -317,12 +322,15 @@ func ValidateDeployment(cfg *Config) error {
 	return nil
 }
 
-func validateStack(name string, stack Stack, standards map[string]StandardMount, serviceStandard string) error {
+func validateStack(cfg *Config, name string, stack Stack, standards map[string]StandardMount, serviceStandard string) error {
 	var errs []string
 
 	if stack.Mode != "" && stack.Mode != "shared" && stack.Mode != "partitioned" {
 		errs = append(errs, fmt.Sprintf("stack %q: invalid mode %q", name, stack.Mode))
 	}
+	errs = append(errs, validateRestartPolicy("stack "+name+".restart_policy", stack.RestartPolicy)...)
+	errs = append(errs, validateUpdatePolicy("stack "+name+".update_config", stack.UpdateConfig)...)
+	errs = append(errs, validateUpdatePolicy("stack "+name+".rollback_config", stack.RollbackConfig)...)
 	if name == "core" && stack.Mode == "partitioned" {
 		errs = append(errs, "stack \"core\": reserved for shared stack mode")
 	}
@@ -341,6 +349,9 @@ func validateStack(name string, stack Stack, standards map[string]StandardMount,
 		if err := validateLogicalName("stack "+name+" partition "+partitionName, partitionName); err != nil {
 			errs = append(errs, err.Error())
 		}
+		errs = append(errs, validateRestartPolicy("stack "+name+".partitions."+partitionName+".restart_policy", partition.RestartPolicy)...)
+		errs = append(errs, validateUpdatePolicy("stack "+name+".partitions."+partitionName+".update_config", partition.UpdateConfig)...)
+		errs = append(errs, validateUpdatePolicy("stack "+name+".partitions."+partitionName+".rollback_config", partition.RollbackConfig)...)
 		if err := validateConfigDefs("stack "+name+".partition "+partitionName+".configs", partition.Configs.Defs); err != nil {
 			errs = append(errs, err.Error())
 		}
@@ -367,8 +378,14 @@ func validateStack(name string, stack Stack, standards map[string]StandardMount,
 		if err := validateServiceVolumes("stack "+name+".services."+serviceName+".volumes", service.Volumes, standards, serviceStandard); err != nil {
 			errs = append(errs, err.Error())
 		}
+		if err := validateServiceOverlays(cfg, name, serviceName, service, stack.Services, standards, serviceStandard); err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
 	if err := validateStackVolumes("stack "+name+".volumes", stack.Volumes); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateStackOverlays(cfg, name, stack); err != nil {
 		errs = append(errs, err.Error())
 	}
 
@@ -395,6 +412,9 @@ func validateService(stackName string, serviceName string, service Service, serv
 	if service.Replicas < 0 {
 		errs = append(errs, fmt.Sprintf("%s.replicas: must be >= 0", scope))
 	}
+	errs = append(errs, validateRestartPolicy(scope+".restart_policy", service.RestartPolicy)...)
+	errs = append(errs, validateUpdatePolicy(scope+".update_config", service.UpdateConfig)...)
+	errs = append(errs, validateUpdatePolicy(scope+".rollback_config", service.RollbackConfig)...)
 	if len(service.Networks) > 0 {
 		errs = append(errs, fmt.Sprintf("%s.networks: networks are derived; remove service-level networks", scope))
 	}
@@ -812,25 +832,29 @@ func validatePartitionOverlays(cfg *Config) error {
 		partitions[name] = true
 	}
 
-	for name, overlay := range cfg.Overlays.Partitions {
-		if name == "_" {
+	for idx, rule := range cfg.Overlays.Partitions.Rules {
+		scope := fmt.Sprintf("overlays.partitions[%d]", idx)
+		if rule.Name != "" {
+			scope = fmt.Sprintf("%s(%s)", scope, rule.Name)
+		}
+		if rule.Name == "_" {
 			errs = append(errs, "overlay partition '_' is reserved")
 		}
-		if err := validateLogicalName("overlay partition "+name, name); err != nil {
+		if rule.Name != "" {
+			if err := validateLogicalName("overlay partition "+rule.Name, rule.Name); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+		errs = append(errs, validatePartitionMatch(scope, rule.Match.Partition, partitions)...)
+		if err := validateOverlayProject(scope+".project", rule.Project); err != nil {
 			errs = append(errs, err.Error())
 		}
-		if !partitions[name] {
-			errs = append(errs, fmt.Sprintf("overlays.partitions.%s: partition not found in project.partitions", name))
-		}
-		if err := validateOverlayProject("overlays.partitions."+name+".project", overlay.Project); err != nil {
-			errs = append(errs, err.Error())
-		}
-		for stackName, stack := range overlay.Stacks {
+		for stackName, stack := range rule.Stacks {
 			if _, ok := cfg.Stacks[stackName]; !ok {
-				errs = append(errs, fmt.Sprintf("overlays.partitions.%s.stacks: stack %q not found", name, stackName))
+				errs = append(errs, fmt.Sprintf("%s.stacks: stack %q not found", scope, stackName))
 				continue
 			}
-			if err := validateOverlayStack("overlays.partitions."+name+".stacks."+stackName, stackName, stack, cfg); err != nil {
+			if err := validateOverlayStack(scope+".stacks."+stackName, stackName, stack, cfg); err != nil {
 				errs = append(errs, err.Error())
 			}
 		}
@@ -875,10 +899,10 @@ func validateOverlayStack(scope string, stackName string, stack OverlayStack, cf
 		mergedServices[name] = service
 	}
 	for serviceName, service := range stack.Services {
-		if _, ok := service["source"]; ok {
+		if _, ok := service.Fields["source"]; ok {
 			errs = append(errs, fmt.Sprintf("%s.services.%s.source: overrides do not support source", scope, serviceName))
 		}
-		if _, ok := service["overrides"]; ok {
+		if _, ok := service.Fields["overrides"]; ok {
 			errs = append(errs, fmt.Sprintf("%s.services.%s.overrides: overrides are not supported in overlays", scope, serviceName))
 		}
 		base := baseServices[serviceName]
@@ -922,6 +946,151 @@ func validateOverlayStack(scope string, stackName string, stack OverlayStack, cf
 		if err := validateSecretDefs(scope+".partitions."+partitionName+".secrets", partition.Secrets.Defs); err != nil {
 			errs = append(errs, err.Error())
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", joinErrors(errs))
+	}
+	return nil
+}
+
+func validatePartitionMatch(scope string, match OverlayMatchPartition, partitions map[string]bool) []string {
+	var errs []string
+	pattern := strings.TrimSpace(match.Pattern)
+	if pattern == "" {
+		return nil
+	}
+	matchType := strings.ToLower(strings.TrimSpace(match.Type))
+	if matchType == "" {
+		if hasGlob(pattern) {
+			matchType = "glob"
+		} else {
+			matchType = "exact"
+		}
+	}
+	switch matchType {
+	case "exact":
+		if !partitions[pattern] {
+			errs = append(errs, fmt.Sprintf("%s.match.partition: partition %q not found in project.partitions", scope, pattern))
+		}
+	case "glob":
+		if _, err := path.Match(pattern, "partition"); err != nil {
+			errs = append(errs, fmt.Sprintf("%s.match.partition: invalid glob pattern: %v", scope, err))
+		}
+	case "regexp":
+		if _, err := regexp2.Compile(pattern, regexp2.RE2); err != nil {
+			errs = append(errs, fmt.Sprintf("%s.match.partition: invalid regexp: %v", scope, err))
+		}
+	default:
+		errs = append(errs, fmt.Sprintf("%s.match.partition: unsupported match type %q", scope, matchType))
+	}
+	return errs
+}
+
+func validateStackOverlays(cfg *Config, stackName string, stack Stack) error {
+	var errs []string
+	partitions := make(map[string]bool, len(cfg.Project.Partitions))
+	for _, name := range cfg.Project.Partitions {
+		partitions[name] = true
+	}
+	for name, overlay := range stack.Overlays.Deployments {
+		if err := validateLogicalName("stack "+stackName+" overlay deployment "+name, name); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if err := validateOverlayStack("stack "+stackName+".overlays.deployments."+name, stackName, overlay, cfg); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	for idx, rule := range stack.Overlays.Partitions.Rules {
+		scope := fmt.Sprintf("stack %s.overlays.partitions[%d]", stackName, idx)
+		if rule.Name != "" {
+			scope = fmt.Sprintf("%s(%s)", scope, rule.Name)
+		}
+		if rule.Name == "_" {
+			errs = append(errs, fmt.Sprintf("stack %q overlay partition '_' is reserved", stackName))
+		}
+		if rule.Name != "" {
+			if err := validateLogicalName("stack "+stackName+" overlay partition "+rule.Name, rule.Name); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+		errs = append(errs, validatePartitionMatch(scope, rule.Match.Partition, partitions)...)
+		if err := validateOverlayStack(scope, stackName, rule.OverlayStack, cfg); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", joinErrors(errs))
+	}
+	return nil
+}
+
+func validateServiceOverlays(cfg *Config, stackName string, serviceName string, service Service, services map[string]Service, standards map[string]StandardMount, serviceStandard string) error {
+	var errs []string
+	scope := "stack " + stackName + ".services." + serviceName + ".overlays"
+	partitions := make(map[string]bool, len(cfg.Project.Partitions))
+	for _, name := range cfg.Project.Partitions {
+		partitions[name] = true
+	}
+	for name, overlay := range service.Overlays.Deployments {
+		if err := validateLogicalName(scope+".deployments."+name, name); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if err := validateOverlayService(scope+".deployments."+name, stackName, serviceName, service, services, overlay, standards, serviceStandard); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	for idx, rule := range service.Overlays.Partitions.Rules {
+		overlayScope := fmt.Sprintf("%s.partitions[%d]", scope, idx)
+		if rule.Name != "" {
+			overlayScope = fmt.Sprintf("%s(%s)", overlayScope, rule.Name)
+		}
+		if rule.Name == "_" {
+			errs = append(errs, fmt.Sprintf("%s: overlay partition '_' is reserved", overlayScope))
+		}
+		if rule.Name != "" {
+			if err := validateLogicalName(scope+" partition "+rule.Name, rule.Name); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+		errs = append(errs, validatePartitionMatch(overlayScope, rule.Match.Partition, partitions)...)
+		if err := validateOverlayService(overlayScope, stackName, serviceName, service, services, rule.Service, standards, serviceStandard); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", joinErrors(errs))
+	}
+	return nil
+}
+
+func validateOverlayService(scope string, stackName string, serviceName string, base Service, services map[string]Service, overlay OverlayService, standards map[string]StandardMount, serviceStandard string) error {
+	var errs []string
+	if _, ok := overlay.Fields["source"]; ok {
+		errs = append(errs, fmt.Sprintf("%s: overlays do not support source", scope))
+	}
+	if _, ok := overlay.Fields["overrides"]; ok {
+		errs = append(errs, fmt.Sprintf("%s: overlays do not support overrides", scope))
+	}
+	merged, err := mergeServiceOverlay(base, overlay)
+	if err != nil {
+		return fmt.Errorf("%s: %v", scope, err)
+	}
+	mergedServices := map[string]Service{}
+	for name, svc := range services {
+		mergedServices[name] = svc
+	}
+	mergedServices[serviceName] = merged
+	if err := validateService(stackName, serviceName, merged, mergedServices, standards); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateServiceConfigs(scope+".configs", merged.Configs); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateServiceSecrets(scope+".secrets", merged.Secrets); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateServiceVolumes(scope+".volumes", merged.Volumes, standards, serviceStandard); err != nil {
+		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", joinErrors(errs))

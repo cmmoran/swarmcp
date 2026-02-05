@@ -11,8 +11,10 @@ import (
 	"github.com/cmmoran/swarmcp/internal/apply"
 	"github.com/cmmoran/swarmcp/internal/cmdutil"
 	"github.com/cmmoran/swarmcp/internal/config"
+	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/cmmoran/swarmcp/internal/state"
 	"github.com/cmmoran/swarmcp/internal/swarm"
+	"github.com/cmmoran/swarmcp/internal/templates"
 	"github.com/spf13/cobra"
 )
 
@@ -46,12 +48,9 @@ var diffCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
-		preserve := config.PreserveUnusedResources(cfg)
-		if flag := cmd.Flags().Lookup("preserve"); flag != nil && flag.Changed {
-			preserve = opts.Preserve
-		}
-		if preserve < 0 {
-			return fmt.Errorf("preserve must be >= 0")
+		preserve, err := resolvePreserve(cmd, cfg, opts)
+		if err != nil {
+			return err
 		}
 		report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilter, !opts.NoInfer, preserve)
 		if err != nil {
@@ -68,6 +67,10 @@ var diffCmd = &cobra.Command{
 		sortDriftItems(report.DriftSecrets)
 
 		changedServices, missingServices := splitServiceStates(report.Services)
+		debugContentEnabled := opts.DebugContent
+		if flag := cmd.Flags().Lookup("debug-content-max"); flag != nil && flag.Changed {
+			debugContentEnabled = true
+		}
 
 		out := cmd.OutOrStdout()
 		cmdutil.PrintWarnings(out, warnings)
@@ -142,8 +145,26 @@ var diffCmd = &cobra.Command{
 		if err := printStateDiff(out, opts.ConfigPath, report, changedServices, missingServices); err != nil {
 			return err
 		}
+		if opts.Debug || debugContentEnabled {
+			if err := printDiffDebug(out, context.Background(), client, report, changedServices, missingServices, diffDebugOptions{
+				Debug:           opts.Debug,
+				DebugContent:    debugContentEnabled,
+				DebugContentMax: opts.DebugContentMax,
+			}); err != nil {
+				return err
+			}
+		}
+		if opts.DiffSources {
+			if err := printSourcesDiff(out, cfg, desired.Defs, opts.Offline, opts.Debug); err != nil {
+				return err
+			}
+		}
 		return nil
 	},
+}
+
+func init() {
+	diffCmd.Flags().BoolVar(&opts.DiffSources, "sources", false, "Show external source changes per config/secret")
 }
 
 func sortConfigSpecs(items []swarm.ConfigSpec) {
@@ -259,6 +280,335 @@ func printStateDiff(out io.Writer, configPath string, report apply.StatusReport,
 		fmt.Fprintf(out, "  - %s: state=%d current=%d\n", delta.label, delta.stateValue, delta.currentValue)
 	}
 	return nil
+}
+
+type sourceDiffItem struct {
+	kind   string
+	name   string
+	scope  templates.Scope
+	source string
+}
+
+type sourceDiffResult struct {
+	before   config.SourceMetadata
+	beforeOK bool
+	after    config.SourceMetadata
+	err      error
+}
+
+func printSourcesDiff(out io.Writer, cfg *config.Config, defs []render.RenderedDef, offline bool, debug bool) error {
+	if cfg == nil {
+		return nil
+	}
+	if offline {
+		return fmt.Errorf("offline mode is enabled; disable --offline to diff sources")
+	}
+	items := collectSourceDiffItems(cfg, defs)
+	if len(items) == 0 {
+		fmt.Fprintln(out, "sources diff: none")
+		return nil
+	}
+	loadOpts := config.LoadOptions{CacheDir: cfg.CacheDir, Offline: offline, Debug: debug}
+	results := make(map[string]sourceDiffResult)
+	fmt.Fprintln(out, "sources diff:")
+	for _, item := range items {
+		label := fmt.Sprintf("%s %s (%s)", item.kind, item.name, cmdutil.ScopeLabel(item.scope))
+		source := strings.TrimSpace(item.source)
+		if source == "" {
+			fmt.Fprintf(out, "  - %s: missing source\n", label)
+			continue
+		}
+		if strings.HasPrefix(source, "inline:") {
+			fmt.Fprintf(out, "  - %s: skipped (inline)\n", label)
+			continue
+		}
+		if templates.IsValuesSource(source) {
+			fmt.Fprintf(out, "  - %s: skipped (values)\n", label)
+			continue
+		}
+		base, fragment := templates.SplitSource(source)
+		if base == "" {
+			fmt.Fprintf(out, "  - %s: skipped (empty source)\n", label)
+			continue
+		}
+		if !config.IsGitSource(base) {
+			if fragment != "" {
+				fmt.Fprintf(out, "  - %s: skipped (local source %s%s)\n", label, base, fragment)
+				continue
+			}
+			fmt.Fprintf(out, "  - %s: skipped (local source %s)\n", label, base)
+			continue
+		}
+		parsed, ok, err := config.ParseGitSource(base)
+		if err != nil || !ok {
+			fmt.Fprintf(out, "  - %s: invalid git source %s\n", label, base)
+			continue
+		}
+		key := fmt.Sprintf("%s@%s#%s", parsed.URL, parsed.Ref, parsed.Path)
+		result, ok := results[key]
+		if !ok {
+			before, beforeOK, err := config.ReadSourceMetadata(parsed.URL, parsed.Ref, parsed.Path, loadOpts)
+			if err != nil {
+				result.err = err
+			} else {
+				result.before = before
+				result.beforeOK = beforeOK && before.Commit != ""
+				result.after, result.err = config.FetchGitSource(parsed.URL, parsed.Ref, parsed.Path, loadOpts)
+			}
+			results[key] = result
+		}
+		if result.err != nil {
+			fmt.Fprintf(out, "  - %s: error %v\n", label, result.err)
+			continue
+		}
+		if !result.beforeOK {
+			fmt.Fprintf(out, "  - %s: new commit=%s subtree=%s\n", label, result.after.Commit, result.after.Subtree)
+			if err := printSourceFileDiffs(out, parsed, "", result.after.Commit, loadOpts); err != nil {
+				fmt.Fprintf(out, "    diff error: %v\n", err)
+			}
+			continue
+		}
+		if result.before.Commit == result.after.Commit && result.before.Subtree == result.after.Subtree {
+			fmt.Fprintf(out, "  - %s: no changes (commit=%s)\n", label, result.after.Commit)
+			continue
+		}
+		fmt.Fprintf(out, "  - %s: commit %s -> %s subtree %s -> %s\n", label, result.before.Commit, result.after.Commit, result.before.Subtree, result.after.Subtree)
+		if err := printSourceFileDiffs(out, parsed, result.before.Commit, result.after.Commit, loadOpts); err != nil {
+			fmt.Fprintf(out, "    diff error: %v\n", err)
+		}
+	}
+	return nil
+}
+
+func collectSourceDiffItems(cfg *config.Config, defs []render.RenderedDef) []sourceDiffItem {
+	if cfg == nil || len(defs) == 0 {
+		return nil
+	}
+	items := make([]sourceDiffItem, 0, len(defs))
+	seen := make(map[string]struct{})
+	for _, def := range defs {
+		if def.Name == "" {
+			continue
+		}
+		resolver := templates.NewScopeResolver(cfg, def.ScopeID, true, true, nil, nil, nil)
+		switch def.Kind {
+		case "config":
+			cfgDef, scope, ok := resolver.ResolveConfigWithScope(def.Name)
+			if !ok {
+				continue
+			}
+			key := fmt.Sprintf("config:%s:%s", scopeKey(scope), def.Name)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			items = append(items, sourceDiffItem{
+				kind:   "config",
+				name:   def.Name,
+				scope:  scope,
+				source: cfgDef.Source,
+			})
+		case "secret":
+			secDef, scope, ok := resolver.ResolveSecretWithScope(def.Name)
+			if !ok {
+				continue
+			}
+			key := fmt.Sprintf("secret:%s:%s", scopeKey(scope), def.Name)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			items = append(items, sourceDiffItem{
+				kind:   "secret",
+				name:   def.Name,
+				scope:  scope,
+				source: secDef.Source,
+			})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].kind != items[j].kind {
+			return items[i].kind < items[j].kind
+		}
+		if scopeKey(items[i].scope) != scopeKey(items[j].scope) {
+			return scopeKey(items[i].scope) < scopeKey(items[j].scope)
+		}
+		return items[i].name < items[j].name
+	})
+	return items
+}
+
+func scopeKey(scope templates.Scope) string {
+	return fmt.Sprintf("%s/%s/%s/%s", scope.Project, scope.Stack, scope.Partition, scope.Service)
+}
+
+func printSourceFileDiffs(out io.Writer, parsed config.GitSource, beforeCommit string, afterCommit string, opts config.LoadOptions) error {
+	beforeFiles := map[string][]byte(nil)
+	if strings.TrimSpace(beforeCommit) != "" {
+		files, err := config.ReadGitSourceFiles(parsed.URL, beforeCommit, parsed.Path, opts)
+		if err != nil {
+			return err
+		}
+		beforeFiles = files
+	}
+	afterFiles, err := config.ReadGitSourceFiles(parsed.URL, afterCommit, parsed.Path, opts)
+	if err != nil {
+		return err
+	}
+	fileList := unionFileKeys(beforeFiles, afterFiles)
+	if len(fileList) == 0 {
+		fmt.Fprintln(out, "    (no files)")
+		return nil
+	}
+	anyDiff := false
+	for _, name := range fileList {
+		before := ""
+		after := ""
+		if data, ok := beforeFiles[name]; ok {
+			before = string(data)
+		}
+		if data, ok := afterFiles[name]; ok {
+			after = string(data)
+		}
+		if before == after {
+			continue
+		}
+		anyDiff = true
+		fmt.Fprintf(out, "    file: %s\n", name)
+		diff, err := diffLinesText(before, after)
+		if err != nil {
+			fmt.Fprintf(out, "      diff error: %v\n", err)
+			continue
+		}
+		for _, line := range diff {
+			fmt.Fprintf(out, "      %s\n", line)
+		}
+	}
+	if !anyDiff {
+		fmt.Fprintln(out, "    (no file diffs)")
+	}
+	return nil
+}
+
+func unionFileKeys(before, after map[string][]byte) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for name := range before {
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	for name := range after {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+type diffOp struct {
+	kind byte
+	line string
+}
+
+const (
+	maxDiffLines     = 5000
+	maxDiffMatrixOps = 4_000_000
+)
+
+func diffLinesText(before, after string) ([]string, error) {
+	beforeLines := splitLines(before)
+	afterLines := splitLines(after)
+	if len(beforeLines)*len(afterLines) > maxDiffMatrixOps {
+		return []string{fmt.Sprintf("diff suppressed (line count %d -> %d)", len(beforeLines), len(afterLines))}, nil
+	}
+	ops := diffLines(beforeLines, afterLines)
+	if len(ops) > maxDiffLines {
+		return []string{fmt.Sprintf("diff suppressed (output lines %d)", len(ops))}, nil
+	}
+	out := make([]string, 0, len(ops))
+	for _, op := range ops {
+		switch op.kind {
+		case '+':
+			out = append(out, "+ "+op.line)
+		case '-':
+			out = append(out, "- "+op.line)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"(no content changes)"}, nil
+	}
+	return out, nil
+}
+
+func splitLines(input string) []string {
+	if input == "" {
+		return []string{}
+	}
+	normalized := strings.ReplaceAll(input, "\r\n", "\n")
+	return strings.Split(normalized, "\n")
+}
+
+func diffLines(before, after []string) []diffOp {
+	n := len(before)
+	m := len(after)
+	if n == 0 && m == 0 {
+		return nil
+	}
+	if n == 0 {
+		ops := make([]diffOp, 0, m)
+		for _, line := range after {
+			ops = append(ops, diffOp{kind: '+', line: line})
+		}
+		return ops
+	}
+	if m == 0 {
+		ops := make([]diffOp, 0, n)
+		for _, line := range before {
+			ops = append(ops, diffOp{kind: '-', line: line})
+		}
+		return ops
+	}
+	width := m + 1
+	dp := make([]int, (n+1)*width)
+	for i := n - 1; i >= 0; i-- {
+		row := i * width
+		next := (i + 1) * width
+		for j := m - 1; j >= 0; j-- {
+			if before[i] == after[j] {
+				dp[row+j] = dp[next+j+1] + 1
+			} else {
+				a := dp[next+j]
+				b := dp[row+j+1]
+				if a >= b {
+					dp[row+j] = a
+				} else {
+					dp[row+j] = b
+				}
+			}
+		}
+	}
+	ops := make([]diffOp, 0, n+m)
+	i, j := 0, 0
+	for i < n || j < m {
+		if i < n && j < m && before[i] == after[j] {
+			ops = append(ops, diffOp{kind: ' ', line: before[i]})
+			i++
+			j++
+			continue
+		}
+		if j < m && (i == n || dp[i*width+j+1] >= dp[(i+1)*width+j]) {
+			ops = append(ops, diffOp{kind: '+', line: after[j]})
+			j++
+			continue
+		}
+		if i < n {
+			ops = append(ops, diffOp{kind: '-', line: before[i]})
+			i++
+		}
+	}
+	return ops
 }
 
 type summaryDelta struct {

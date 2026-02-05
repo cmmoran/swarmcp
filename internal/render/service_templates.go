@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/templates"
@@ -84,6 +85,15 @@ func RenderServiceTemplates(engine *templates.Engine, data TemplateData, service
 	if rendered.Volumes, err = renderTemplateVolumeRefs(engine, data, rendered.Volumes); err != nil {
 		return config.Service{}, err
 	}
+	if rendered.RestartPolicy, err = renderTemplateRestartPolicy(engine, data, rendered.RestartPolicy); err != nil {
+		return config.Service{}, err
+	}
+	if rendered.UpdateConfig, err = renderTemplateUpdatePolicy(engine, data, rendered.UpdateConfig, "update_config"); err != nil {
+		return config.Service{}, err
+	}
+	if rendered.RollbackConfig, err = renderTemplateUpdatePolicy(engine, data, rendered.RollbackConfig, "rollback_config"); err != nil {
+		return config.Service{}, err
+	}
 	rendered.NetworkEphemeral = service.NetworkEphemeral
 
 	return rendered, nil
@@ -105,12 +115,20 @@ func renderTemplateStrings(engine *templates.Engine, data TemplateData, name str
 		return nil, nil
 	}
 	rendered := make([]string, 0, len(values))
+	scope := templates.Scope{
+		Project:    data.Project,
+		Deployment: data.Deployment,
+		Stack:      data.Stack,
+		Partition:  data.Partition,
+		Service:    data.Service,
+	}
 	for i, value := range values {
-		item, err := RenderTemplateString(engine, data, fmt.Sprintf("%s[%d]", name, i), value)
+		expanded := templates.ExpandTokens(value, scope)
+		item, err := RenderTemplateString(engine, data, fmt.Sprintf("%s[%d]", name, i), expanded)
 		if err != nil {
 			return nil, err
 		}
-		if item == "" {
+		if strings.TrimSpace(item) == "" {
 			continue
 		}
 		rendered = append(rendered, item)
@@ -123,14 +141,121 @@ func renderTemplateStringMap(engine *templates.Engine, data TemplateData, name s
 		return nil, nil
 	}
 	rendered := make(map[string]string, len(values))
+	scope := templates.Scope{
+		Project:    data.Project,
+		Deployment: data.Deployment,
+		Stack:      data.Stack,
+		Partition:  data.Partition,
+		Service:    data.Service,
+	}
 	for key, value := range values {
-		item, err := RenderTemplateString(engine, data, fmt.Sprintf("%s.%s", name, key), value)
+		expandedKey := templates.ExpandTokens(key, scope)
+		if strings.TrimSpace(expandedKey) == "" {
+			return nil, fmt.Errorf("%s.%s: key is empty after token expansion", name, key)
+		}
+		if _, ok := rendered[expandedKey]; ok {
+			return nil, fmt.Errorf("%s.%s: duplicate key after token expansion", name, expandedKey)
+		}
+		item, err := RenderTemplateString(engine, data, fmt.Sprintf("%s.%s", name, expandedKey), value)
 		if err != nil {
 			return nil, err
 		}
-		rendered[key] = item
+		rendered[expandedKey] = item
 	}
 	return rendered, nil
+}
+
+func renderTemplateRestartPolicy(engine *templates.Engine, data TemplateData, policy *config.RestartPolicy) (*config.RestartPolicy, error) {
+	if policy == nil {
+		return nil, nil
+	}
+	out := *policy
+	if policy.Condition != nil {
+		value, err := RenderTemplateString(engine, data, "restart_policy.condition", *policy.Condition)
+		if err != nil {
+			return nil, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("restart_policy.condition: empty value")
+		}
+		out.Condition = &value
+	}
+	if policy.Delay != nil {
+		value, err := RenderTemplateString(engine, data, "restart_policy.delay", *policy.Delay)
+		if err != nil {
+			return nil, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("restart_policy.delay: empty value")
+		}
+		out.Delay = &value
+	}
+	if policy.Window != nil {
+		value, err := RenderTemplateString(engine, data, "restart_policy.window", *policy.Window)
+		if err != nil {
+			return nil, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("restart_policy.window: empty value")
+		}
+		out.Window = &value
+	}
+	return &out, nil
+}
+
+func renderTemplateUpdatePolicy(engine *templates.Engine, data TemplateData, policy *config.UpdatePolicy, name string) (*config.UpdatePolicy, error) {
+	if policy == nil {
+		return nil, nil
+	}
+	out := *policy
+	if policy.Delay != nil {
+		value, err := RenderTemplateString(engine, data, name+".delay", *policy.Delay)
+		if err != nil {
+			return nil, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%s.delay: empty value", name)
+		}
+		out.Delay = &value
+	}
+	if policy.FailureAction != nil {
+		value, err := RenderTemplateString(engine, data, name+".failure_action", *policy.FailureAction)
+		if err != nil {
+			return nil, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%s.failure_action: empty value", name)
+		}
+		out.FailureAction = &value
+	}
+	if policy.Monitor != nil {
+		value, err := RenderTemplateString(engine, data, name+".monitor", *policy.Monitor)
+		if err != nil {
+			return nil, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%s.monitor: empty value", name)
+		}
+		out.Monitor = &value
+	}
+	if policy.Order != nil {
+		value, err := RenderTemplateString(engine, data, name+".order", *policy.Order)
+		if err != nil {
+			return nil, err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%s.order: empty value", name)
+		}
+		out.Order = &value
+	}
+	return &out, nil
 }
 
 func renderTemplatePorts(engine *templates.Engine, data TemplateData, ports []config.Port) ([]config.Port, error) {

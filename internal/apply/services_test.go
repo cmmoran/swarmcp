@@ -3,6 +3,8 @@ package apply
 import (
 	"testing"
 
+	"github.com/cmmoran/swarmcp/internal/render"
+	"github.com/cmmoran/swarmcp/internal/templates"
 	"github.com/docker/docker/api/types/mount"
 	dockerapi "github.com/docker/docker/api/types/swarm"
 )
@@ -91,5 +93,31 @@ func TestIntentDiffsIgnoreOrderForUnorderedFields(t *testing.T) {
 	}
 	if !intentEqual(current, desired) {
 		t.Fatalf("expected intents to be equal")
+	}
+}
+
+func TestRenderLabelTemplatesExpandsTokensInKeys(t *testing.T) {
+	engine := templates.New(render.NoopResolver{})
+	data := render.TemplateData{
+		Project:   "primary",
+		Stack:     "core",
+		Partition: "dev",
+		Service:   "api",
+	}
+	scope := templates.Scope{
+		Project:   "primary",
+		Stack:     "core",
+		Partition: "dev",
+		Service:   "api",
+	}
+	labels := map[string]string{
+		"traefik.http.routers.{partition}.rule": "host",
+	}
+	rendered, err := renderLabelTemplates(engine, data, scope, labels)
+	if err != nil {
+		t.Fatalf("render label templates: %v", err)
+	}
+	if _, ok := rendered["traefik.http.routers.dev.rule"]; !ok {
+		t.Fatalf("expected expanded label key, got %v", rendered)
 	}
 }

@@ -9,7 +9,6 @@ import (
 
 	"github.com/cmmoran/swarmcp/internal/apply"
 	"github.com/cmmoran/swarmcp/internal/cmdutil"
-	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -43,12 +42,9 @@ var statusCmd = &cobra.Command{
 		}
 
 		ctx := context.Background()
-		preserve := config.PreserveUnusedResources(cfg)
-		if flag := cmd.Flags().Lookup("preserve"); flag != nil && flag.Changed {
-			preserve = opts.Preserve
-		}
-		if preserve < 0 {
-			return fmt.Errorf("preserve must be >= 0")
+		preserve, err := resolvePreserve(cmd, cfg, opts)
+		if err != nil {
+			return err
 		}
 		report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilter, !opts.NoInfer, preserve)
 		if err != nil {
