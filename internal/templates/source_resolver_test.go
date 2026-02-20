@@ -10,10 +10,16 @@ import (
 
 type stubResolver struct{}
 
-func (s stubResolver) ConfigValue(name string) (any, error)    { return "", nil }
-func (s stubResolver) ConfigRef(name string) (string, error)   { return "", nil }
+func (s stubResolver) ConfigValue(name string) (any, error)  { return "", nil }
+func (s stubResolver) ConfigRef(name string) (string, error) { return "", nil }
+func (s stubResolver) ConfigRefs(pattern string) ([]string, error) {
+	return nil, nil
+}
 func (s stubResolver) SecretValue(name string) (string, error) { return "", nil }
 func (s stubResolver) SecretRef(name string) (string, error)   { return "", nil }
+func (s stubResolver) SecretRefs(pattern string) ([]string, error) {
+	return nil, nil
+}
 func (s stubResolver) RuntimeValue(args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", nil

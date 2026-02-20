@@ -221,3 +221,26 @@ func TestDetectCyclesConfigValueGetMissingAllowed(t *testing.T) {
 		t.Fatalf("DetectCycles: %v", err)
 	}
 }
+
+func TestDetectCyclesConfigRefsGlobAllowed(t *testing.T) {
+	dir := t.TempDir()
+	cPath := filepath.Join(dir, "c.tmpl")
+
+	if err := os.WriteFile(cPath, []byte(`{{ range (config_refs "db_*") }}{{ . }}{{ end }}`), 0o600); err != nil {
+		t.Fatalf("write c: %v", err)
+	}
+
+	cfg := &config.Config{
+		Project: config.Project{
+			Name: "primary",
+			Configs: map[string]config.ConfigDef{
+				"c":       {Source: cPath},
+				"db_main": {Source: "ignored"},
+			},
+		},
+	}
+
+	if _, err := DetectCycles(cfg, false); err != nil {
+		t.Fatalf("DetectCycles: %v", err)
+	}
+}

@@ -14,7 +14,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	git "github.com/go-git/go-git/v5"
@@ -38,6 +40,7 @@ import (
 const gitSourcePrefix = "git:"
 
 var errExactSHA1NotSupported = errors.New("git server does not allow exact object fetch")
+var resolvedRefCache sync.Map
 
 // SourceMetadata records the git subtree fingerprint for a path.
 type SourceMetadata struct {
@@ -74,6 +77,27 @@ type sshCommandOptions struct {
 	IdentityFiles  []string
 	IdentitiesOnly *bool
 	ConfigFile     string
+}
+
+type sshHostConfig struct {
+	User           string
+	IdentityFiles  []string
+	IdentitiesOnly bool
+	HostName       string
+	Port           string
+	Source         string
+}
+
+type gitConfigSource struct {
+	Precedence int
+	Path       string
+}
+
+type gitURLRewriteRule struct {
+	Base       string
+	InsteadOf  string
+	Precedence int
+	Order      int
 }
 
 func FetchRepoRoot(url string, ref string, opts LoadOptions) (string, error) {
@@ -314,6 +338,14 @@ func readGitPath(ctx context.Context, rawURL, ref, p string, opts LoadOptions) (
 	if cacheDir == "" {
 		return gitPathResult{}, fmt.Errorf("cache dir is required for repo fetch")
 	}
+	remoteURL := rewriteGitURL(rawURL)
+	if opts.Debug {
+		if remoteURL != rawURL {
+			debugf(opts, "git: rewrite url=%s -> %s", rawURL, remoteURL)
+		} else {
+			debugf(opts, "git: rewrite url=%s (no match)", rawURL)
+		}
+	}
 	repoDir := filepath.Join(cacheDir, "repos", hashKey(rawURL))
 	if _, err := os.Stat(repoDir); err != nil {
 		if opts.Offline {
@@ -330,21 +362,21 @@ func readGitPath(ctx context.Context, rawURL, ref, p string, opts LoadOptions) (
 	if err != nil {
 		return gitPathResult{}, err
 	}
-	debugf(opts, "git: resolve ref=%s url=%s", strings.TrimSpace(ref), rawURL)
-	auth, err := authForURL(rawURL, opts)
+	debugf(opts, "git: resolve ref=%s url=%s", strings.TrimSpace(ref), remoteURL)
+	auth, err := authForURL(remoteURL, opts)
 	if err != nil {
 		return gitPathResult{}, err
 	}
-	commitHash, err := resolveRefHash(ctx, repo, rawURL, ref, auth, opts)
+	commitHash, err := resolveRefHash(ctx, repo, remoteURL, ref, auth, opts)
 	if err != nil {
 		return gitPathResult{}, err
 	}
 	debugf(opts, "git: commit=%s", commitHash.String())
-	commit, err := loadCommit(ctx, repo, rawURL, auth, commitHash, opts)
+	commit, err := loadCommit(ctx, repo, remoteURL, auth, commitHash, opts)
 	if err != nil {
 		return gitPathResult{}, err
 	}
-	rootTree, err := loadTree(ctx, repo, rawURL, auth, commit.TreeHash, opts)
+	rootTree, err := loadTree(ctx, repo, remoteURL, auth, commit.TreeHash, opts)
 	if err != nil {
 		return gitPathResult{}, err
 	}
@@ -360,7 +392,7 @@ func readGitPath(ctx context.Context, rawURL, ref, p string, opts LoadOptions) (
 		result.SubtreeHash = rootTree.Hash
 		result.IsTree = true
 		debugf(opts, "git: subtree path=/ hash=%s", rootTree.Hash.String())
-		if err := readTreeBlobs(ctx, repo, rawURL, auth, rootTree, "", result.Files, opts); err != nil {
+		if err := readTreeBlobs(ctx, repo, remoteURL, auth, rootTree, "", result.Files, opts); err != nil {
 			return gitPathResult{}, err
 		}
 		if err := writeSourceMetadata(repoDir, rawURL, ref, commitHash.String(), cleanPath, result.SubtreeHash.String()); err != nil {
@@ -369,7 +401,7 @@ func readGitPath(ctx context.Context, rawURL, ref, p string, opts LoadOptions) (
 		return result, nil
 	}
 
-	entry, entryTree, isTree, err := findTreeEntry(ctx, repo, rawURL, auth, rootTree, cleanPath, opts)
+	entry, entryTree, isTree, err := findTreeEntry(ctx, repo, remoteURL, auth, rootTree, cleanPath, opts)
 	if err != nil {
 		return gitPathResult{}, err
 	}
@@ -377,11 +409,11 @@ func readGitPath(ctx context.Context, rawURL, ref, p string, opts LoadOptions) (
 		result.SubtreeHash = entryTree.Hash
 		result.IsTree = true
 		debugf(opts, "git: subtree path=%s hash=%s", cleanPath, entryTree.Hash.String())
-		if err := readTreeBlobs(ctx, repo, rawURL, auth, entryTree, cleanPath, result.Files, opts); err != nil {
+		if err := readTreeBlobs(ctx, repo, remoteURL, auth, entryTree, cleanPath, result.Files, opts); err != nil {
 			return gitPathResult{}, err
 		}
 	} else {
-		blob, err := loadBlob(ctx, repo, rawURL, auth, entry.Hash, opts)
+		blob, err := loadBlob(ctx, repo, remoteURL, auth, entry.Hash, opts)
 		if err != nil {
 			return gitPathResult{}, err
 		}
@@ -412,7 +444,7 @@ func resolveRefHash(ctx context.Context, repo *git.Repository, rawURL, ref strin
 		if opts.Offline {
 			return plumbing.ZeroHash, fmt.Errorf("ref HEAD not found in local repo and offline is enabled")
 		}
-		adv, err := advertisedRefs(ctx, rawURL, auth)
+		adv, err := advertisedRefs(ctx, rawURL, auth, opts)
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
@@ -425,24 +457,42 @@ func resolveRefHash(ctx context.Context, repo *git.Repository, rawURL, ref strin
 	if plumbing.IsHash(ref) {
 		return plumbing.NewHash(ref), nil
 	}
-	if hash, ok, err := resolveLocalRef(repo, rawURL, ref, auth, opts); err != nil {
-		return plumbing.ZeroHash, err
-	} else if ok {
-		return hash, nil
+	cacheKey := rawURL + "|" + ref
+	if !opts.Offline {
+		if cached, ok := resolvedRefCache.Load(cacheKey); ok {
+			if hash, ok := cached.(plumbing.Hash); ok && hash != plumbing.ZeroHash {
+				return hash, nil
+			}
+		}
 	}
-	if opts.Offline {
-		return plumbing.ZeroHash, fmt.Errorf("ref %q not found in local repo and offline is enabled", ref)
-	}
-	adv, err := advertisedRefs(ctx, rawURL, auth)
+	localHash, localOK, err := resolveLocalRef(repo, rawURL, ref, auth, opts)
 	if err != nil {
 		return plumbing.ZeroHash, err
 	}
-	hash, ok := resolveRefFromAdv(adv, ref)
-	if !ok {
-		return plumbing.ZeroHash, fmt.Errorf("ref %q not found in remote", ref)
+	if opts.Offline {
+		if localOK {
+			return localHash, nil
+		}
+		return plumbing.ZeroHash, fmt.Errorf("ref %q not found in local repo and offline is enabled", ref)
 	}
-	rememberRef(repo, ref, hash, opts)
-	return hash, nil
+	adv, err := advertisedRefs(ctx, rawURL, auth, opts)
+	if err != nil {
+		if localOK {
+			return localHash, nil
+		}
+		return plumbing.ZeroHash, err
+	}
+	hash, ok := resolveRefFromAdv(adv, ref)
+	if ok {
+		rememberRef(repo, ref, hash, opts)
+		resolvedRefCache.Store(cacheKey, hash)
+		return hash, nil
+	}
+	if localOK {
+		resolvedRefCache.Store(cacheKey, localHash)
+		return localHash, nil
+	}
+	return plumbing.ZeroHash, fmt.Errorf("ref %q not found in remote", ref)
 }
 
 func resolveLocalHEAD(repo *git.Repository) (plumbing.Hash, bool) {
@@ -688,8 +738,8 @@ func singleEntryTreeHash(entry object.TreeEntry) (plumbing.Hash, error) {
 	return obj.Hash(), nil
 }
 
-func advertisedRefs(ctx context.Context, rawURL string, auth transport.AuthMethod) (*packp.AdvRefs, error) {
-	c, ep, err := newClient(rawURL)
+func advertisedRefs(ctx context.Context, rawURL string, auth transport.AuthMethod, opts LoadOptions) (*packp.AdvRefs, error) {
+	c, ep, err := newClient(rawURL, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -705,7 +755,7 @@ func fetchObjects(ctx context.Context, repo *git.Repository, rawURL string, auth
 	if len(wants) == 0 {
 		return nil
 	}
-	c, ep, err := newClient(rawURL)
+	c, ep, err := newClient(rawURL, opts)
 	if err != nil {
 		return err
 	}
@@ -747,8 +797,12 @@ func buildSidebandIfSupported(l *capability.List, reader io.Reader) io.Reader {
 	return sideband.NewDemuxer(t, reader)
 }
 
-func newClient(rawURL string) (transport.Transport, *transport.Endpoint, error) {
+func newClient(rawURL string, opts LoadOptions) (transport.Transport, *transport.Endpoint, error) {
 	ep, err := transport.NewEndpoint(rawURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	ep, err = resolveSSHAliasEndpoint(ep, parseGitSSHCommand().ConfigFile, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -921,6 +975,155 @@ func credentialHelpers(rawURL string) []string {
 	return helpers
 }
 
+func rewriteGitURL(rawURL string) string {
+	rules := gitURLRewriteRules()
+	if len(rules) == 0 {
+		return rawURL
+	}
+	bestIdx := -1
+	bestPrefixLen := -1
+	bestPrecedence := -1
+	bestOrder := -1
+	for i, rule := range rules {
+		if rule.InsteadOf == "" || rule.Base == "" {
+			continue
+		}
+		if !strings.HasPrefix(rawURL, rule.InsteadOf) {
+			continue
+		}
+		pLen := len(rule.InsteadOf)
+		if pLen > bestPrefixLen ||
+			(pLen == bestPrefixLen && rule.Precedence > bestPrecedence) ||
+			(pLen == bestPrefixLen && rule.Precedence == bestPrecedence && rule.Order > bestOrder) {
+			bestIdx = i
+			bestPrefixLen = pLen
+			bestPrecedence = rule.Precedence
+			bestOrder = rule.Order
+		}
+	}
+	if bestIdx < 0 {
+		return rawURL
+	}
+	rule := rules[bestIdx]
+	return rule.Base + rawURL[len(rule.InsteadOf):]
+}
+
+func gitURLRewriteRules() []gitURLRewriteRule {
+	sources := gitConfigSources()
+	rules := make([]gitURLRewriteRule, 0)
+	order := 0
+	for _, src := range sources {
+		if src.Path == "" {
+			continue
+		}
+		f, err := os.Open(src.Path)
+		if err != nil {
+			continue
+		}
+		cfg := gitcfg.New()
+		decodeErr := gitcfg.NewDecoder(f).Decode(cfg)
+		_ = f.Close()
+		if decodeErr != nil {
+			continue
+		}
+		section := cfg.Section("url")
+		if section == nil {
+			continue
+		}
+		for _, subsection := range section.Subsections {
+			base := strings.TrimSpace(subsection.Name)
+			if base == "" {
+				continue
+			}
+			for _, instead := range subsection.Options.GetAll("insteadOf") {
+				instead = strings.TrimSpace(instead)
+				if instead == "" {
+					continue
+				}
+				rules = append(rules, gitURLRewriteRule{
+					Base:       base,
+					InsteadOf:  instead,
+					Precedence: src.Precedence,
+					Order:      order,
+				})
+				order++
+			}
+		}
+	}
+	return rules
+}
+
+func gitConfigSources() []gitConfigSource {
+	sources := make([]gitConfigSource, 0, 8)
+	seen := map[string]struct{}{}
+	add := func(precedence int, p string) {
+		p = strings.TrimSpace(p)
+		if p == "" || p == os.DevNull {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		sources = append(sources, gitConfigSource{Precedence: precedence, Path: p})
+	}
+
+	// System (lowest precedence).
+	if system := strings.TrimSpace(os.Getenv("GIT_CONFIG_SYSTEM")); system != "" {
+		add(1, system)
+	} else {
+		add(1, "/etc/gitconfig")
+	}
+
+	// Global.
+	if global := strings.TrimSpace(os.Getenv("GIT_CONFIG_GLOBAL")); global != "" {
+		add(2, global)
+	} else {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			add(2, filepath.Join(home, ".gitconfig"))
+			xdg := os.Getenv("XDG_CONFIG_HOME")
+			if xdg == "" {
+				xdg = filepath.Join(home, ".config")
+			}
+			add(2, filepath.Join(xdg, "git", "config"))
+		}
+	}
+
+	// Local (highest precedence).
+	if local := strings.TrimSpace(os.Getenv("GIT_CONFIG_LOCAL")); local != "" {
+		add(3, local)
+	} else {
+		if gitDir := strings.TrimSpace(os.Getenv("GIT_DIR")); gitDir != "" {
+			add(3, filepath.Join(gitDir, "config"))
+		}
+		if wd, err := os.Getwd(); err == nil {
+			if local, ok := findLocalGitConfig(wd); ok {
+				add(3, local)
+			}
+		}
+	}
+	return sources
+}
+
+func findLocalGitConfig(start string) (string, bool) {
+	dir := start
+	for {
+		if dir == "" {
+			return "", false
+		}
+		candidate := filepath.Join(dir, ".git", "config")
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
 func loadGitConfigs() []*gitcfg.Config {
 	paths := gitConfigPaths()
 	configs := make([]*gitcfg.Config, 0, len(paths))
@@ -1019,16 +1222,16 @@ func sshAuth(ep *transport.Endpoint, opts LoadOptions) (transport.AuthMethod, er
 	if opts.Debug && sshCmd.ConfigFile != "" {
 		debugf(opts, "git: ssh command config=%s", sshCmd.ConfigFile)
 	}
-	cfgUser, identityFiles, identitiesOnly, cfgSource := sshConfig(host, sshCmd.ConfigFile)
+	cfg := sshConfig(host, sshCmd.ConfigFile)
 	if opts.Debug {
-		sourceLabel := cfgSource
+		sourceLabel := cfg.Source
 		if sourceLabel == "" {
 			sourceLabel = "default"
 		}
-		debugf(opts, "git: ssh config source=%s host=%s user=%s identities_only=%t identity_files=%v", sourceLabel, host, cfgUser, identitiesOnly, identityFiles)
+		debugf(opts, "git: ssh config source=%s host=%s user=%s identities_only=%t identity_files=%v", sourceLabel, host, cfg.User, cfg.IdentitiesOnly, cfg.IdentityFiles)
 	}
 	if user == "" {
-		user = cfgUser
+		user = cfg.User
 	}
 	if sshCmd.User != "" {
 		user = sshCmd.User
@@ -1037,9 +1240,11 @@ func sshAuth(ep *transport.Endpoint, opts LoadOptions) (transport.AuthMethod, er
 		user = "git"
 	}
 
+	identityFiles := cfg.IdentityFiles
 	if len(sshCmd.IdentityFiles) > 0 {
 		identityFiles = append(sshCmd.IdentityFiles, identityFiles...)
 	}
+	identitiesOnly := cfg.IdentitiesOnly
 	if sshCmd.IdentitiesOnly != nil {
 		identitiesOnly = *sshCmd.IdentitiesOnly
 	}
@@ -1104,7 +1309,43 @@ func sshAuth(ep *transport.Endpoint, opts LoadOptions) (transport.AuthMethod, er
 	}, nil
 }
 
-func sshConfig(host string, overridePath string) (string, []string, bool, string) {
+func resolveSSHAliasEndpoint(ep *transport.Endpoint, overridePath string, opts LoadOptions) (*transport.Endpoint, error) {
+	if ep == nil {
+		return nil, nil
+	}
+	if ep.Protocol != "ssh" && ep.Protocol != "git+ssh" {
+		return ep, nil
+	}
+	host := strings.Trim(ep.Host, "[]")
+	if host == "" {
+		return ep, nil
+	}
+	cfg := sshConfig(host, overridePath)
+	changed := false
+	if resolved := strings.TrimSpace(cfg.HostName); resolved != "" && resolved != host {
+		if opts.Debug {
+			debugf(opts, "git: ssh endpoint host alias=%s hostname=%s", host, resolved)
+		}
+		ep.Host = resolved
+		changed = true
+	}
+	if resolvedPort := strings.TrimSpace(cfg.Port); resolvedPort != "" {
+		port, err := strconv.Atoi(resolvedPort)
+		if err == nil && port > 0 && ep.Port != port {
+			if opts.Debug {
+				debugf(opts, "git: ssh endpoint port alias=%s port=%d", host, port)
+			}
+			ep.Port = port
+			changed = true
+		}
+	}
+	if !changed && opts.Debug {
+		debugf(opts, "git: ssh endpoint alias=%s (no hostname/port override)", host)
+	}
+	return ep, nil
+}
+
+func sshConfig(host string, overridePath string) sshHostConfig {
 	cfgPath := overridePath
 	if cfgPath == "" {
 		cfgPath = os.Getenv("SSH_CONFIG")
@@ -1112,22 +1353,40 @@ func sshConfig(host string, overridePath string) (string, []string, bool, string
 	if cfgPath != "" {
 		f, err := os.Open(cfgPath)
 		if err != nil {
-			return "", nil, false, cfgPath
+			return sshHostConfig{Source: cfgPath}
 		}
 		defer f.Close()
 		cfg, err := sshconfig.Decode(f)
 		if err != nil {
-			return "", nil, false, cfgPath
+			return sshHostConfig{Source: cfgPath}
 		}
 		user, _ := cfg.Get(host, "User")
 		identityFiles, _ := cfg.GetAll(host, "IdentityFile")
 		identitiesOnly, _ := cfg.Get(host, "IdentitiesOnly")
-		return user, identityFiles, strings.EqualFold(identitiesOnly, "yes"), cfgPath
+		hostName, _ := cfg.Get(host, "HostName")
+		port, _ := cfg.Get(host, "Port")
+		return sshHostConfig{
+			User:           user,
+			IdentityFiles:  identityFiles,
+			IdentitiesOnly: strings.EqualFold(identitiesOnly, "yes"),
+			HostName:       hostName,
+			Port:           port,
+			Source:         cfgPath,
+		}
 	}
 	user := sshconfig.Get(host, "User")
 	identityFiles := sshconfig.GetAll(host, "IdentityFile")
 	identitiesOnly := sshconfig.Get(host, "IdentitiesOnly")
-	return user, identityFiles, strings.EqualFold(identitiesOnly, "yes"), "default"
+	hostName := sshconfig.Get(host, "HostName")
+	port := sshconfig.Get(host, "Port")
+	return sshHostConfig{
+		User:           user,
+		IdentityFiles:  identityFiles,
+		IdentitiesOnly: strings.EqualFold(identitiesOnly, "yes"),
+		HostName:       hostName,
+		Port:           port,
+		Source:         "default",
+	}
 }
 
 func defaultSSHKeyPaths() []string {

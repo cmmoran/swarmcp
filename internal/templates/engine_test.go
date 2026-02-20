@@ -10,10 +10,16 @@ type engineStubResolver struct {
 	values map[string]any
 }
 
-func (s engineStubResolver) ConfigValue(name string) (any, error)    { return s.values[name], nil }
-func (s engineStubResolver) ConfigRef(name string) (string, error)   { return "", nil }
+func (s engineStubResolver) ConfigValue(name string) (any, error)  { return s.values[name], nil }
+func (s engineStubResolver) ConfigRef(name string) (string, error) { return "", nil }
+func (s engineStubResolver) ConfigRefs(pattern string) ([]string, error) {
+	return nil, nil
+}
 func (s engineStubResolver) SecretValue(name string) (string, error) { return "", nil }
 func (s engineStubResolver) SecretRef(name string) (string, error)   { return "", nil }
+func (s engineStubResolver) SecretRefs(pattern string) ([]string, error) {
+	return nil, nil
+}
 func (s engineStubResolver) RuntimeValue(args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", nil
@@ -82,9 +88,15 @@ type errResolver struct{}
 func (errResolver) ConfigValue(name string) (any, error) {
 	return "", fmt.Errorf("config %q not found", name)
 }
-func (errResolver) ConfigRef(name string) (string, error)   { return "", nil }
+func (errResolver) ConfigRef(name string) (string, error) { return "", nil }
+func (errResolver) ConfigRefs(pattern string) ([]string, error) {
+	return nil, nil
+}
 func (errResolver) SecretValue(name string) (string, error) { return "", nil }
 func (errResolver) SecretRef(name string) (string, error)   { return "", nil }
+func (errResolver) SecretRefs(pattern string) ([]string, error) {
+	return nil, nil
+}
 func (errResolver) RuntimeValue(args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", nil

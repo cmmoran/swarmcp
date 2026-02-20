@@ -1,0 +1,51 @@
+mode: shared
+services:
+  ingress:
+    image: {{ config_value "traefik_image" }}
+    egress: true
+    mode: global
+    env:
+      AWS_HOSTED_ZONE_ID: {{ config_value "aws_hosted_zone_id" }}
+      AWS_REGION: {{ config_value "aws_region" }}
+      AWS_SHARED_CREDENTIALS_FILE: {{ secret_ref "aws_shared_credentials" }}
+      VAULT_LOCK_ID: {{ escape_template "{{ .Service.Name }}.{{ .Task.Slot }}" }}
+    labels:
+      traefik.enable: "false"
+    volumes:
+      - source: /var/log/traefik
+        target: /var/log
+        readonly: false
+      - standard: persist
+        target: /etc/traefik
+    ports:
+      - target: 80
+        published: 80
+        mode: host
+      - target: 443
+        published: 443
+        mode: host
+    configs:
+      - name: traefik_yml
+        source: templates/stacks/edge/services/ingress/configs/traefik.yml.tmpl
+        target: /etc/traefik/traefik.yml
+      - name: dynamic_yml
+        source: templates/stacks/edge/services/ingress/configs/dynamic.yml.tmpl
+        target: /etc/traefik/dynamic.yml
+      - name: ca_chain
+      - name: downstream_ca
+      - name: edge_client_crt
+        source: templates/stacks/edge/services/ingress/configs/edge_client.crt
+        target: /etc/traefik/edge-client.crt
+      - name: vault_client_crt
+        source: templates/stacks/edge/services/ingress/configs/vault_client.crt
+        target: /etc/traefik/vault_client.crt
+    secrets:
+      - name: edge_client_key
+        source: templates/stacks/edge/services/ingress/secrets/edge_client.key
+        target: /run/secrets/edge_client.key
+      - name: vault_client_key
+        source: templates/stacks/edge/services/ingress/secrets/vault_client.key
+        target: /run/secrets/vault_client.key
+      - name: aws_shared_credentials
+        source: templates/stacks/edge/services/ingress/secrets/aws_shared_credentials.tmpl
+        target: /run/secrets/aws_shared_credentials

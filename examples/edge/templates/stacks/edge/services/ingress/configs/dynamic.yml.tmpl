@@ -1,0 +1,29 @@
+http:
+  routers:
+{{- range $route := (config_value "edge_routes") }}
+    {{ $route.name }}:
+      entryPoints:
+        - websecure
+      rule: "HostRegexp(`{subdomain:.+}.{{ $route.host_suffix }}`)"
+      service: {{ $route.name }}
+      tls: {}
+{{- end }}
+  services:
+{{- range $route := (config_value "edge_routes") }}
+    {{ $route.name }}:
+      loadBalancer:
+        servers:
+          - url: "{{ $route.target }}"
+        serversTransport: {{ printf "%s-transport" $route.name }}
+{{- end }}
+  serversTransports:
+{{- range $route := (config_value "edge_routes") }}
+    {{ printf "%s-transport" $route.name }}:
+      serverName: "{{ $route.server_name }}"
+      tls:
+        rootCAs:
+          - /etc/ssl/certs/downstream-ca.pem
+        certificates:
+          - certFile: /etc/traefik/edge-client.crt
+            keyFile: /run/secrets/edge_client.key
+{{- end }}

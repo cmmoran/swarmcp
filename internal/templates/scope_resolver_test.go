@@ -3,6 +3,7 @@ package templates
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/cmmoran/swarmcp/internal/config"
@@ -326,5 +327,76 @@ func TestScopeResolverServiceSecretDefaultSourceSkippedWhenHigherScopeExists(t *
 	}
 	if def.Source != "stack.tmpl" {
 		t.Fatalf("unexpected source: %q", def.Source)
+	}
+}
+
+func TestScopeResolverConfigRefsPattern(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.Project{
+			Name: "primary",
+			Configs: map[string]config.ConfigDef{
+				"proj_tls_ca": {Source: "project-ca.tmpl"},
+				"proj_env":    {Source: "project-env.tmpl"},
+			},
+		},
+		Stacks: map[string]config.Stack{
+			"app": {
+				Configs: config.ConfigDefsOrRefs{Defs: map[string]config.ConfigDef{
+					"app_tls_key": {Source: "stack-key.tmpl"},
+				}},
+				Services: map[string]config.Service{
+					"api": {
+						Configs: []config.ConfigRef{
+							{Name: "svc_tls_cert", Source: "service-cert.tmpl"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	resolver := NewScopeResolver(cfg, Scope{Project: "primary", Stack: "app", Service: "api"}, false, true, nil, nil, nil)
+	refs, err := resolver.ConfigRefs("*tls*")
+	if err != nil {
+		t.Fatalf("ConfigRefs: %v", err)
+	}
+	want := []string{"/app_tls_key", "/proj_tls_ca", "/svc_tls_cert"}
+	if !reflect.DeepEqual(refs, want) {
+		t.Fatalf("unexpected refs: got %#v want %#v", refs, want)
+	}
+}
+
+func TestScopeResolverSecretRefsPattern(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.Project{
+			Name: "primary",
+			Secrets: map[string]config.SecretDef{
+				"oauth_client_id": {Source: "project-id.tmpl"},
+			},
+		},
+		Stacks: map[string]config.Stack{
+			"app": {
+				Secrets: config.SecretDefsOrRefs{Defs: map[string]config.SecretDef{
+					"oauth_client_secret": {Source: "stack-secret.tmpl"},
+				}},
+				Services: map[string]config.Service{
+					"api": {
+						Secrets: []config.SecretRef{
+							{Name: "oauth_token"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	resolver := NewScopeResolver(cfg, Scope{Project: "primary", Stack: "app", Service: "api"}, true, true, nil, nil, nil)
+	refs, err := resolver.SecretRefs("oauth_*")
+	if err != nil {
+		t.Fatalf("SecretRefs: %v", err)
+	}
+	want := []string{"/run/secrets/oauth_client_id", "/run/secrets/oauth_client_secret", "/run/secrets/oauth_token"}
+	if !reflect.DeepEqual(refs, want) {
+		t.Fatalf("unexpected refs: got %#v want %#v", refs, want)
 	}
 }

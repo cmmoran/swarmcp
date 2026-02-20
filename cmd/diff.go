@@ -518,6 +518,13 @@ const (
 )
 
 func diffLinesText(before, after string) ([]string, error) {
+	return diffLinesTextWithContext(before, after, 0)
+}
+
+func diffLinesTextWithContext(before, after string, contextLines int) ([]string, error) {
+	if contextLines < 0 {
+		contextLines = 0
+	}
 	beforeLines := splitLines(before)
 	afterLines := splitLines(after)
 	if len(beforeLines)*len(afterLines) > maxDiffMatrixOps {
@@ -526,6 +533,9 @@ func diffLinesText(before, after string) ([]string, error) {
 	ops := diffLines(beforeLines, afterLines)
 	if len(ops) > maxDiffLines {
 		return []string{fmt.Sprintf("diff suppressed (output lines %d)", len(ops))}, nil
+	}
+	if contextLines > 0 {
+		return diffOpsWithContext(ops, contextLines), nil
 	}
 	out := make([]string, 0, len(ops))
 	for _, op := range ops {
@@ -540,6 +550,61 @@ func diffLinesText(before, after string) ([]string, error) {
 		return []string{"(no content changes)"}, nil
 	}
 	return out, nil
+}
+
+func diffOpsWithContext(ops []diffOp, contextLines int) []string {
+	if len(ops) == 0 {
+		return []string{"(no content changes)"}
+	}
+	keep := make([]bool, len(ops))
+	hasChange := false
+	for i, op := range ops {
+		if op.kind == ' ' {
+			continue
+		}
+		hasChange = true
+		start := i - contextLines
+		if start < 0 {
+			start = 0
+		}
+		end := i + contextLines
+		if end >= len(ops) {
+			end = len(ops) - 1
+		}
+		for j := start; j <= end; j++ {
+			keep[j] = true
+		}
+	}
+	if !hasChange {
+		return []string{"(no content changes)"}
+	}
+	out := make([]string, 0, len(ops))
+	inGap := false
+	for i, op := range ops {
+		if !keep[i] {
+			inGap = true
+			continue
+		}
+		if inGap && len(out) > 0 {
+			out = append(out, "...")
+		}
+		inGap = false
+		switch op.kind {
+		case '+':
+			out = append(out, "+ "+op.line)
+		case '-':
+			out = append(out, "- "+op.line)
+		default:
+			out = append(out, "  "+op.line)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"(no content changes)"}
+	}
+	if len(out) > maxDiffLines {
+		return []string{fmt.Sprintf("diff suppressed (output lines %d)", len(out))}
+	}
+	return out
 }
 
 func splitLines(input string) []string {

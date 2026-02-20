@@ -464,3 +464,33 @@ stacks:
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestSourceBaseDirFromPathGit(t *testing.T) {
+	url := "ssh://git@github.com/org/repo.git"
+	ref := "v1.2.3"
+	basePath := encodeGitSource(url, ref, "traefik-portainer/core.stack.yaml.tmpl")
+
+	got, err := sourceBaseDirFromPath(basePath)
+	if err != nil {
+		t.Fatalf("sourceBaseDirFromPath: %v", err)
+	}
+	want := encodeGitSource(url, ref, "traefik-portainer")
+	if got != want {
+		t.Fatalf("unexpected base dir: got %q want %q", got, want)
+	}
+}
+
+func TestSourceBaseDirFromPathGitRepoRootFile(t *testing.T) {
+	url := "ssh://git@github.com/org/repo.git"
+	ref := "main"
+	basePath := encodeGitSource(url, ref, "core.stack.yaml.tmpl")
+
+	got, err := sourceBaseDirFromPath(basePath)
+	if err != nil {
+		t.Fatalf("sourceBaseDirFromPath: %v", err)
+	}
+	want := encodeGitSource(url, ref, "")
+	if got != want {
+		t.Fatalf("unexpected base dir: got %q want %q", got, want)
+	}
+}

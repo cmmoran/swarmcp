@@ -190,8 +190,11 @@ func (c *apiClient) ListNodes(ctx context.Context) ([]Node, error) {
 }
 
 func (c *apiClient) ConfigContent(ctx context.Context, id string) ([]byte, error) {
-	_, raw, err := c.cli.ConfigInspectWithRaw(ctx, id)
-	return raw, err
+	cfg, _, err := c.cli.ConfigInspectWithRaw(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Spec.Data, nil
 }
 
 func (c *apiClient) CreateNetwork(ctx context.Context, spec NetworkSpec) (string, error) {

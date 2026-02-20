@@ -7,6 +7,7 @@
 !*.tmpl
 !*.md
 !LICENSE
+!/Dockerfile
 AGENTS.md
 STATE.md
 .cache/

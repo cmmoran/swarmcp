@@ -3,6 +3,8 @@ package templates
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/config"
@@ -132,6 +134,22 @@ func (r *ScopeResolver) ConfigRef(name string) (string, error) {
 	return "/" + name, nil
 }
 
+func (r *ScopeResolver) ConfigRefs(pattern string) ([]string, error) {
+	names, err := r.resolveConfigPattern(pattern)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]string, 0, len(names))
+	for _, name := range names {
+		ref, err := r.ConfigRef(name)
+		if err != nil {
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
+}
+
 func (r *ScopeResolver) SecretValue(name string) (string, error) {
 	if !r.allowSecrets {
 		return "", fmt.Errorf("secret_value is not allowed in config templates")
@@ -162,6 +180,22 @@ func (r *ScopeResolver) SecretRef(name string) (string, error) {
 		return ExpandPathTokens(def.Target, r.scope), nil
 	}
 	return "/run/secrets/" + name, nil
+}
+
+func (r *ScopeResolver) SecretRefs(pattern string) ([]string, error) {
+	names, err := r.resolveSecretPattern(pattern)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]string, 0, len(names))
+	for _, name := range names {
+		ref, err := r.SecretRef(name)
+		if err != nil {
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
 }
 
 func (r *ScopeResolver) RuntimeValue(args ...string) (string, error) {
@@ -487,6 +521,14 @@ func (r *ScopeResolver) ResolveSecretWithScope(name string) (config.SecretDef, S
 	return r.resolveSecretWithScope(name)
 }
 
+func (r *ScopeResolver) ResolveConfigPattern(pattern string) ([]string, error) {
+	return r.resolveConfigPattern(pattern)
+}
+
+func (r *ScopeResolver) ResolveSecretPattern(pattern string) ([]string, error) {
+	return r.resolveSecretPattern(pattern)
+}
+
 func (r *ScopeResolver) emitTrace(fn string, kind string, name string, resolved Scope, missing bool) {
 	if r.trace == nil {
 		return
@@ -531,4 +573,126 @@ func (r *ScopeResolver) resolveStackSecret(name string) (config.SecretDef, bool)
 	defs := r.cfg.StackSecretDefs(r.scope.Stack, r.scope.Partition)
 	def, ok := defs[name]
 	return def, ok
+}
+
+func (r *ScopeResolver) resolveConfigPattern(pattern string) ([]string, error) {
+	if _, err := filepath.Match(pattern, ""); err != nil {
+		return nil, fmt.Errorf("config_refs %q: invalid glob: %w", pattern, err)
+	}
+	names := r.visibleConfigNames()
+	matches := make([]string, 0, len(names))
+	for _, name := range names {
+		ok, err := filepath.Match(pattern, name)
+		if err != nil {
+			return nil, fmt.Errorf("config_refs %q: invalid glob: %w", pattern, err)
+		}
+		if !ok {
+			continue
+		}
+		_, resolvedScope, found := r.resolveConfigWithScope(name)
+		if !found {
+			continue
+		}
+		r.emitTrace("config_refs", "config", name, resolvedScope, false)
+		matches = append(matches, name)
+	}
+	return matches, nil
+}
+
+func (r *ScopeResolver) resolveSecretPattern(pattern string) ([]string, error) {
+	if _, err := filepath.Match(pattern, ""); err != nil {
+		return nil, fmt.Errorf("secret_refs %q: invalid glob: %w", pattern, err)
+	}
+	names := r.visibleSecretNames()
+	matches := make([]string, 0, len(names))
+	for _, name := range names {
+		ok, err := filepath.Match(pattern, name)
+		if err != nil {
+			return nil, fmt.Errorf("secret_refs %q: invalid glob: %w", pattern, err)
+		}
+		if !ok {
+			continue
+		}
+		_, resolvedScope, found := r.resolveSecretWithScope(name)
+		if !found {
+			continue
+		}
+		r.emitTrace("secret_refs", "secret", name, resolvedScope, false)
+		matches = append(matches, name)
+	}
+	return matches, nil
+}
+
+func (r *ScopeResolver) visibleConfigNames() []string {
+	names := map[string]struct{}{}
+	if r.scope.Stack != "" && r.scope.Service != "" {
+		services, err := r.cfg.StackServices(r.scope.Stack, r.scope.Partition)
+		if err == nil {
+			if service, ok := services[r.scope.Service]; ok {
+				for _, ref := range service.Configs {
+					if ref.Name == "" || ref.Source == "" {
+						continue
+					}
+					names[ref.Name] = struct{}{}
+				}
+			}
+		}
+	}
+	if r.scope.Stack != "" && r.scope.Partition != "" {
+		for name := range r.cfg.StackPartitionConfigDefs(r.scope.Stack, r.scope.Partition) {
+			names[name] = struct{}{}
+		}
+	}
+	if r.scope.Stack != "" {
+		for name := range r.cfg.StackConfigDefs(r.scope.Stack, r.scope.Partition) {
+			names[name] = struct{}{}
+		}
+	}
+	for name := range r.cfg.ProjectConfigDefs(r.scope.Partition) {
+		names[name] = struct{}{}
+	}
+	return sortedKeys(names)
+}
+
+func (r *ScopeResolver) visibleSecretNames() []string {
+	names := map[string]struct{}{}
+	if r.scope.Stack != "" && r.scope.Service != "" {
+		services, err := r.cfg.StackServices(r.scope.Stack, r.scope.Partition)
+		if err == nil {
+			if service, ok := services[r.scope.Service]; ok {
+				for _, ref := range service.Secrets {
+					if ref.Name == "" {
+						continue
+					}
+					names[ref.Name] = struct{}{}
+				}
+			}
+		}
+	}
+	if r.scope.Stack != "" && r.scope.Partition != "" {
+		for name := range r.cfg.StackPartitionSecretDefs(r.scope.Stack, r.scope.Partition) {
+			names[name] = struct{}{}
+		}
+	}
+	if r.scope.Stack != "" {
+		for name := range r.cfg.StackSecretDefs(r.scope.Stack, r.scope.Partition) {
+			names[name] = struct{}{}
+		}
+	}
+	for name := range r.cfg.ProjectSecretDefs(r.scope.Partition) {
+		names[name] = struct{}{}
+	}
+	return sortedKeys(names)
+}
+
+func sortedKeys(set map[string]struct{}) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }

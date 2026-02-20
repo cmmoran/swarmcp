@@ -25,8 +25,10 @@ type NoopResolver struct{}
 
 func (NoopResolver) ConfigValue(string) (any, error)             { return "", nil }
 func (NoopResolver) ConfigRef(string) (string, error)            { return "", nil }
+func (NoopResolver) ConfigRefs(string) ([]string, error)         { return nil, nil }
 func (NoopResolver) SecretValue(string) (string, error)          { return "", nil }
 func (NoopResolver) SecretRef(string) (string, error)            { return "", nil }
+func (NoopResolver) SecretRefs(string) ([]string, error)         { return nil, nil }
 func (NoopResolver) RuntimeValue(args ...string) (string, error) { return "", nil }
 
 func (t TemplateData) EscapeTemplate(input string) string {
@@ -520,12 +522,12 @@ func inferServiceRefs(cfg *config.Config, resolver secrets.Resolver, values any,
 			Missing:  call.Missing,
 		})
 		switch call.Func {
-		case "config_ref":
+		case "config_ref", "config_refs":
 			inferredConfigs[call.Name] = struct{}{}
 			if call.Missing {
 				missingConfigs[call.Name] = struct{}{}
 			}
-		case "secret_ref":
+		case "secret_ref", "secret_refs":
 			inferredSecrets[call.Name] = struct{}{}
 			if call.Missing {
 				missingSecrets[call.Name] = struct{}{}
@@ -591,6 +593,20 @@ func collectServiceMounts(cfg *config.Config, stackName string, stack config.Sta
 					return err
 				}
 			}
+			explicitConfigs := make(map[string]struct{}, len(service.Configs))
+			for _, ref := range service.Configs {
+				if ref.Name == "" {
+					continue
+				}
+				explicitConfigs[ref.Name] = struct{}{}
+			}
+			explicitSecrets := make(map[string]struct{}, len(service.Secrets))
+			for _, ref := range service.Secrets {
+				if ref.Name == "" {
+					continue
+				}
+				explicitSecrets[ref.Name] = struct{}{}
+			}
 
 			configResolver := templates.NewScopeResolver(cfg, scope, false, infer, TemplateData{
 				Project:    projectName,
@@ -621,7 +637,8 @@ func collectServiceMounts(cfg *config.Config, stackName string, stack config.Sta
 				} else {
 					target = templates.ExpandPathTokens(target, scope)
 				}
-				summary.Mounts = append(summary.Mounts, formatMountLine(scope, "config", mount.Name, target))
+				_, explicit := explicitConfigs[mount.Name]
+				summary.Mounts = append(summary.Mounts, formatMountLine(scope, "config", mount.Name, target, infer && !explicit))
 			}
 
 			for _, mount := range renderedService.Secrets {
@@ -638,7 +655,8 @@ func collectServiceMounts(cfg *config.Config, stackName string, stack config.Sta
 				} else {
 					target = templates.ExpandPathTokens(target, scope)
 				}
-				summary.Mounts = append(summary.Mounts, formatMountLine(scope, "secret", mount.Name, target))
+				_, explicit := explicitSecrets[mount.Name]
+				summary.Mounts = append(summary.Mounts, formatMountLine(scope, "secret", mount.Name, target, infer && !explicit))
 			}
 		}
 	}
@@ -646,11 +664,15 @@ func collectServiceMounts(cfg *config.Config, stackName string, stack config.Sta
 	return nil
 }
 
-func formatMountLine(scope templates.Scope, kind, name, target string) string {
-	if scope.Partition == "" {
-		return fmt.Sprintf("%s %q -> %s (stack %q service %q)", kind, name, target, scope.Stack, scope.Service)
+func formatMountLine(scope templates.Scope, kind, name, target string, inferred bool) string {
+	qualifier := ""
+	if inferred {
+		qualifier = " (inferred)"
 	}
-	return fmt.Sprintf("%s %q -> %s (stack %q partition %q service %q)", kind, name, target, scope.Stack, scope.Partition, scope.Service)
+	if scope.Partition == "" {
+		return fmt.Sprintf("%s %q -> %s (stack %q service %q)%s", kind, name, target, scope.Stack, scope.Service, qualifier)
+	}
+	return fmt.Sprintf("%s %q -> %s (stack %q partition %q service %q)%s", kind, name, target, scope.Stack, scope.Partition, scope.Service, qualifier)
 }
 
 func runtimeNodeID(kind string, scope templates.Scope, name string) string {

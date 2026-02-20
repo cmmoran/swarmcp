@@ -17,8 +17,10 @@ import (
 type Resolver interface {
 	ConfigValue(name string) (any, error)
 	ConfigRef(name string) (string, error)
+	ConfigRefs(pattern string) ([]string, error)
 	SecretValue(name string) (string, error)
 	SecretRef(name string) (string, error)
+	SecretRefs(pattern string) ([]string, error)
 	RuntimeValue(args ...string) (string, error)
 }
 
@@ -90,11 +92,17 @@ func (e *Engine) FuncMap() template.FuncMap {
 	funcs["config_ref"] = func(name string) (string, error) {
 		return e.resolver.ConfigRef(name)
 	}
+	funcs["config_refs"] = func(pattern string) ([]string, error) {
+		return e.resolver.ConfigRefs(pattern)
+	}
 	funcs["secret_value"] = func(name string) (string, error) {
 		return e.resolver.SecretValue(name)
 	}
 	funcs["secret_ref"] = func(name string) (string, error) {
 		return e.resolver.SecretRef(name)
+	}
+	funcs["secret_refs"] = func(pattern string) ([]string, error) {
+		return e.resolver.SecretRefs(pattern)
 	}
 	funcs["runtime_value"] = func(args ...string) (string, error) {
 		return e.resolver.RuntimeValue(args...)

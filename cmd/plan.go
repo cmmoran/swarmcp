@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -16,10 +17,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var planProgressEnabled = true
+
 var planCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Compute desired state and show changes",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		progress := newPlanProgressReporter(cmd.ErrOrStderr(), planProgressEnabled)
+
+		done := progress.start("load project context")
 		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
 			ConfigPath:  opts.ConfigPath,
 			SecretsFile: opts.SecretsFile,
@@ -30,6 +36,7 @@ var planCmd = &cobra.Command{
 			Offline:     opts.Offline,
 			Debug:       opts.Debug,
 		}, true, true)
+		done(err)
 		if err != nil {
 			return err
 		}
@@ -44,13 +51,18 @@ var planCmd = &cobra.Command{
 		debugMax := opts.DebugContentMax
 		debugDefsEnabled := opts.Debug || debugContentEnabled
 
+		done = progress.start("detect template cycles")
 		warnings, err := templates.DetectCycles(cfg, !opts.NoInfer)
+		done(err)
 		if err != nil {
 			return err
 		}
+		warnings = filterInferredRefWarnings(warnings)
 		warnings = append(warnings, cmdutil.VolumePlacementWarnings(cfg, partitionFilter, opts.Debug)...)
 
+		done = progress.start("render desired configs/secrets")
 		summary, err := render.RenderProject(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilter, opts.AllowMissing, !opts.NoInfer)
+		done(err)
 		if err != nil {
 			return err
 		}
@@ -75,19 +87,24 @@ var planCmd = &cobra.Command{
 
 		nodeSpecs := cmdutil.ResolveDeploymentNodeSpecs(cfg)
 		if len(nodeSpecs) > 0 {
+			done = progress.start("load swarm nodes")
 			client, err := getSwarmClient()
 			if err != nil {
+				done(err)
 				return err
 			}
 			nodes, err := client.ListNodes(context.Background())
+			done(err)
 			if err != nil {
 				return err
 			}
 			warnings = append(warnings, cmdutil.NodeLabelWarnings(cfg, nodeSpecs, nodes)...)
 		}
 
+		done = progress.start("compute desired plan")
 		desired := apply.DesiredStateFromSummary(cfg, summary, partitionFilter)
 		statePath, err := planStatePath(opts.ConfigPath)
+		done(err)
 		if err != nil {
 			return err
 		}
@@ -106,12 +123,15 @@ var planCmd = &cobra.Command{
 		}
 		var networkStatuses []networkStatus
 		if len(desired.Networks) > 0 {
+			done = progress.start("load swarm networks")
 			existing := map[string]struct{}{}
 			client, err := getSwarmClient()
 			if err != nil {
+				done(err)
 				return err
 			}
 			networks, err := client.ListNetworks(context.Background())
+			done(err)
 			if err != nil {
 				return err
 			}
@@ -148,15 +168,11 @@ var planCmd = &cobra.Command{
 		}
 		if len(summary.ConfigsRendered) > 0 {
 			fmt.Fprintln(out, "configs:")
-			for _, item := range summary.ConfigsRendered {
-				fmt.Fprintf(out, "  - %s\n", item)
-			}
+			printGroupedRenderedItems(out, summary.ConfigsRendered, splitRenderedDefItem)
 		}
 		if len(summary.SecretsRendered) > 0 {
 			fmt.Fprintln(out, "secrets:")
-			for _, item := range summary.SecretsRendered {
-				fmt.Fprintf(out, "  - %s\n", item)
-			}
+			printGroupedRenderedItems(out, summary.SecretsRendered, splitRenderedDefItem)
 		}
 		if len(networkStatuses) > 0 {
 			fmt.Fprintln(out, "networks:")
@@ -166,11 +182,11 @@ var planCmd = &cobra.Command{
 		}
 		if len(summary.Mounts) > 0 {
 			fmt.Fprintln(out, "service mounts:")
-			for _, item := range summary.Mounts {
-				fmt.Fprintf(out, "  - %s\n", item)
-			}
+			printGroupedRenderedItems(out, summary.Mounts, splitMountItem)
 		}
+		done = progress.start("plan bind paths")
 		bindPaths, err := apply.PlanBindPaths(cfg, projectCtx.Values, partitionFilter)
+		done(err)
 		if err != nil {
 			return err
 		}
@@ -192,7 +208,9 @@ var planCmd = &cobra.Command{
 			}
 		}
 		if debugDefsEnabled {
+			done = progress.start("build stack compose output")
 			stackDeploys, err := apply.BuildStackDeploys(cfg, desired, projectCtx.Values, partitionFilter, nil, nil, nil, !opts.NoInfer)
+			done(err)
 			if err != nil {
 				return err
 			}
@@ -233,9 +251,130 @@ var planCmd = &cobra.Command{
 				}
 			}
 		}
+		done = progress.start("write plan state")
 		if err := state.Write(statePath, planSnapshot); err != nil {
+			done(err)
 			return err
 		}
+		done(nil)
 		return nil
 	},
+}
+
+type planProgressReporter struct {
+	out     io.Writer
+	enabled bool
+}
+
+func newPlanProgressReporter(out io.Writer, enabled bool) planProgressReporter {
+	return planProgressReporter{out: out, enabled: enabled}
+}
+
+func (p planProgressReporter) start(phase string) func(error) {
+	if !p.enabled {
+		return func(error) {}
+	}
+	started := time.Now()
+	fmt.Fprintf(p.out, "plan: %s...\n", phase)
+	return func(err error) {
+		elapsed := time.Since(started).Round(time.Millisecond)
+		if err != nil {
+			fmt.Fprintf(p.out, "plan: %s failed (%s): %v\n", phase, elapsed, err)
+			return
+		}
+		fmt.Fprintf(p.out, "plan: %s done (%s)\n", phase, elapsed)
+	}
+}
+
+func init() {
+	planCmd.Flags().BoolVar(&planProgressEnabled, "progress", true, "Show phase progress while computing plan")
+}
+
+func filterInferredRefWarnings(warnings []string) []string {
+	if len(warnings) == 0 {
+		return warnings
+	}
+	filtered := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		// Inferred refs are expected behavior and are already shown in service mounts.
+		if strings.Contains(warning, "(inferred)") && (strings.Contains(warning, "config_ref") || strings.Contains(warning, "secret_ref")) {
+			continue
+		}
+		filtered = append(filtered, warning)
+	}
+	return filtered
+}
+
+func sortedStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := append([]string(nil), items...)
+	sort.Strings(out)
+	return out
+}
+
+type renderedGroup struct {
+	scope string
+	items []string
+}
+
+func printGroupedRenderedItems(out io.Writer, items []string, split func(string) (string, string)) {
+	groups := groupRenderedItems(items, split)
+	for _, group := range groups {
+		fmt.Fprintf(out, "  %s:\n", group.scope)
+		for _, item := range group.items {
+			fmt.Fprintf(out, "    - %s\n", item)
+		}
+	}
+}
+
+func groupRenderedItems(items []string, split func(string) (string, string)) []renderedGroup {
+	if len(items) == 0 {
+		return nil
+	}
+	grouped := make(map[string][]string)
+	for _, raw := range items {
+		scope, item := split(raw)
+		grouped[scope] = append(grouped[scope], item)
+	}
+	scopes := make([]string, 0, len(grouped))
+	for scope := range grouped {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+	out := make([]renderedGroup, 0, len(scopes))
+	for _, scope := range scopes {
+		out = append(out, renderedGroup{
+			scope: scope,
+			items: sortedStrings(grouped[scope]),
+		})
+	}
+	return out
+}
+
+func splitRenderedDefItem(item string) (string, string) {
+	i := strings.LastIndex(item, ` "`)
+	if i <= 0 || i+1 >= len(item) {
+		return "unscoped", item
+	}
+	return item[:i], item[i+1:]
+}
+
+func splitMountItem(item string) (string, string) {
+	start := strings.Index(item, "(stack ")
+	if start < 0 {
+		return "unscoped", item
+	}
+	end := strings.Index(item[start:], ")")
+	if end < 0 {
+		return "unscoped", item
+	}
+	scope := item[start+1 : start+end]
+	head := strings.TrimSpace(item[:start])
+	tail := strings.TrimSpace(item[start+end+1:])
+	if tail != "" {
+		return scope, strings.TrimSpace(head + " " + tail)
+	}
+	return scope, head
 }

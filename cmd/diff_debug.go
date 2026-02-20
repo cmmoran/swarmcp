@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -284,7 +285,7 @@ func printValueDiff(out io.Writer, label string, before, after any) {
 }
 
 func formatStructuredValue(value any) string {
-	encoded, err := json.MarshalIndent(value, "", "  ")
+	encoded, err := marshalIndentNoHTMLEscape(value)
 	if err != nil {
 		return fmt.Sprintf("%v", value)
 	}
@@ -303,12 +304,16 @@ func serviceMountSnapshot(snapshot *apply.ServiceIntentSnapshot) map[string]any 
 }
 
 func semanticDiffLines(before, after string) ([]string, error) {
+	return semanticDiffLinesWithContext(before, after, 0)
+}
+
+func semanticDiffLinesWithContext(before, after string, contextLines int) ([]string, error) {
 	if normalized, ok := normalizeStructuredContent(before); ok {
 		if normalizedAfter, okAfter := normalizeStructuredContent(after); okAfter {
-			return diffLinesText(normalized, normalizedAfter)
+			return diffLinesTextWithContext(normalized, normalizedAfter, contextLines)
 		}
 	}
-	return diffLinesText(before, after)
+	return diffLinesTextWithContext(before, after, contextLines)
 }
 
 func normalizeStructuredContent(input string) (string, bool) {
@@ -318,7 +323,7 @@ func normalizeStructuredContent(input string) (string, bool) {
 	}
 	var parsed any
 	if err := json.Unmarshal([]byte(input), &parsed); err == nil {
-		encoded, err := json.MarshalIndent(parsed, "", "  ")
+		encoded, err := marshalIndentNoHTMLEscape(parsed)
 		if err != nil {
 			return input, false
 		}
@@ -326,13 +331,25 @@ func normalizeStructuredContent(input string) (string, bool) {
 	}
 	if err := yaml.Unmarshal([]byte(input), &parsed); err == nil {
 		normalized := yamlutil.NormalizeValue(parsed)
-		encoded, err := json.MarshalIndent(normalized, "", "  ")
+		encoded, err := marshalIndentNoHTMLEscape(normalized)
 		if err != nil {
 			return input, false
 		}
 		return string(encoded), true
 	}
 	return input, false
+}
+
+func marshalIndentNoHTMLEscape(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(value); err != nil {
+		return nil, err
+	}
+	encoded := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	return encoded, nil
 }
 
 func unionKeys[T any](left, right map[string]T) []string {

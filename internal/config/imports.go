@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/cmmoran/swarmcp/internal/yamlutil"
@@ -77,7 +78,11 @@ func loadStackFromSource(ref *SourceRef, baseDir string, overrides map[string]an
 	if stack.Source != nil || stack.Overrides != nil {
 		return Stack{}, "", fmt.Errorf("imported stack must not define source or overrides")
 	}
-	return stack, filepath.Dir(basePath), nil
+	stackBaseDir, err := sourceBaseDirFromPath(basePath)
+	if err != nil {
+		return Stack{}, "", err
+	}
+	return stack, stackBaseDir, nil
 }
 
 func resolveServiceImports(stackName string, stack *Stack, opts LoadOptions) error {
@@ -142,7 +147,29 @@ func loadServiceFromSource(ref *SourceRef, baseDir string, overrides map[string]
 	if service.Source != nil || service.Overrides != nil {
 		return Service{}, "", fmt.Errorf("imported service must not define source or overrides")
 	}
-	return service, filepath.Dir(basePath), nil
+	serviceBaseDir, err := sourceBaseDirFromPath(basePath)
+	if err != nil {
+		return Service{}, "", err
+	}
+	return service, serviceBaseDir, nil
+}
+
+func sourceBaseDirFromPath(basePath string) (string, error) {
+	if IsGitSource(basePath) {
+		parsed, ok, err := parseGitSource(basePath)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", fmt.Errorf("invalid git source %q", basePath)
+		}
+		dir := path.Dir(parsed.Path)
+		if dir == "." {
+			dir = ""
+		}
+		return encodeGitSource(parsed.URL, parsed.Ref, dir), nil
+	}
+	return filepath.Dir(basePath), nil
 }
 
 func loadSourceMap(ref SourceRef, baseDir string, opts LoadOptions) (map[string]any, string, error) {

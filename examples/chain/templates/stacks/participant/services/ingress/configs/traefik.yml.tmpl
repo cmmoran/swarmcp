@@ -1,0 +1,43 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+log:
+  filePath: /var/log/traefik-proxy.log
+  level: {{ config_value "log_level" }}
+  format: json
+accessLog:
+  filePath: /var/log/traefik-access.log
+  format: json
+entryPoints:
+  websecure:
+    address: ":443"
+    forwardedHeaders:
+      trustedIPs:
+{{- range config_value "trusted_loadbalancers" }}
+        - "{{ . }}"
+{{- end }}
+    http:
+      tls:
+        certResolver: vaultpki
+providers:
+  swarm:
+    network: {{ runtime_value "{networks_shared}" }}
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    constraints: "Label(`traefik.role`, `internal`)"
+  file:
+    filename: {{ config_ref "dynamic_yml" }}
+certificatesResolvers:
+  vaultpki:
+    vaultPKIServer:
+      url: "{{ config_value "vault_url" }}"
+      pkiPath: "pki"
+      role: "traefik-server"
+      auth:
+        certAuth:
+          name: "participant_vault"
+      tls:
+        caBundle: {{ config_ref "ca_chain" }}
+        cert: {{ config_ref "vault_client_crt" }}
+        key: {{ secret_ref "vault_client_key" }}
+      cacheDir: "/etc/traefik/pki"

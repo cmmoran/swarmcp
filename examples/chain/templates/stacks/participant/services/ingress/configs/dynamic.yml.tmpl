@@ -1,0 +1,18 @@
+tls:
+  options:
+    default:
+      clientAuth:
+        caFiles:
+          - /etc/ssl/certs/edge-ca.pem
+        clientAuthType: RequireAndVerifyClientCert
+http:
+  routers:
+    dashboard:
+      entryPoints:
+        - websecure
+      rule: "Host(`traefik.{{ config_value "participant_internal_domain" }}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`) || PathPrefix(`/callback`))"
+      service: api@internal
+      tls:
+        certResolver: vaultpki
+        vaultPKIServer:
+          commonName: "ingress.participant"

@@ -109,6 +109,21 @@ func InferTemplateRefDeps(cfg *config.Config, scope templates.Scope, configRefs 
 				if _, refScope, ok := refResolver.ResolveConfigWithScope(ref.Name); ok {
 					queue = append(queue, refTarget{kind: "config", scope: refScope, name: ref.Name})
 				}
+			case "config_refs":
+				names, err := refResolver.ResolveConfigPattern(ref.Name)
+				if err != nil {
+					return nil, nil, err
+				}
+				for _, resolved := range names {
+					if _, ok := seenConfigs[resolved]; ok {
+						continue
+					}
+					seenConfigs[resolved] = struct{}{}
+					extraConfigs[resolved] = struct{}{}
+					if _, refScope, ok := refResolver.ResolveConfigWithScope(resolved); ok {
+						queue = append(queue, refTarget{kind: "config", scope: refScope, name: resolved})
+					}
+				}
 			case "secret_ref":
 				if _, ok := seenSecrets[ref.Name]; ok {
 					continue
@@ -117,6 +132,21 @@ func InferTemplateRefDeps(cfg *config.Config, scope templates.Scope, configRefs 
 				extraSecrets[ref.Name] = struct{}{}
 				if _, refScope, ok := refResolver.ResolveSecretWithScope(ref.Name); ok {
 					queue = append(queue, refTarget{kind: "secret", scope: refScope, name: ref.Name})
+				}
+			case "secret_refs":
+				names, err := refResolver.ResolveSecretPattern(ref.Name)
+				if err != nil {
+					return nil, nil, err
+				}
+				for _, resolved := range names {
+					if _, ok := seenSecrets[resolved]; ok {
+						continue
+					}
+					seenSecrets[resolved] = struct{}{}
+					extraSecrets[resolved] = struct{}{}
+					if _, refScope, ok := refResolver.ResolveSecretWithScope(resolved); ok {
+						queue = append(queue, refTarget{kind: "secret", scope: refScope, name: resolved})
+					}
 				}
 			}
 		}

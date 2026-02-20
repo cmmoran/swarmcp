@@ -129,33 +129,42 @@ func addTemplateEdges(cfg *config.Config, graph *Graph, scope scopeKey, configs 
 				*warnings = append(*warnings, fmt.Sprintf("%s config %q: %s has dynamic reference", scope.String(), name, ref.FuncName))
 				continue
 			}
-			switch ref.Kind {
-			case "config":
-				refScope, _, ok := resolveConfigScope(cfg, scope, ref.Name)
-				if !ok {
-					if ref.FuncName == "config_value" || ref.FuncName == "config_value_index" || ref.FuncName == "config_value_get" {
-						continue
+			names, err := expandTemplateRefNames(cfg, scope, ref)
+			if err != nil {
+				return fmt.Errorf("%s config %q: %w", scope.String(), name, err)
+			}
+			if len(names) == 0 {
+				continue
+			}
+			for _, resolvedName := range names {
+				switch ref.Kind {
+				case "config":
+					refScope, _, ok := resolveConfigScope(cfg, scope, resolvedName)
+					if !ok {
+						if ref.FuncName == "config_value" || ref.FuncName == "config_value_index" || ref.FuncName == "config_value_get" {
+							continue
+						}
+						if infer && ref.FuncName == "config_ref" {
+							*warnings = append(*warnings, fmt.Sprintf("%s config %q: %s %q not found (inferred)", scope.String(), name, ref.FuncName, resolvedName))
+							continue
+						}
+						return fmt.Errorf("%s config %q: %s %q not found", scope.String(), name, ref.FuncName, resolvedName)
 					}
-					if infer && ref.FuncName == "config_ref" {
-						*warnings = append(*warnings, fmt.Sprintf("%s config %q: %s %q not found (inferred)", scope.String(), name, ref.FuncName, ref.Name))
-						continue
+					graph.AddEdge(configNode, nodeID("config", refScope, resolvedName))
+				case "secret":
+					refScope, _, ok := resolveSecretScope(cfg, scope, resolvedName)
+					if !ok {
+						if ref.FuncName == "secret_value" {
+							continue
+						}
+						if infer && ref.FuncName == "secret_ref" {
+							*warnings = append(*warnings, fmt.Sprintf("%s config %q: %s %q not found (inferred)", scope.String(), name, ref.FuncName, resolvedName))
+							continue
+						}
+						return fmt.Errorf("%s config %q: %s %q not found", scope.String(), name, ref.FuncName, resolvedName)
 					}
-					return fmt.Errorf("%s config %q: %s %q not found", scope.String(), name, ref.FuncName, ref.Name)
+					graph.AddEdge(configNode, nodeID("secret", refScope, resolvedName))
 				}
-				graph.AddEdge(configNode, nodeID("config", refScope, ref.Name))
-			case "secret":
-				refScope, _, ok := resolveSecretScope(cfg, scope, ref.Name)
-				if !ok {
-					if ref.FuncName == "secret_value" {
-						continue
-					}
-					if infer && ref.FuncName == "secret_ref" {
-						*warnings = append(*warnings, fmt.Sprintf("%s config %q: %s %q not found (inferred)", scope.String(), name, ref.FuncName, ref.Name))
-						continue
-					}
-					return fmt.Errorf("%s config %q: %s %q not found", scope.String(), name, ref.FuncName, ref.Name)
-				}
-				graph.AddEdge(configNode, nodeID("secret", refScope, ref.Name))
 			}
 		}
 	}
@@ -186,34 +195,43 @@ func addTemplateEdges(cfg *config.Config, graph *Graph, scope scopeKey, configs 
 				*warnings = append(*warnings, fmt.Sprintf("%s secret %q: %s has dynamic reference", scope.String(), name, ref.FuncName))
 				continue
 			}
-			switch ref.Kind {
-			case "config":
-				refScope, _, ok := resolveConfigScope(cfg, scope, ref.Name)
-				if !ok {
-					if ref.FuncName == "config_value" || ref.FuncName == "config_value_index" || ref.FuncName == "config_value_get" {
-						continue
+			names, err := expandTemplateRefNames(cfg, scope, ref)
+			if err != nil {
+				return fmt.Errorf("%s secret %q: %w", scope.String(), name, err)
+			}
+			if len(names) == 0 {
+				continue
+			}
+			for _, resolvedName := range names {
+				switch ref.Kind {
+				case "config":
+					refScope, _, ok := resolveConfigScope(cfg, scope, resolvedName)
+					if !ok {
+						if ref.FuncName == "config_value" || ref.FuncName == "config_value_index" || ref.FuncName == "config_value_get" {
+							continue
+						}
+						if infer && ref.FuncName == "config_ref" {
+							*warnings = append(*warnings, fmt.Sprintf("%s secret %q: %s %q not found (inferred)", scope.String(), name, ref.FuncName, resolvedName))
+							continue
+						}
+						return fmt.Errorf("%s secret %q: %s %q not found", scope.String(), name, ref.FuncName, resolvedName)
 					}
-					if infer && ref.FuncName == "config_ref" {
-						*warnings = append(*warnings, fmt.Sprintf("%s secret %q: %s %q not found (inferred)", scope.String(), name, ref.FuncName, ref.Name))
-						continue
+					graph.AddEdge(secretNode, nodeID("config", refScope, resolvedName))
+				case "secret":
+					refScope, _, ok := resolveSecretScope(cfg, scope, resolvedName)
+					if !ok {
+						if ref.FuncName == "secret_value" {
+							continue
+						}
+						if infer && ref.FuncName == "secret_ref" {
+							*warnings = append(*warnings, fmt.Sprintf("%s secret %q: %s %q not found (inferred)", scope.String(), name, ref.FuncName, resolvedName))
+							continue
+						}
+						return fmt.Errorf("%s secret %q: %s %q not found", scope.String(), name, ref.FuncName, resolvedName)
 					}
-					return fmt.Errorf("%s secret %q: %s %q not found", scope.String(), name, ref.FuncName, ref.Name)
-				}
-				graph.AddEdge(secretNode, nodeID("config", refScope, ref.Name))
-			case "secret":
-				refScope, _, ok := resolveSecretScope(cfg, scope, ref.Name)
-				if !ok {
-					if ref.FuncName == "secret_value" {
-						continue
+					if !isSelfSecretRef(scope, name, refScope, resolvedName) {
+						graph.AddEdge(secretNode, nodeID("secret", refScope, resolvedName))
 					}
-					if infer && ref.FuncName == "secret_ref" {
-						*warnings = append(*warnings, fmt.Sprintf("%s secret %q: %s %q not found (inferred)", scope.String(), name, ref.FuncName, ref.Name))
-						continue
-					}
-					return fmt.Errorf("%s secret %q: %s %q not found", scope.String(), name, ref.FuncName, ref.Name)
-				}
-				if !isSelfSecretRef(scope, name, refScope, ref.Name) {
-					graph.AddEdge(secretNode, nodeID("secret", refScope, ref.Name))
 				}
 			}
 		}
@@ -425,8 +443,10 @@ func ExtractTemplateRefs(path string, content string) ([]TemplateRef, error) {
 	funcs["config_value_index"] = func(string, int) any { return "" }
 	funcs["config_value_get"] = func(string, string) any { return "" }
 	funcs["config_ref"] = func(string) string { return "" }
+	funcs["config_refs"] = func(string) []string { return nil }
 	funcs["secret_value"] = func(string) string { return "" }
 	funcs["secret_ref"] = func(string) string { return "" }
+	funcs["secret_refs"] = func(string) []string { return nil }
 	funcs["runtime_value"] = func(args ...string) string { return "" }
 	funcs["external_ip"] = func() string { return "" }
 	funcs["escape_template"] = func(...string) string { return "" }
@@ -446,9 +466,9 @@ func ExtractTemplateRefs(path string, content string) ([]TemplateRef, error) {
 			Dynamic:  dynamic,
 		}
 		switch fn {
-		case "config_value", "config_value_index", "config_value_get", "config_ref":
+		case "config_value", "config_value_index", "config_value_get", "config_ref", "config_refs":
 			ref.Kind = "config"
-		case "secret_value", "secret_ref":
+		case "secret_value", "secret_ref", "secret_refs":
 			ref.Kind = "secret"
 		}
 		if !dynamic {
@@ -509,7 +529,7 @@ func walkCommand(cmd *parse.CommandNode, onCall func(string, parse.Node, bool)) 
 	}
 	if ident, ok := cmd.Args[0].(*parse.IdentifierNode); ok {
 		switch ident.Ident {
-		case "config_value", "config_value_index", "config_value_get", "config_ref", "secret_value", "secret_ref":
+		case "config_value", "config_value_index", "config_value_get", "config_ref", "config_refs", "secret_value", "secret_ref", "secret_refs":
 			if len(cmd.Args) < 2 {
 				onCall(ident.Ident, nil, true)
 			} else {
@@ -523,5 +543,33 @@ func walkCommand(cmd *parse.CommandNode, onCall func(string, parse.Node, bool)) 
 		if pipe, ok := arg.(*parse.PipeNode); ok {
 			walkPipe(pipe, onCall)
 		}
+	}
+}
+
+func expandTemplateRefNames(cfg *config.Config, scope scopeKey, ref TemplateRef) ([]string, error) {
+	switch ref.FuncName {
+	case "config_refs":
+		resolver := NewScopeResolver(cfg, Scope{
+			Project:    cfg.Project.Name,
+			Deployment: cfg.Project.Deployment,
+			Stack:      scope.stack,
+			Partition:  scope.partition,
+			Service:    scope.service,
+		}, true, true, nil, nil, nil)
+		return resolver.ResolveConfigPattern(ref.Name)
+	case "secret_refs":
+		resolver := NewScopeResolver(cfg, Scope{
+			Project:    cfg.Project.Name,
+			Deployment: cfg.Project.Deployment,
+			Stack:      scope.stack,
+			Partition:  scope.partition,
+			Service:    scope.service,
+		}, true, true, nil, nil, nil)
+		return resolver.ResolveSecretPattern(ref.Name)
+	default:
+		if ref.Name == "" {
+			return nil, nil
+		}
+		return []string{ref.Name}, nil
 	}
 }

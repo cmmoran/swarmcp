@@ -165,10 +165,11 @@ External definitions are supported via higher-scope configs/secrets and referenc
 Resolution order is level-first, then type: service -> partition -> stack -> project, with configs resolved before secrets.
 
 Inference (default on):
-- Service template `config_ref` / `secret_ref` calls infer required mounts and definitions when no explicit `configs` / `secrets` are listed.
+- Service template `config_ref` / `secret_ref` and `config_refs` / `secret_refs` calls infer required mounts and definitions when no explicit `configs` / `secrets` are listed.
 - Inferred configs default to `source: values#/name` (lookup uses normal values scoping).
 - Inferred secrets default to `source: inline: {{ secret_value "name" }}`.
 - `config_value` falls back to `values#/name` when no config definition exists (uses normal values scoping when a values store is configured). When the values entry is a map or list, the fallback returns the structured value (so `config_value_index` and `config_value_get` work).
+- Literal names/patterns are inferable. Dynamic name/pattern expressions are not inferable and are treated as dynamic references.
 - Disable with `--no-infer` to require explicit `configs` / `secrets` declarations.
 
 Template references:
@@ -186,6 +187,8 @@ Template functions (draft):
 - `config_value_index "<name>" <index>`
 - `config_value_get "<name>" "<key>"`
 - `config_ref "<name>"`
+- `config_refs "<glob-pattern>"`
+- `secret_refs "<glob-pattern>"`
 - `runtime_value "<template>"`
 - `runtime_value "standard_volumes" ["standard=<name>[,<name>...]"] ["category=<name>[,<name>...]"] ["_format=csv|json|yaml"]`
 - `external_ip`
@@ -194,6 +197,9 @@ Template functions (draft):
 - `swarm_network_cidrs [name]`
 
 `config_value` and `config_ref` resolve names using the same scope hierarchy as config references. When inference is enabled, `config_value` falls back to `values#/name` if no config definition exists.
+`config_refs` and `secret_refs` match logical names using glob patterns (`*`, `?`, `[class]`) against names visible in the current scope hierarchy (service -> partition -> stack -> project), then resolve each match using the same semantics as `config_ref` / `secret_ref`.
+`config_refs` and `secret_refs` return deterministic sorted lists of resolved mount paths and return an empty list when there are no matches.
+Invalid glob patterns are errors.
 `config_value_index` and `config_value_get` help extract list and map values from config templates.
 `runtime_value` expands `{project}`, `{deployment}`, `{stack}`, `{partition}`, `{service}`, `{networks_shared}`, and `{network_ephemeral}` tokens in the provided string.
 `runtime_value "standard_volumes"` returns service standard volume mounts (host:target) filtered by standard and/or category.

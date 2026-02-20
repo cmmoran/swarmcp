@@ -1,0 +1,45 @@
+mode: shared
+services:
+  ingress:
+    image: {{ config_value "traefik_image" }}
+    egress: true
+    mode: replicated
+    replicas: 1
+    labels:
+      traefik.enable: "true"
+      traefik.role: "edge"
+      traefik.swarm.lbswarm: "true"
+{{- range $route := (config_value "edge_sso_routes") }}
+      traefik.http.routers.{{ $route.name }}.entrypoints: "websecure"
+      traefik.http.routers.{{ $route.name }}.rule: {{ printf "HostRegexp(`{subdomain:.+}.%s`)" $route.host_suffix }}
+      traefik.http.routers.{{ $route.name }}.service: "edge-sso"
+      traefik.http.routers.{{ $route.name }}.tls: "true"
+{{- end }}
+      traefik.http.services.edge-sso.loadbalancer.server.port: "443"
+      traefik.http.services.edge-sso.loadbalancer.server.scheme: "https"
+      traefik.http.services.edge-sso.loadbalancer.serverstransport: "edge-sso-transport"
+      traefik.http.serversTransports.edge-sso-transport.serverName: "{{ config_value "sso_server_name" }}"
+      traefik.http.serversTransports.edge-sso-transport.rootCAs: "/etc/ssl/certs/downstream-ca.pem"
+      traefik.http.serversTransports.edge-sso-transport.vaultPKIClientResolver: "vaultpki"
+      traefik.http.serversTransports.edge-sso-transport.vaultPKIClient.commonName: "{{ config_value "sso_client_common_name" }}"
+    volumes:
+      - source: /var/log/traefik
+        target: /var/log
+        readonly: false
+      - standard: docker_sock
+    configs:
+      - name: traefik_yml
+        source: templates/stacks/sso/services/ingress/configs/traefik.yml.tmpl
+        target: /etc/traefik/traefik.yml
+      - name: dynamic_yml
+        source: templates/stacks/sso/services/ingress/configs/dynamic.yml.tmpl
+        target: /etc/traefik/dynamic.yml
+      - name: edge_ca
+      - name: ca_chain
+      - name: vault_client_crt
+        source: templates/stacks/sso/services/ingress/configs/vault_client.crt
+        target: /etc/traefik/vault_client.crt
+    secrets:
+      - name: vault_client_key
+        source: templates/stacks/sso/services/ingress/secrets/vault_client.key
+        target: /run/secrets/vault_client.key

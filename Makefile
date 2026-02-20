@@ -1,4 +1,4 @@
-.PHONY: all build test
+.PHONY: all build test install acme_dns_providers.yaml ci-image
 
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null)
 GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -18,3 +18,15 @@ test:
 
 install: build
 	cp swarmcp $(HOME)/.local/bin
+
+acme_dns_providers.yaml:
+	python3 contrib/traefik/acme_dns_providers.py contrib/traefik/acme_dns_providers.yaml
+
+CI_IMAGE ?= swarmcp-runner:local
+
+ci-image:
+	docker build \
+		-f contrib/ci/swarmcp-runner/Dockerfile \
+		-t $(CI_IMAGE) \
+		--build-arg VERSION=$(VERSION) \
+		.

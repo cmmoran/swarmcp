@@ -1,0 +1,32 @@
+traefik_image: "traefik:v3.6"
+log_level: "info"
+acme_email: "ops@example.com"
+acme_vault_path: "/edge/etc/traefik/ssl/acme.json"
+vault_url: "https://vault.example.com:8200"
+aws_region: "us-east-1"
+aws_hosted_zone_id: "Z123456EXAMPLE"
+trusted_loadbalancers:
+  - "10.0.0.0/8"
+edge_cert_main: "dev.sentinelsyn.com"
+edge_cert_sans:
+  - "*.dev.sentinelsyn.com"
+  - "*.qa.sentinelsyn.com"
+  - "*.demo.sentinelsyn.com"
+  - "*.core.sentinelsyn.com"
+edge_routes:
+  - name: sso-dev
+    host_suffix: "dev.sentinelsyn.com"
+    target: "https://ingress.sso:443"
+    server_name: "ingress.sso"
+  - name: sso-qa
+    host_suffix: "qa.sentinelsyn.com"
+    target: "https://ingress.sso:443"
+    server_name: "ingress.sso"
+  - name: sso-demo
+    host_suffix: "demo.sentinelsyn.com"
+    target: "https://ingress.sso:443"
+    server_name: "ingress.sso"
+  - name: core
+    host_suffix: "core.sentinelsyn.com"
+    target: "https://ingress.core:443"
+    server_name: "ingress.core"
