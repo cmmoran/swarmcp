@@ -18,6 +18,7 @@
 - [Service Dependencies and Update Policy](#service-dependencies-and-update-policy)
 - [Rollback Policy](#rollback-policy)
 - [State and Cache](#state-and-cache)
+- [Execution Targeting (Deployment + Partition + Stack)](#execution-targeting-deployment--partition--stack)
 - [CLI (Cobra)](#cli-cobra)
 - [YAML Schema](#yaml-schema)
 - [Examples](#examples)
@@ -573,6 +574,36 @@ Managed diff/status scope (current):
 - Networks: missing overlay networks derived from the config.
 - Services: image, command/args, workdir, env, ports, mode/replicas, healthcheck, network attachments, volume mounts, and config/secret mounts (placement/resources are not compared yet).
 
+## Execution Targeting (Deployment + Partition + Stack)
+Runtime commands support selector-based scope narrowing. Effective scope is the intersection of all provided selectors.
+
+Selectors:
+- `--deployment <name>`: selects deployment overlay/context.
+- `--partition <name>`: limits partitioned stack instances to one partition.
+- `--stack <name>`: limits runtime scope to one logical stack key under `stacks:`.
+
+Validation and resolution:
+- `--stack` must reference an existing logical stack key; unknown stack is an error.
+- `--partition` must be in `project.partitions`; unknown partition is an error.
+- For partitioned stacks:
+  - no `--partition`: all project partitions in scope.
+  - with `--partition`: only that partition in scope.
+- For shared stacks, partition selector does not create per-partition instances.
+
+Command semantics:
+- `plan`: render/report only targeted stack instances and only their related configs/secrets/mounts/networks/bind paths.
+- `diff`: compute and report drift only for targeted stack instances/resources.
+- `status`: report only targeted stack instances/resources and their service health.
+- `apply`: reconcile only targeted stack instances/resources.
+
+Prune behavior with stack targeting:
+- `--prune-services`: may remove services only within targeted stack instances (`docker stack deploy --prune` limited to targeted deploys).
+- `--prune` (configs/secrets): may remove only managed configs/secrets labeled for targeted stack scope; no cross-stack cleanup when `--stack` is set.
+
+Notes:
+- `--stack` applies to runtime commands (`plan`/`diff`/`status`/`apply`) and is independent of `diff config --stack`, which is a history filter.
+- Schema/template validation remains global where required for config integrity, but runtime render/plan/apply surface is target-scoped.
+
 ## Service Dependencies and Update Policy
 - Dependencies are explicit via `depends_on`.
 - Updates run in topological order; independent services update in parallel batches.
@@ -601,6 +632,7 @@ Managed diff/status scope (current):
   - `--prune`: remove unused managed configs/secrets.
   - `--preserve <n>`: keep the most recent `n` unused configs/secrets when pruning.
   - `--confirm`: enable confirmation prompts for prune operations.
+  - `--output <auto|summary|stack|error-only>`: control deploy log rendering during apply; when explicitly set, it implies `--no-ui`.
 - `status`: show managed resources, mount drift, and service health (desired/running task counts; desired=0 treated as disabled).
 - `secrets check`: report missing secrets required by templates.
 - `secrets put`: write a secret value to the secrets file or secrets engine.
@@ -622,10 +654,40 @@ Values store:
 - Values templates may use `runtime_value` tokens with project/deployment/partition scope.
 - `--deployment <name>` overrides `project.deployment` at runtime.
 - `--partition <name>` limits planning/validation to a single partition.
+- `--stack <name>` limits runtime commands (`plan`/`diff`/`status`/`apply`) to a single logical stack.
 - Map keys ending in `+` append to lists (e.g., `ports+`).
 - Map keys ending in `~` perform keyed list merges using `_key` (default: `name`).
 - For scalar lists, `~` treats the item value as the key; unmatched items are appended (duplicates preserved).
 - Overlays deep-merge config/secret definitions; fields omitted in overlays inherit from base.
+
+Implementation checklist (`--stack` runtime targeting):
+1) CLI surface:
+- Add `Options.Stack string`.
+- Add persistent flag `--stack` with help text aligned to logical stack key semantics.
+
+2) Context and validation:
+- Extend project context/options to carry stack selector.
+- Validate stack existence during context load (same stage as deployment/partition checks).
+
+3) Filtering model:
+- Introduce stack filter in render/apply planning paths so desired state generation is stack-scoped.
+- Keep existing deployment/partition behavior and treat stack as additional intersection filter.
+
+4) Command wiring:
+- Pass stack selector through `plan`/`diff`/`status`/`apply` pipelines.
+- Scope warnings/output sections to selected stacks only.
+
+5) Prune guards:
+- For stack-scoped runs, constrain prune candidate selection to matching stack labels/scope IDs.
+- Keep non-stack-scoped behavior unchanged.
+
+6) State cache:
+- Include stack selector in state snapshot/cache compatibility checks to avoid false no-op cache hits across different stack scopes.
+
+7) Tests:
+- Add positive/negative selector validation tests.
+- Add command-level scope tests per command for shared and partitioned stacks.
+- Add prune safety regression tests proving no cross-stack deletions during stack-scoped apply.
 
 ## YAML Schema
 Outline:

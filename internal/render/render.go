@@ -76,7 +76,7 @@ const (
 	LabelService   = "swarmcp.io/service"
 )
 
-func RenderProject(cfg *config.Config, store *secrets.Store, values any, partitionFilter string, allowMissing bool, infer bool) (Summary, error) {
+func RenderProject(cfg *config.Config, store *secrets.Store, values any, partitionFilters []string, stackFilters []string, allowMissing bool, infer bool) (Summary, error) {
 	var summary Summary
 	data := TemplateData{Project: cfg.Project.Name, Deployment: cfg.Project.Deployment}
 	resolver, err := secrets.NewResolver(cfg, store, allowMissing)
@@ -90,9 +90,12 @@ func RenderProject(cfg *config.Config, store *secrets.Store, values any, partiti
 	}
 
 	for stackName, stack := range cfg.Stacks {
+		if len(stackFilters) > 0 && !containsFilter(stackFilters, stackName) {
+			continue
+		}
 		data.Stack = stackName
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions := sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+			partitions := sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 			for _, partitionName := range partitions {
 				data.Partition = partitionName
 				scope := withNetworkScope(cfg, templates.Scope{Project: cfg.Project.Name, Deployment: cfg.Project.Deployment, Stack: stackName, Partition: partitionName})
@@ -108,7 +111,7 @@ func RenderProject(cfg *config.Config, store *secrets.Store, values any, partiti
 			}
 		}
 
-		stackPartitions := sliceutil.FilterPartition(cfg.StackPartitionNames(stackName), partitionFilter)
+		stackPartitions := sliceutil.FilterPartitions(cfg.StackPartitionNames(stackName), partitionFilters)
 		for _, partitionName := range stackPartitions {
 			data.Partition = partitionName
 			scope := withNetworkScope(cfg, templates.Scope{Project: cfg.Project.Name, Deployment: cfg.Project.Deployment, Stack: stackName, Partition: partitionName})
@@ -117,11 +120,11 @@ func RenderProject(cfg *config.Config, store *secrets.Store, values any, partiti
 			}
 		}
 
-		if err = renderServiceDefs(cfg, resolver, values, stackName, stack, data.Project, data.Deployment, &summary, partitionFilter, infer); err != nil {
+		if err = renderServiceDefs(cfg, resolver, values, stackName, stack, data.Project, data.Deployment, &summary, partitionFilters, infer); err != nil {
 			return summary, err
 		}
 
-		if err = collectServiceMounts(cfg, stackName, stack, data.Project, data.Deployment, resolver, values, &summary, partitionFilter, infer); err != nil {
+		if err = collectServiceMounts(cfg, stackName, stack, data.Project, data.Deployment, resolver, values, &summary, partitionFilters, infer); err != nil {
 			return summary, err
 		}
 	}
@@ -271,10 +274,10 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 	return nil
 }
 
-func renderServiceDefs(cfg *config.Config, resolver secrets.Resolver, values any, stackName string, stack config.Stack, projectName string, deployment string, summary *Summary, partitionFilter string, infer bool) error {
+func renderServiceDefs(cfg *config.Config, resolver secrets.Resolver, values any, stackName string, stack config.Stack, projectName string, deployment string, summary *Summary, partitionFilters []string, infer bool) error {
 	partitions := []string{""}
 	if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-		partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+		partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 	}
 
 	for _, partitionName := range partitions {
@@ -563,10 +566,10 @@ func inferServiceRefs(cfg *config.Config, resolver secrets.Resolver, values any,
 	return renderedService, nil
 }
 
-func collectServiceMounts(cfg *config.Config, stackName string, stack config.Stack, projectName string, deployment string, resolver secrets.Resolver, values any, summary *Summary, partitionFilter string, infer bool) error {
+func collectServiceMounts(cfg *config.Config, stackName string, stack config.Stack, projectName string, deployment string, resolver secrets.Resolver, values any, summary *Summary, partitionFilters []string, infer bool) error {
 	partitions := []string{""}
 	if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-		partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+		partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 	}
 
 	for _, partitionName := range partitions {
@@ -662,6 +665,15 @@ func collectServiceMounts(cfg *config.Config, stackName string, stack config.Sta
 	}
 
 	return nil
+}
+
+func containsFilter(filters []string, value string) bool {
+	for _, filter := range filters {
+		if filter == value {
+			return true
+		}
+	}
+	return false
 }
 
 func formatMountLine(scope templates.Scope, kind, name, target string, inferred bool) string {

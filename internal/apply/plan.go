@@ -25,7 +25,7 @@ type SkippedDeletes struct {
 	Secrets int
 }
 
-func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, desired DesiredState, values any, partitionFilter string, infer bool) (Plan, error) {
+func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, desired DesiredState, values any, partitionFilters []string, stackFilters []string, infer bool) (Plan, error) {
 	projectName := cfg.Project.Name
 	existingConfigs, err := client.ListConfigs(ctx)
 	if err != nil {
@@ -69,7 +69,7 @@ func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, des
 	desiredConfigNames := make(map[string]struct{}, len(desired.Configs))
 	desiredSecretNames := make(map[string]struct{}, len(desired.Secrets))
 	desiredServiceKeys := make(map[string]struct{})
-	expected, err := expectedServices(cfg, partitionFilter)
+	expected, err := expectedServices(cfg, partitionFilters, stackFilters)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -137,7 +137,7 @@ func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, des
 		plan.DeleteSecrets = append(plan.DeleteSecrets, sec)
 	}
 
-	creates, updates, err := buildServiceChanges(cfg, desired, values, existingServices, networkTargets, partitionFilter, infer)
+	creates, updates, err := buildServiceChanges(cfg, desired, values, existingServices, networkTargets, partitionFilters, stackFilters, infer)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -156,7 +156,7 @@ func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, des
 	}
 	if len(affected) > 0 {
 		filter := affected
-		stackDeploys, err := BuildStackDeploys(cfg, desired, values, partitionFilter, filter, creates, updates, infer)
+		stackDeploys, err := BuildStackDeploys(cfg, desired, values, partitionFilters, stackFilters, filter, creates, updates, infer)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -182,7 +182,10 @@ func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, des
 		if partitionName == "none" {
 			partitionName = ""
 		}
-		if stackCfg.Mode == "partitioned" && partitionFilter != "" && partitionName != partitionFilter {
+		if len(stackFilters) > 0 && !selectorContains(stackFilters, stack) {
+			continue
+		}
+		if stackCfg.Mode == "partitioned" && len(partitionFilters) > 0 && !selectorContains(partitionFilters, partitionName) {
 			continue
 		}
 		key := serviceKey{
@@ -216,7 +219,7 @@ func sortedKeys(values map[string]struct{}) []string {
 	return out
 }
 
-func Apply(ctx context.Context, client swarm.Client, plan Plan, contextName string, pruneServices bool, stackParallel int, noUI bool) error {
+func Apply(ctx context.Context, client swarm.Client, plan Plan, contextName string, pruneServices bool, stackParallel int, noUI bool, outputMode string, outputExplicit bool) error {
 	for _, net := range plan.CreateNetworks {
 		if _, err := client.CreateNetwork(ctx, net); err != nil {
 			return err
@@ -232,7 +235,7 @@ func Apply(ctx context.Context, client swarm.Client, plan Plan, contextName stri
 			return err
 		}
 	}
-	if err := DeployStacks(ctx, plan.StackDeploys, contextName, pruneServices, stackParallel, noUI); err != nil {
+	if err := DeployStacks(ctx, plan.StackDeploys, contextName, pruneServices, stackParallel, noUI, outputMode, outputExplicit); err != nil {
 		return err
 	}
 	for _, cfg := range plan.DeleteConfigs {

@@ -23,3 +23,14 @@ func PartitionInProject(cfg *config.Config, name string) bool {
 	}
 	return false
 }
+
+func StackInProject(cfg *config.Config, name string) bool {
+	if cfg == nil {
+		return false
+	}
+	if name == "" {
+		return false
+	}
+	_, ok := cfg.Stacks[name]
+	return ok
+}

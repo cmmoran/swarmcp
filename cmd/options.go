@@ -6,9 +6,10 @@ type Options struct {
 	SkipHealthcheck bool
 	SecretsFile     string
 	ValuesFiles     []string
-	Deployment      string
+	Deployments     []string
 	Context         string
-	Partition       string
+	Partitions      []string
+	Stacks          []string
 	AllowMissing    bool
 	NoInfer         bool
 	DebugContent    bool
@@ -19,6 +20,7 @@ type Options struct {
 	Preserve        int
 	Serial          bool
 	NoUI            bool
+	Output          string
 	Confirm         bool
 	Offline         bool
 	PruneAutoLabels bool

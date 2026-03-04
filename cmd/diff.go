@@ -22,141 +22,163 @@ var diffCmd = &cobra.Command{
 	Use:   "diff",
 	Short: "Show planned changes vs current Swarm state",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPath:  opts.ConfigPath,
-			SecretsFile: opts.SecretsFile,
-			ValuesFiles: opts.ValuesFiles,
-			Deployment:  opts.Deployment,
-			Context:     opts.Context,
-			Partition:   opts.Partition,
-			Offline:     opts.Offline,
-			Debug:       opts.Debug,
-		}, true, true)
-		if err != nil {
-			return err
-		}
-		cfg := projectCtx.Config
-		partitionFilter := projectCtx.Partition
-		desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilter, opts.AllowMissing, !opts.NoInfer)
-		if err != nil {
-			return err
-		}
-
-		client, err := projectCtx.SwarmClient()
-		if err != nil {
-			return err
-		}
-
-		ctx := context.Background()
-		preserve, err := resolvePreserve(cmd, cfg, opts)
-		if err != nil {
-			return err
-		}
-		report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilter, !opts.NoInfer, preserve)
-		if err != nil {
-			return err
-		}
-
-		warnings := cmdutil.VolumePlacementWarnings(cfg, partitionFilter, opts.Debug)
-		sortServiceStates(report.Services)
-		sortConfigSpecs(report.MissingConfigs)
-		sortSecretSpecs(report.MissingSecrets)
-		sortConfigs(report.StaleConfigs)
-		sortSecrets(report.StaleSecrets)
-		sortDriftItems(report.DriftConfigs)
-		sortDriftItems(report.DriftSecrets)
-
-		changedServices, missingServices := splitServiceStates(report.Services)
-		debugContentEnabled := opts.DebugContent
-		if flag := cmd.Flags().Lookup("debug-content-max"); flag != nil && flag.Changed {
-			debugContentEnabled = true
-		}
-
+		deployments := deploymentTargets(opts.Deployments)
+		partitionFilters := normalizeSelectors(opts.Partitions)
+		stackFilters := normalizeSelectors(opts.Stacks)
 		out := cmd.OutOrStdout()
-		cmdutil.PrintWarnings(out, warnings)
-		fmt.Fprintf(out, "diff OK\nconfigs to create: %d\nsecrets to create: %d\nnetworks to create: %d\nconfigs to delete: %d\nsecrets to delete: %d\nconfigs preserved: %d\nsecrets preserved: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\nservices to update: %d\nservices missing: %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), report.Preserved.ConfigsPreserved, report.Preserved.SecretsPreserved, report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets, len(changedServices), len(missingServices))
-
-		if len(report.MissingConfigs) > 0 {
-			fmt.Fprintln(out, "configs to create:")
-			for _, cfg := range report.MissingConfigs {
-				fmt.Fprintf(out, "  - %s\n", cmdutil.FormatConfigItem(cfg.Name, cfg.Labels))
-			}
-		}
-		if len(report.MissingSecrets) > 0 {
-			fmt.Fprintln(out, "secrets to create:")
-			for _, sec := range report.MissingSecrets {
-				fmt.Fprintf(out, "  - %s\n", cmdutil.FormatConfigItem(sec.Name, sec.Labels))
-			}
-		}
-		if len(report.StaleConfigs) > 0 {
-			fmt.Fprintln(out, "configs to delete:")
-			for _, cfg := range report.StaleConfigs {
-				fmt.Fprintf(out, "  - %s\n", cmdutil.FormatConfigItem(cfg.Name, cfg.Labels))
-			}
-		}
-		if len(report.StaleSecrets) > 0 {
-			fmt.Fprintln(out, "secrets to delete:")
-			for _, sec := range report.StaleSecrets {
-				fmt.Fprintf(out, "  - %s\n", cmdutil.FormatConfigItem(sec.Name, sec.Labels))
-			}
-		}
-		if len(report.DriftConfigs) > 0 {
-			fmt.Fprintln(out, "configs with label drift:")
-			for _, item := range report.DriftConfigs {
-				fmt.Fprintf(out, "  - %s (%s)\n", cmdutil.FormatConfigItem(item.Name, item.Labels), item.Reason)
-			}
-		}
-		if len(report.DriftSecrets) > 0 {
-			fmt.Fprintln(out, "secrets with label drift:")
-			for _, item := range report.DriftSecrets {
-				fmt.Fprintf(out, "  - %s (%s)\n", cmdutil.FormatConfigItem(item.Name, item.Labels), item.Reason)
-			}
-		}
-		if len(report.MissingNetworks) > 0 {
-			fmt.Fprintln(out, "networks to create:")
-			for _, net := range report.MissingNetworks {
-				fmt.Fprintf(out, "  - %s\n", net.Name)
-			}
-		}
-		if len(changedServices) > 0 {
-			fmt.Fprintln(out, "services to update:")
-			for _, state := range changedServices {
-				line := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
-				if len(state.IntentDiffs) > 0 {
-					line += " (" + strings.Join(state.IntentDiffs, ", ") + ")"
+		for deploymentIndex, deployment := range deployments {
+			if len(deployments) > 1 {
+				if deploymentIndex > 0 {
+					_, _ = fmt.Fprintln(out)
 				}
-				fmt.Fprintf(out, "  - %s\n", line)
+				label := deployment
+				if label == "" {
+					label = "(default)"
+				}
+				_, _ = fmt.Fprintf(out, "target deployment: %s\n", label)
 			}
-		}
-		if unmanaged := unmanagedServiceStates(report.Services); len(unmanaged) > 0 {
-			fmt.Fprintln(out, "services with unmanaged drift:")
-			for _, state := range unmanaged {
-				line := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
-				line += " (" + strings.Join(state.Unmanaged, ", ") + ")"
-				fmt.Fprintf(out, "  - %s\n", line)
-			}
-		}
-		if len(missingServices) > 0 {
-			fmt.Fprintln(out, "services missing:")
-			for _, state := range missingServices {
-				fmt.Fprintf(out, "  - %s\n", cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service))
-			}
-		}
-		if err := printStateDiff(out, opts.ConfigPath, report, changedServices, missingServices); err != nil {
-			return err
-		}
-		if opts.Debug || debugContentEnabled {
-			if err := printDiffDebug(out, context.Background(), client, report, changedServices, missingServices, diffDebugOptions{
-				Debug:           opts.Debug,
-				DebugContent:    debugContentEnabled,
-				DebugContentMax: opts.DebugContentMax,
-			}); err != nil {
+
+			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
+				ConfigPath:  opts.ConfigPath,
+				SecretsFile: opts.SecretsFile,
+				ValuesFiles: opts.ValuesFiles,
+				Deployment:  deployment,
+				Context:     opts.Context,
+				Offline:     opts.Offline,
+				Debug:       opts.Debug,
+			}, true, true)
+			if err != nil {
 				return err
 			}
-		}
-		if opts.DiffSources {
-			if err := printSourcesDiff(out, cfg, desired.Defs, opts.Offline, opts.Debug); err != nil {
+			cfg := projectCtx.Config
+			for _, partition := range partitionFilters {
+				if !cmdutil.PartitionInProject(cfg, partition) {
+					return fmt.Errorf("partition %q not found in project.partitions", partition)
+				}
+			}
+			for _, stack := range stackFilters {
+				if !cmdutil.StackInProject(cfg, stack) {
+					return fmt.Errorf("stack %q not found in stacks", stack)
+				}
+			}
+			desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilters, stackFilters, opts.AllowMissing, !opts.NoInfer)
+			if err != nil {
 				return err
+			}
+
+			client, err := projectCtx.SwarmClient()
+			if err != nil {
+				return err
+			}
+			ctx := context.Background()
+			preserve, err := resolvePreserve(cmd, cfg, opts)
+			if err != nil {
+				return err
+			}
+			report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilters, stackFilters, !opts.NoInfer, preserve)
+			if err != nil {
+				return err
+			}
+
+			warnings := cmdutil.VolumePlacementWarnings(cfg, partitionFilters, stackFilters, opts.Debug)
+			sortServiceStates(report.Services)
+			sortConfigSpecs(report.MissingConfigs)
+			sortSecretSpecs(report.MissingSecrets)
+			sortConfigs(report.StaleConfigs)
+			sortSecrets(report.StaleSecrets)
+			sortDriftItems(report.DriftConfigs)
+			sortDriftItems(report.DriftSecrets)
+
+			changedServices, missingServices := splitServiceStates(report.Services)
+			debugContentEnabled := opts.DebugContent
+			if flag := cmd.Flags().Lookup("debug-content-max"); flag != nil && flag.Changed {
+				debugContentEnabled = true
+			}
+
+			cmdutil.PrintWarnings(out, warnings)
+			_, _ = fmt.Fprintf(out, "diff OK\nconfigs to create: %d\nsecrets to create: %d\nnetworks to create: %d\nconfigs to delete: %d\nsecrets to delete: %d\nconfigs preserved: %d\nsecrets preserved: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\nservices to update: %d\nservices missing: %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), report.Preserved.ConfigsPreserved, report.Preserved.SecretsPreserved, report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets, len(changedServices), len(missingServices))
+			if len(report.MissingConfigs) > 0 {
+				_, _ = fmt.Fprintln(out, "configs to create:")
+				for _, cfg := range report.MissingConfigs {
+					_, _ = fmt.Fprintf(out, "  - %s\n", cmdutil.FormatConfigItem(cfg.Name, cfg.Labels))
+				}
+			}
+			if len(report.MissingSecrets) > 0 {
+				_, _ = fmt.Fprintln(out, "secrets to create:")
+				for _, sec := range report.MissingSecrets {
+					_, _ = fmt.Fprintf(out, "  - %s\n", cmdutil.FormatConfigItem(sec.Name, sec.Labels))
+				}
+			}
+			if len(report.StaleConfigs) > 0 {
+				_, _ = fmt.Fprintln(out, "configs to delete:")
+				for _, cfg := range report.StaleConfigs {
+					_, _ = fmt.Fprintf(out, "  - %s\n", cmdutil.FormatConfigItem(cfg.Name, cfg.Labels))
+				}
+			}
+			if len(report.StaleSecrets) > 0 {
+				_, _ = fmt.Fprintln(out, "secrets to delete:")
+				for _, sec := range report.StaleSecrets {
+					_, _ = fmt.Fprintf(out, "  - %s\n", cmdutil.FormatConfigItem(sec.Name, sec.Labels))
+				}
+			}
+			if len(report.DriftConfigs) > 0 {
+				_, _ = fmt.Fprintln(out, "configs with label drift:")
+				for _, item := range report.DriftConfigs {
+					_, _ = fmt.Fprintf(out, "  - %s (%s)\n", cmdutil.FormatConfigItem(item.Name, item.Labels), item.Reason)
+				}
+			}
+			if len(report.DriftSecrets) > 0 {
+				_, _ = fmt.Fprintln(out, "secrets with label drift:")
+				for _, item := range report.DriftSecrets {
+					_, _ = fmt.Fprintf(out, "  - %s (%s)\n", cmdutil.FormatConfigItem(item.Name, item.Labels), item.Reason)
+				}
+			}
+			if len(report.MissingNetworks) > 0 {
+				_, _ = fmt.Fprintln(out, "networks to create:")
+				for _, net := range report.MissingNetworks {
+					_, _ = fmt.Fprintf(out, "  - %s\n", net.Name)
+				}
+			}
+			if len(changedServices) > 0 {
+				_, _ = fmt.Fprintln(out, "services to update:")
+				for _, state := range changedServices {
+					line := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
+					if len(state.IntentDiffs) > 0 {
+						line += " (" + strings.Join(state.IntentDiffs, ", ") + ")"
+					}
+					_, _ = fmt.Fprintf(out, "  - %s\n", line)
+				}
+			}
+			if unmanaged := unmanagedServiceStates(report.Services); len(unmanaged) > 0 {
+				_, _ = fmt.Fprintln(out, "services with unmanaged drift:")
+				for _, state := range unmanaged {
+					line := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
+					line += " (" + strings.Join(state.Unmanaged, ", ") + ")"
+					_, _ = fmt.Fprintf(out, "  - %s\n", line)
+				}
+			}
+			if len(missingServices) > 0 {
+				_, _ = fmt.Fprintln(out, "services missing:")
+				for _, state := range missingServices {
+					_, _ = fmt.Fprintf(out, "  - %s\n", cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service))
+				}
+			}
+			if err := printStateDiff(out, opts.ConfigPath, report, changedServices, missingServices); err != nil {
+				return err
+			}
+			if opts.Debug || debugContentEnabled {
+				if err := printDiffDebug(out, context.Background(), client, report, changedServices, missingServices, diffDebugOptions{
+					Debug:           opts.Debug,
+					DebugContent:    debugContentEnabled,
+					DebugContentMax: opts.DebugContentMax,
+				}); err != nil {
+					return err
+				}
+			}
+			if opts.DiffSources {
+				if err := printSourcesDiff(out, cfg, desired.Defs, opts.Offline, opts.Debug); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -249,13 +271,13 @@ func printStateDiff(out io.Writer, configPath string, report apply.StatusReport,
 		}
 		return err
 	}
-	fmt.Fprintf(out, "state cache: %s %s\n", cached.Command, cached.GeneratedAt)
+	_, _ = fmt.Fprintf(out, "state cache: %s %s\n", cached.Command, cached.GeneratedAt)
 	if cached.Command != "apply" {
-		fmt.Fprintln(out, "state drift: skipped (last command was plan)")
+		_, _ = fmt.Fprintln(out, "state drift: skipped (last command was plan)")
 		return nil
 	}
 	if cached.ConfigPath != "" && cached.ConfigPath != configPath {
-		fmt.Fprintf(out, "state drift: skipped (config path mismatch: %s)\n", cached.ConfigPath)
+		_, _ = fmt.Fprintf(out, "state drift: skipped (config path mismatch: %s)\n", cached.ConfigPath)
 		return nil
 	}
 	current := state.PlanSummary{
@@ -272,12 +294,12 @@ func printStateDiff(out io.Writer, configPath string, report apply.StatusReport,
 	}
 	deltas := diffStateSummary(cached.Plan, current)
 	if len(deltas) == 0 {
-		fmt.Fprintln(out, "state drift: none")
+		_, _ = fmt.Fprintln(out, "state drift: none")
 		return nil
 	}
-	fmt.Fprintln(out, "state drift:")
+	_, _ = fmt.Fprintln(out, "state drift:")
 	for _, delta := range deltas {
-		fmt.Fprintf(out, "  - %s: state=%d current=%d\n", delta.label, delta.stateValue, delta.currentValue)
+		_, _ = fmt.Fprintf(out, "  - %s: state=%d current=%d\n", delta.label, delta.stateValue, delta.currentValue)
 	}
 	return nil
 }
@@ -305,43 +327,43 @@ func printSourcesDiff(out io.Writer, cfg *config.Config, defs []render.RenderedD
 	}
 	items := collectSourceDiffItems(cfg, defs)
 	if len(items) == 0 {
-		fmt.Fprintln(out, "sources diff: none")
+		_, _ = fmt.Fprintln(out, "sources diff: none")
 		return nil
 	}
 	loadOpts := config.LoadOptions{CacheDir: cfg.CacheDir, Offline: offline, Debug: debug}
 	results := make(map[string]sourceDiffResult)
-	fmt.Fprintln(out, "sources diff:")
+	_, _ = fmt.Fprintln(out, "sources diff:")
 	for _, item := range items {
 		label := fmt.Sprintf("%s %s (%s)", item.kind, item.name, cmdutil.ScopeLabel(item.scope))
 		source := strings.TrimSpace(item.source)
 		if source == "" {
-			fmt.Fprintf(out, "  - %s: missing source\n", label)
+			_, _ = fmt.Fprintf(out, "  - %s: missing source\n", label)
 			continue
 		}
 		if strings.HasPrefix(source, "inline:") {
-			fmt.Fprintf(out, "  - %s: skipped (inline)\n", label)
+			_, _ = fmt.Fprintf(out, "  - %s: skipped (inline)\n", label)
 			continue
 		}
 		if templates.IsValuesSource(source) {
-			fmt.Fprintf(out, "  - %s: skipped (values)\n", label)
+			_, _ = fmt.Fprintf(out, "  - %s: skipped (values)\n", label)
 			continue
 		}
 		base, fragment := templates.SplitSource(source)
 		if base == "" {
-			fmt.Fprintf(out, "  - %s: skipped (empty source)\n", label)
+			_, _ = fmt.Fprintf(out, "  - %s: skipped (empty source)\n", label)
 			continue
 		}
 		if !config.IsGitSource(base) {
 			if fragment != "" {
-				fmt.Fprintf(out, "  - %s: skipped (local source %s%s)\n", label, base, fragment)
+				_, _ = fmt.Fprintf(out, "  - %s: skipped (local source %s%s)\n", label, base, fragment)
 				continue
 			}
-			fmt.Fprintf(out, "  - %s: skipped (local source %s)\n", label, base)
+			_, _ = fmt.Fprintf(out, "  - %s: skipped (local source %s)\n", label, base)
 			continue
 		}
 		parsed, ok, err := config.ParseGitSource(base)
 		if err != nil || !ok {
-			fmt.Fprintf(out, "  - %s: invalid git source %s\n", label, base)
+			_, _ = fmt.Fprintf(out, "  - %s: invalid git source %s\n", label, base)
 			continue
 		}
 		key := fmt.Sprintf("%s@%s#%s", parsed.URL, parsed.Ref, parsed.Path)
@@ -358,23 +380,23 @@ func printSourcesDiff(out io.Writer, cfg *config.Config, defs []render.RenderedD
 			results[key] = result
 		}
 		if result.err != nil {
-			fmt.Fprintf(out, "  - %s: error %v\n", label, result.err)
+			_, _ = fmt.Fprintf(out, "  - %s: error %v\n", label, result.err)
 			continue
 		}
 		if !result.beforeOK {
-			fmt.Fprintf(out, "  - %s: new commit=%s subtree=%s\n", label, result.after.Commit, result.after.Subtree)
+			_, _ = fmt.Fprintf(out, "  - %s: new commit=%s subtree=%s\n", label, result.after.Commit, result.after.Subtree)
 			if err := printSourceFileDiffs(out, parsed, "", result.after.Commit, loadOpts); err != nil {
-				fmt.Fprintf(out, "    diff error: %v\n", err)
+				_, _ = fmt.Fprintf(out, "    diff error: %v\n", err)
 			}
 			continue
 		}
 		if result.before.Commit == result.after.Commit && result.before.Subtree == result.after.Subtree {
-			fmt.Fprintf(out, "  - %s: no changes (commit=%s)\n", label, result.after.Commit)
+			_, _ = fmt.Fprintf(out, "  - %s: no changes (commit=%s)\n", label, result.after.Commit)
 			continue
 		}
-		fmt.Fprintf(out, "  - %s: commit %s -> %s subtree %s -> %s\n", label, result.before.Commit, result.after.Commit, result.before.Subtree, result.after.Subtree)
+		_, _ = fmt.Fprintf(out, "  - %s: commit %s -> %s subtree %s -> %s\n", label, result.before.Commit, result.after.Commit, result.before.Subtree, result.after.Subtree)
 		if err := printSourceFileDiffs(out, parsed, result.before.Commit, result.after.Commit, loadOpts); err != nil {
-			fmt.Fprintf(out, "    diff error: %v\n", err)
+			_, _ = fmt.Fprintf(out, "    diff error: %v\n", err)
 		}
 	}
 	return nil
@@ -457,7 +479,7 @@ func printSourceFileDiffs(out io.Writer, parsed config.GitSource, beforeCommit s
 	}
 	fileList := unionFileKeys(beforeFiles, afterFiles)
 	if len(fileList) == 0 {
-		fmt.Fprintln(out, "    (no files)")
+		_, _ = fmt.Fprintln(out, "    (no files)")
 		return nil
 	}
 	anyDiff := false
@@ -474,18 +496,18 @@ func printSourceFileDiffs(out io.Writer, parsed config.GitSource, beforeCommit s
 			continue
 		}
 		anyDiff = true
-		fmt.Fprintf(out, "    file: %s\n", name)
+		_, _ = fmt.Fprintf(out, "    file: %s\n", name)
 		diff, err := diffLinesText(before, after)
 		if err != nil {
-			fmt.Fprintf(out, "      diff error: %v\n", err)
+			_, _ = fmt.Fprintf(out, "      diff error: %v\n", err)
 			continue
 		}
 		for _, line := range diff {
-			fmt.Fprintf(out, "      %s\n", line)
+			_, _ = fmt.Fprintf(out, "      %s\n", line)
 		}
 	}
 	if !anyDiff {
-		fmt.Fprintln(out, "    (no file diffs)")
+		_, _ = fmt.Fprintln(out, "    (no file diffs)")
 	}
 	return nil
 }

@@ -1,0 +1,78 @@
+{{ $domain := (config_value "public_domain") -}}
+tls:
+  options:
+    default:
+      clientAuth:
+        caFiles:
+          - {{ config_ref "ca-chain" }}
+          - {{ config_ref "platform-ca-chain" }}
+        clientAuthType: VerifyClientCertIfGiven
+  stores:
+    default:
+      defaultGeneratedCert:
+        resolver: leresolver
+        domain:
+          main: "{{ config_value "default_cert_main" }}"
+          sans:
+{{- range $san := (config_value "default_cert_sans") }}
+            - "{{ $san }}"
+  {{- range $partition := (config_value "default_partitions") }}
+            - "{{ printf "*.%s.%s" $partition (trimPrefix "*." $san) }}"
+  {{- end }}
+{{- end }}
+http:
+  middlewares:
+    inject-geoip:
+      geoIP:
+        debug: true
+        setRealIP: true
+        ipStrategy:
+          excludedIPs:
+{{- range (config_value "trusted_loadbalancers") }}
+            - "{{ . }}"
+{{- end }}
+        dbPath:
+          - /etc/geoip/geolite2-city.mmdb
+          - /etc/geoip/geolite2-asn.mmdb
+    github-allowlist:
+      ipAllowList:
+        sourceRange:
+{{- range (config_value "github_allowlist") }}
+          - "{{ . }}"
+{{- end }}
+    deny-all:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+        rejectStatusCode: 404
+    add-context-id:
+      headers:
+        customRequestHeaders:
+          x-correlation-id: '{{ escape_template `{{ default (uuidv4) (.Header.Get "x-correlation-id") }}` "2" }}'
+    local-allowlist:
+      ipAllowList:
+        sourceRange:
+{{- range config_value "ip_whitelist" }}
+          - "{{ . }}"
+{{- end }}
+  routers:
+    catchall:
+      entryPoints:
+        - websecure
+      rule: "PathPrefix(`/`)"
+      priority: 1
+      middlewares:
+        - deny-all
+      service: unavailable
+    dashboard:
+      entryPoints:
+        - websecure
+      rule: "Host(`traefik.{{ $domain }}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`) || PathPrefix(`/callback`))"
+      middlewares:
+        - local-allowlist
+      service: api@internal
+      tls: {}
+  services:
+    unavailable:
+      loadBalancer:
+        servers: {}

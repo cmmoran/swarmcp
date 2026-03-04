@@ -1,0 +1,149 @@
+common:
+  mail:
+    host: {{ config_value "mail_host" }}
+    port: {{ config_value "mail_port" }}
+    username: {{ config_value "mail_username" }}
+    replyto: {{ config_value "mail_from_address" }}
+  agency:
+    base-url: {{ runtime_value "https://agency.{partition}.sentinelsyn.com" }}
+  authz:
+    authz-url: {{ runtime_value "https://authz.{sso_domain}" }}
+    token-file: {{ secret_ref "authz_api_key" }}
+  datastore:
+    username: {{ config_value "db_username" }}
+    port: 1521
+    host: fpcexajprod-wy25n-scan.focalpoint.corp
+    dbname: synqa.lswifppddb01.lswifppd.oraclevcn.com
+    migration:
+      enabled: true
+    config:
+      dialector:
+        type: "oracle"
+        varcharsizeischarlength: true
+        useclobfortexttype: false
+        namingcasesensitive: false
+        timegranularity: -1000
+        sessiontimezone: UTC
+    extra:
+      custom dns: "172.31.237.249/tcp,172.31.237.250/tcp"
+  identity:
+    kratos:
+      url: "{{ runtime_value "https://id.{partition}.sentinelsyn.com" }}"
+      admin-url: "{{ runtime_value "https://id.{partition}.sentinelsyn.com" }}"
+      token-url: "{{ config_value "token_url" }}"
+      client-id: "{{ config_value "identity_client_id" }}"
+      client-secret: KRATOS_CLIENT_SECRET_FILE
+      scopes:
+        - identity.admin
+        - introspect
+  feature:
+    skip-image-ops: true
+    kratos:
+      native_external_id_enabled: false
+  server:
+    release_mode: debug
+    host:
+    port: 8080
+  log:
+    level: trace
+  jwt:
+    verification:
+      disabled: false
+      machine:
+        service: "participant"
+        require_valid: true
+        hydra:
+          url: "{{ runtime_value "https://id.{partition}.sentinelsyn.com" }}"
+          admin-url: "{{ runtime_value "https://id.{partition}.sentinelsyn.com" }}"
+          token-url: "{{ config_value "token_url" }}"
+          client-id: "{{ config_value "introspection_client_id" }}"
+          client-secret: HYDRA_CLIENT_SECRET_FILE
+          scopes:
+            - introspect
+        bypaths:
+          - path: "/api/v\\d+/[^/]+/provisioning"
+            methods:
+              - method: "post"
+            scope:
+              strategy: ScopeWildcard
+              scopes:
+                - "{service}.admin"
+                - "+.{service}.admin"
+                - "+.{service}.write"
+                - "globaladmin"
+          - path: "/api/v\\d+/provisioning"
+            methods:
+              - method: "post"
+            scope:
+              strategy: ScopeWildcard
+              scopes:
+                - "{service}.admin"
+                - "+.{service}.admin"
+                - "+.{service}.write"
+                - "globaladmin"
+          - path: "/api/v\\d+/m2m/.*"
+            methods:
+              - method: "*"
+              - method: "get"
+                scope:
+                  strategy: ScopeWildcard
+                  scopes:
+                    - "+.{service}.*"
+                    - "{service}.*"
+                    - "{service}.admin"
+                    - "+.{service}.admin"
+                    - "globaladmin"
+            scope:
+              strategy: ScopeWildcard
+              scopes:
+                - "+.{service}.{method}"
+                - "{service}.{method}"
+                - "{service}.admin"
+                - "+.{service}.admin"
+                - "globaladmin"
+      ignored:
+        - method: "post"
+          path: "/api/v\\d+/provisioning"
+        - method: "post"
+          path: "/api/v\\d+/participants/[^/]+/provisioning"
+        - method: "*"
+          path: "/api/v\\d+/(?:swagger|openapi).*"
+        - method: "get"
+          path: "/api/v\\d+/(?:ping|health|build)"
+        - method: "*"
+          path: "/\\.well-known/.*"
+      issuers:
+        - issuer: "{{ runtime_value "https://id.{partition}.sentinelsyn.com" }}"
+          audience:
+            - {{ runtime_value "{partition}.sentinelsyn.com" }}
+        - issuer: "{{ runtime_value "https://id.{partition}.sentinelsyn.com" }}"
+          audience:
+            - "core.sentinelsyn.com"
+        - issuer: "{{ runtime_value "https://id.{partition}.sentinelsyn.com" }}"
+          audience:
+            - "core.int.sentinelsyn.com"
+  signing:
+    verification:
+      disabled: true
+    client:
+      disabled: false
+      issuer: "{{ runtime_value "https://agency.{partition}.sentinelsyn.com"}}"
+      keys:
+        - file://{{ secret_ref "keys_rs256_jwks_json" }}
+  manager:
+    disabled: {{ config_value "manager_disabled" }}
+    url: "{{ config_value "pulsar_manager_url" }}"
+    ocistore:
+      bucket: {{ config_value "oci_image_bucket" }}
+      namespace: {{ config_value "oci_image_namespace" }}
+    consumer_configs:
+      - tenant: "{{ config_value "pulsar_tenant" }}"
+        namespace: "{{ config_value "pulsar_namespace" }}"
+        topic: "{{ config_value "pulsar_topic" }}"
+        subscription_name: participant_updates_subscription
+        nack_redelivery_delay: "{{ config_value "pulsar_nack_redelivery_delay" }}"
+
+#    producer-configs:
+#     -  tenant: "synergy"
+#        namespace: "qa.shared"
+#        topic: participant_events

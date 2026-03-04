@@ -1,0 +1,45 @@
+image: {{ config_value "participant_image" }}
+egress: true
+args:
+  - api
+  - --config
+  - {{ config_ref "config_file" }}
+  - --config
+  - {{ secret_ref "secrets_file" }}
+  - --config
+  - {{ config_ref "config_apis_file" }}
+env:
+  KRATOS_CLIENT_SECRET_FILE: {{ secret_ref "identity_client_secret" }}
+  HYDRA_CLIENT_SECRET_FILE: {{ secret_ref "introspection_client_secret" }}
+replicas: 0
+restart_policy:
+  condition: on-failure
+  max_attempts: 1
+  delay: 5s
+  window: 120s
+labels:
+  traefik.enable: "false"
+configs:
+  - name: config_file
+    source: templates/stacks/participant/services/participant/configs/config.yaml.tmpl
+    target: /etc/config.yaml
+  - name: config_apis_file
+    source: templates/stacks/participant/services/participant/configs/config.apis.yaml.tmpl
+    target: /etc/config.apis.yaml
+secrets:
+  - name: secrets_file
+    source: templates/stacks/participant/services/participant/secrets/config-db.yaml.tmpl
+    target: /run/secrets/config-db.yaml
+  - name: oci_config_secrets
+    source: templates/stacks/participant/services/participant/secrets/oci_config_secrets.properties.tmpl
+    target: /root/.oci/config
+overlays:
+  partitions:
+    - name: dev
+      match:
+        partition: dev
+      replicas: 1
+    - name: qa
+      match:
+        partition: qa
+      replicas: 1

@@ -1,0 +1,41 @@
+image: {{ config_value "drone-runner_image" }}
+depends_on:
+  - drone
+args:
+  - {{ secret_ref "drone_runner_conf" }}
+env:
+  DRONE_SECRET_PLUGIN_ENDPOINT: {{ runtime_value "http://tasks.{project}_{stack}_drone-vault:3000" }}
+  DRONE_SECRET_PLUGIN_TOKEN_FILE: {{ secret_ref "vault_secret" }}
+  DRONE_DOCKER_CONFIG: {{ secret_ref "docker_config" }}
+  DRONE_RPC_HOST: {{ runtime_value "tasks.{project}_{stack}_drone" }}
+  DRONE_RPC_PROTO: http
+  DRONE_TMATE_ENABLED: true
+  DRONE_TRACE: true
+  DRONE_DEBUG: true
+  DRONE_UI_DISABLED: false
+  DRONE_UI_USERNAME: synergy
+  DRONE_UI_PASSWORD: synergy
+  DRONE_RUNNER_NETWORKS: {{ runtime_value "{network_ephemeral}" }}
+  DRONE_RUNNER_VOLUMES: {{ runtime_value "standard_volumes" "standard=persist" "category=cache" "_format=csv" }}
+egress: true
+replicas: 1
+labels:
+  traefik.enable: "false"
+network_ephemeral:
+  internal: false
+  attachable: true
+volumes:
+  - standard: docker_manager_sock
+  - standard: persist
+    subpath: gomod
+    target: /go/pkg/mod
+    category: cache
+  - standard: persist
+    subpath: gobuild
+    target: /root/.cache/go-build
+    category: cache
+secrets:
+  - name: docker_config
+    target: /root/.docker/config.json
+  - name: drone_runner_conf
+    source: templates/stacks/tools/services/drone-runner/secrets/drone-runner.conf.tmpl

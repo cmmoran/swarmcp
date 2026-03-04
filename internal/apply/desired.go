@@ -15,25 +15,25 @@ type DesiredState struct {
 	Missing  []string
 }
 
-func BuildDesiredState(cfg *config.Config, store *secrets.Store, values any, partitionFilter string, allowMissing bool, infer bool) (DesiredState, error) {
-	summary, err := render.RenderProject(cfg, store, values, partitionFilter, allowMissing, infer)
+func BuildDesiredState(cfg *config.Config, store *secrets.Store, values any, partitionFilters []string, stackFilters []string, allowMissing bool, infer bool) (DesiredState, error) {
+	summary, err := render.RenderProject(cfg, store, values, partitionFilters, stackFilters, allowMissing, infer)
 	if err != nil {
 		return DesiredState{}, err
 	}
 
-	return DesiredStateFromSummary(cfg, summary, partitionFilter), nil
+	return DesiredStateFromSummary(cfg, summary, partitionFilters, stackFilters), nil
 }
 
-func DesiredNetworks(cfg *config.Config, partitionFilter string) []swarm.NetworkSpec {
-	return buildDesiredNetworks(cfg, partitionFilter)
+func DesiredNetworks(cfg *config.Config, partitionFilters []string, stackFilters []string) []swarm.NetworkSpec {
+	return buildDesiredNetworks(cfg, partitionFilters, stackFilters)
 }
 
-func DesiredStateFromSummary(cfg *config.Config, summary render.Summary, partitionFilter string) DesiredState {
+func DesiredStateFromSummary(cfg *config.Config, summary render.Summary, partitionFilters []string, stackFilters []string) DesiredState {
 	desired := DesiredState{
 		Defs:    summary.Defs,
 		Missing: summary.MissingSecrets,
 	}
-	desired.Networks = buildDesiredNetworks(cfg, partitionFilter)
+	desired.Networks = buildDesiredNetworks(cfg, partitionFilters, stackFilters)
 	for _, def := range summary.Defs {
 		physical, hash := render.PhysicalName(def.Name, def.Content)
 		labels := render.Labels(def.ScopeID, def.Name, hash)

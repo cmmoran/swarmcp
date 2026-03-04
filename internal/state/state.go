@@ -15,6 +15,7 @@ type State struct {
 	Project     string      `json:"project"`
 	Deployment  string      `json:"deployment,omitempty"`
 	Partition   string      `json:"partition,omitempty"`
+	Stack       string      `json:"stack,omitempty"`
 	Plan        PlanSummary `json:"plan"`
 }
 

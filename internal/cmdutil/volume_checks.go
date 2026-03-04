@@ -17,7 +17,7 @@ type volumeRequirement struct {
 	Roles     []string
 }
 
-func VolumePlacementWarnings(cfg *config.Config, partitionFilter string, debug bool) []string {
+func VolumePlacementWarnings(cfg *config.Config, partitionFilters []string, stackFilters []string, debug bool) []string {
 	deployment := cfg.Project.Deployment
 	if deployment == "" {
 		return nil
@@ -26,7 +26,7 @@ func VolumePlacementWarnings(cfg *config.Config, partitionFilter string, debug b
 	if !ok {
 		return nil
 	}
-	if !hasVolumeRequirements(cfg, partitionFilter) {
+	if !hasVolumeRequirements(cfg, partitionFilters, stackFilters) {
 		return nil
 	}
 
@@ -42,7 +42,7 @@ func VolumePlacementWarnings(cfg *config.Config, partitionFilter string, debug b
 	var warnings []string
 	warnings = append(warnings, nodeVolumeLabelWarnings(cfg, selected)...)
 
-	requirements := collectVolumeRequirements(cfg, partitionFilter)
+	requirements := collectVolumeRequirements(cfg, partitionFilters, stackFilters)
 	for _, req := range requirements {
 		if len(req.Volumes) == 0 && len(req.Roles) == 0 {
 			continue
@@ -79,8 +79,8 @@ func VolumePlacementWarnings(cfg *config.Config, partitionFilter string, debug b
 	return warnings
 }
 
-func RequiredVolumes(cfg *config.Config, partitionFilter string) map[string]struct{} {
-	requirements := collectVolumeRequirements(cfg, partitionFilter)
+func RequiredVolumes(cfg *config.Config, partitionFilters []string, stackFilters []string) map[string]struct{} {
+	requirements := collectVolumeRequirements(cfg, partitionFilters, stackFilters)
 	if len(requirements) == 0 {
 		return nil
 	}
@@ -126,13 +126,16 @@ func formatSelector(selector config.NodeSelector) string {
 	return strings.Join(parts, " ")
 }
 
-func collectVolumeRequirements(cfg *config.Config, partitionFilter string) []volumeRequirement {
+func collectVolumeRequirements(cfg *config.Config, partitionFilters []string, stackFilters []string) []volumeRequirement {
 	var requirements []volumeRequirement
 	serviceStandard := config.ServiceStandardName(cfg)
 	for stackName, stack := range cfg.Stacks {
+		if len(stackFilters) > 0 && !StackInFilters(stackFilters, stackName) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 		}
 		for _, partition := range partitions {
 			services, err := cfg.StackServices(stackName, partition)
@@ -177,12 +180,15 @@ func collectVolumeRequirements(cfg *config.Config, partitionFilter string) []vol
 	return requirements
 }
 
-func hasVolumeRequirements(cfg *config.Config, partitionFilter string) bool {
+func hasVolumeRequirements(cfg *config.Config, partitionFilters []string, stackFilters []string) bool {
 	serviceStandard := config.ServiceStandardName(cfg)
 	for stackName, stack := range cfg.Stacks {
+		if len(stackFilters) > 0 && !StackInFilters(stackFilters, stackName) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 		}
 		for _, partition := range partitions {
 			services, err := cfg.StackServices(stackName, partition)
@@ -202,6 +208,15 @@ func hasVolumeRequirements(cfg *config.Config, partitionFilter string) bool {
 					}
 				}
 			}
+		}
+	}
+	return false
+}
+
+func StackInFilters(filters []string, name string) bool {
+	for _, filter := range filters {
+		if filter == name {
+			return true
 		}
 	}
 	return false

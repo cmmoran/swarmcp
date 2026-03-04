@@ -65,7 +65,7 @@ type StatusReport struct {
 	Services        []ServiceState
 }
 
-func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, desired DesiredState, values any, partitionFilter string, infer bool, preserve int) (StatusReport, error) {
+func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, desired DesiredState, values any, partitionFilters []string, stackFilters []string, infer bool, preserve int) (StatusReport, error) {
 	existingConfigs, err := client.ListConfigs(ctx)
 	if err != nil {
 		return StatusReport{}, err
@@ -178,7 +178,7 @@ func BuildStatus(ctx context.Context, client swarm.Client, cfg *config.Config, d
 
 	serviceIndex := indexServices(existingServices, cfg.Project.Name)
 	defIndex := buildDefIndex(desired.Defs)
-	expectedServices, err := expectedServices(cfg, partitionFilter)
+	expectedServices, err := expectedServices(cfg, partitionFilters, stackFilters)
 	if err != nil {
 		return StatusReport{}, err
 	}
@@ -517,12 +517,15 @@ type expectedService struct {
 	Service   config.Service
 }
 
-func expectedServices(cfg *config.Config, partitionFilter string) ([]expectedService, error) {
+func expectedServices(cfg *config.Config, partitionFilters []string, stackFilters []string) ([]expectedService, error) {
 	var services []expectedService
 	for stackName, stack := range cfg.Stacks {
+		if len(stackFilters) > 0 && !selectorContains(stackFilters, stackName) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 		}
 		for _, partitionName := range partitions {
 			stackServices, err := cfg.StackServices(stackName, partitionName)

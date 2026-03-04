@@ -176,7 +176,11 @@ func labelConfig() *config.Config {
 
 func mustComposeService(t *testing.T, cfg *config.Config, partition string) composeService {
 	desired := DesiredState{}
-	deploys, err := BuildStackDeploys(cfg, desired, nil, partition, nil, nil, nil, false)
+	var partitionFilters []string
+	if partition != "" {
+		partitionFilters = []string{partition}
+	}
+	deploys, err := BuildStackDeploys(cfg, desired, nil, partitionFilters, nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("BuildStackDeploys: %v", err)
 	}

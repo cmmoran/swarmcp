@@ -1,0 +1,93 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+api:
+  dashboard: true
+  debug: true
+  insecure: true
+log:
+{{- if ne (config_value "disable_logfiles") "true" }}
+  filePath: /var/log/traefik-proxy.log
+{{- end }}
+  level: {{ config_value "log_level" }}
+  format: json
+  maxAge: 7
+  compress: true
+accessLog:
+{{- if ne (config_value "disable_logfiles") "true" }}
+  filePath: /var/log/traefik-access.log
+{{- end }}
+  addInternals: true
+  format: json
+  fields:
+    defaultMode: keep
+    headers:
+      defaultMode: keep
+ping:
+  entryPoint: websecure
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+    forwardedHeaders:
+      trustedIPs:
+{{- range config_value "trusted_loadbalancers" }}
+        - "{{ . }}"
+{{- end }}
+    proxyProtocol:
+      trustedIPs:
+{{- range config_value "trusted_loadbalancers" }}
+        - "{{ . }}"
+{{- end }}
+    http:
+      middlewares:
+        - add-context-id@file
+        - inject-geoip@file
+      tls:
+        certResolver: leresolver
+        domains:
+          - main: "{{ config_value "default_cert_main" }}"
+            sans:
+{{- range $san := (config_value "default_cert_sans") }}
+              - "{{ $san }}"
+  {{- range $partition := (config_value "default_partitions") }}
+              - "{{ printf "*.%s.%s" $partition (trimPrefix "*." $san) }}"
+  {{- end }}
+{{- end }}
+    http2:
+      maxConcurrentStreams: 250
+providers:
+  swarm:
+    network: {{ runtime_value "{networks_shared}" }}
+    endpoint: "unix:///var/run/docker.sock"
+  file:
+    filename: {{ config_ref "dynamic_yml" }}
+certificatesResolvers:
+  leresolver:
+    acme:
+      email: "{{ config_value "acme_email" }}"
+      storage: "{{ config_value "acme_vault_path" }}"
+      vaultStorage:
+        url: "{{ config_value "vault_url" }}"
+        enginePath: "acme/traefik"
+        lockOwnerId: "env:VAULT_LOCK_ID"
+        staleLock: "30m"
+        tls:
+          caBundle: {{ config_ref "ca-chain" }}
+          cert: {{ config_ref "vault_client_crt" }}
+          key: {{ secret_ref "vault_client_key" }}
+        auth:
+          certAuth:
+            name: "ingress_vault"
+      dnsChallenge:
+        provider: route53
+        resolvers:
+          - "8.8.8.8:53"
+          - "1.1.1.1:53"
+          - "127.0.0.1:53"

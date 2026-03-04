@@ -16,56 +16,81 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current Swarm status vs desired state",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPath:  opts.ConfigPath,
-			SecretsFile: opts.SecretsFile,
-			ValuesFiles: opts.ValuesFiles,
-			Deployment:  opts.Deployment,
-			Context:     opts.Context,
-			Partition:   opts.Partition,
-			Offline:     opts.Offline,
-			Debug:       opts.Debug,
-		}, true, true)
-		if err != nil {
-			return err
-		}
-		cfg := projectCtx.Config
-		partitionFilter := projectCtx.Partition
-		desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilter, opts.AllowMissing, !opts.NoInfer)
-		if err != nil {
-			return err
-		}
-
-		client, err := projectCtx.SwarmClient()
-		if err != nil {
-			return err
-		}
-
-		ctx := context.Background()
-		preserve, err := resolvePreserve(cmd, cfg, opts)
-		if err != nil {
-			return err
-		}
-		report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilter, !opts.NoInfer, preserve)
-		if err != nil {
-			return err
-		}
-
-		warnings := cmdutil.VolumePlacementWarnings(cfg, partitionFilter, opts.Debug)
-		sortServiceStates(report.Services)
 		out := cmd.OutOrStdout()
-		cmdutil.PrintWarnings(out, warnings)
-		fmt.Fprintf(out, "status OK\nconfigs missing: %d\nsecrets missing: %d\nnetworks missing: %d\nconfigs stale: %d\nsecrets stale: %d\nconfigs drift: %d\nsecrets drift: %d\nconfigs preserved: %d\nsecrets preserved: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), len(report.DriftConfigs), len(report.DriftSecrets), report.Preserved.ConfigsPreserved, report.Preserved.SecretsPreserved, report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets)
-		printServiceSummary(out, report.Services)
-		printServiceStates(out, report.Services)
-		if opts.Debug {
-			printServiceIntentDetails(out, report.Services)
-		}
-		if len(desired.Missing) > 0 {
-			sort.Strings(desired.Missing)
-			fmt.Fprintf(out, "missing secrets (placeholders): %d\n", len(desired.Missing))
-			for _, item := range desired.Missing {
-				fmt.Fprintf(out, "  - %s\n", item)
+		deployments := deploymentTargets(opts.Deployments)
+		partitionFilters := normalizeSelectors(opts.Partitions)
+		stackFilters := normalizeSelectors(opts.Stacks)
+
+		for deploymentIndex, deployment := range deployments {
+			if len(deployments) > 1 {
+				if deploymentIndex > 0 {
+					_, _ = fmt.Fprintln(out)
+				}
+				label := deployment
+				if label == "" {
+					label = "(default)"
+				}
+				_, _ = fmt.Fprintf(out, "target deployment: %s\n", label)
+			}
+
+			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
+				ConfigPath:  opts.ConfigPath,
+				SecretsFile: opts.SecretsFile,
+				ValuesFiles: opts.ValuesFiles,
+				Deployment:  deployment,
+				Context:     opts.Context,
+				Offline:     opts.Offline,
+				Debug:       opts.Debug,
+			}, true, true)
+			if err != nil {
+				return err
+			}
+			cfg := projectCtx.Config
+			for _, partition := range partitionFilters {
+				if !cmdutil.PartitionInProject(cfg, partition) {
+					return fmt.Errorf("partition %q not found in project.partitions", partition)
+				}
+			}
+			for _, stack := range stackFilters {
+				if !cmdutil.StackInProject(cfg, stack) {
+					return fmt.Errorf("stack %q not found in stacks", stack)
+				}
+			}
+			desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilters, stackFilters, opts.AllowMissing, !opts.NoInfer)
+			if err != nil {
+				return err
+			}
+
+			client, err := projectCtx.SwarmClient()
+			if err != nil {
+				return err
+			}
+
+			ctx := context.Background()
+			preserve, err := resolvePreserve(cmd, cfg, opts)
+			if err != nil {
+				return err
+			}
+			report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilters, stackFilters, !opts.NoInfer, preserve)
+			if err != nil {
+				return err
+			}
+
+			warnings := cmdutil.VolumePlacementWarnings(cfg, partitionFilters, stackFilters, opts.Debug)
+			sortServiceStates(report.Services)
+			cmdutil.PrintWarnings(out, warnings)
+			_, _ = fmt.Fprintf(out, "status OK\nconfigs missing: %d\nsecrets missing: %d\nnetworks missing: %d\nconfigs stale: %d\nsecrets stale: %d\nconfigs drift: %d\nsecrets drift: %d\nconfigs preserved: %d\nsecrets preserved: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), len(report.DriftConfigs), len(report.DriftSecrets), report.Preserved.ConfigsPreserved, report.Preserved.SecretsPreserved, report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets)
+			printServiceSummary(out, report.Services)
+			printServiceStates(out, report.Services)
+			if opts.Debug {
+				printServiceIntentDetails(out, report.Services)
+			}
+			if len(desired.Missing) > 0 {
+				sort.Strings(desired.Missing)
+				_, _ = fmt.Fprintf(out, "missing secrets (placeholders): %d\n", len(desired.Missing))
+				for _, item := range desired.Missing {
+					_, _ = fmt.Fprintf(out, "  - %s\n", item)
+				}
 			}
 		}
 		return nil
@@ -97,16 +122,16 @@ func printServiceSummary(out io.Writer, states []apply.ServiceState) {
 			changedCount++
 		}
 	}
-	fmt.Fprintf(out, "services ok: %d\nservices changed: %d\nservices missing: %d\n", okCount, changedCount, missingCount)
+	_, _ = fmt.Fprintf(out, "services ok: %d\nservices changed: %d\nservices missing: %d\n", okCount, changedCount, missingCount)
 }
 
 func printServiceStates(out io.Writer, states []apply.ServiceState) {
 	if len(states) == 0 {
 		return
 	}
-	fmt.Fprintln(out, "services:")
+	_, _ = fmt.Fprintln(out, "services:")
 	for _, state := range states {
-		fmt.Fprintf(out, "  - %s\n", formatServiceState(state))
+		_, _ = fmt.Fprintf(out, "  - %s\n", formatServiceState(state))
 	}
 }
 
@@ -144,12 +169,12 @@ func printServiceIntentDetails(out io.Writer, states []apply.ServiceState) {
 			continue
 		}
 		if !printed {
-			fmt.Fprintln(out, "intent details:")
+			_, _ = fmt.Fprintln(out, "intent details:")
 			printed = true
 		}
 		scope := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
 		for _, detail := range state.IntentDetails {
-			fmt.Fprintf(out, "  - %s %s current=%s desired=%s\n", scope, detail.Field, detail.Current, detail.Desired)
+			_, _ = fmt.Fprintf(out, "  - %s %s current=%s desired=%s\n", scope, detail.Field, detail.Current, detail.Desired)
 		}
 	}
 }

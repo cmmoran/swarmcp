@@ -14,6 +14,29 @@ func FilterPartition(partitions []string, filter string) []string {
 	return out
 }
 
+func FilterPartitions(partitions []string, filters []string) []string {
+	if len(filters) == 0 {
+		return partitions
+	}
+	allowed := make(map[string]struct{}, len(filters))
+	for _, filter := range filters {
+		if filter == "" {
+			continue
+		}
+		allowed[filter] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		return partitions
+	}
+	out := make([]string, 0, len(partitions))
+	for _, name := range partitions {
+		if _, ok := allowed[name]; ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 func DedupeSortedStrings(items []string) []string {
 	if len(items) == 0 {
 		return nil

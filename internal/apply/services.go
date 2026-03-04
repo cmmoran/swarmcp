@@ -45,16 +45,19 @@ type ServiceCreate struct {
 	Secrets   []ServiceMount
 }
 
-func buildServiceChanges(cfg *config.Config, desired DesiredState, values any, services []swarm.Service, networkTargets map[string]string, partitionFilter string, infer bool) ([]ServiceCreate, []ServiceUpdate, error) {
+func buildServiceChanges(cfg *config.Config, desired DesiredState, values any, services []swarm.Service, networkTargets map[string]string, partitionFilters []string, stackFilters []string, infer bool) ([]ServiceCreate, []ServiceUpdate, error) {
 	index := buildDefIndex(desired.Defs)
 	serviceIndex := indexServices(services, cfg.Project.Name)
 
 	var creates []ServiceCreate
 	var updates []ServiceUpdate
 	for stackName, stack := range cfg.Stacks {
+		if len(stackFilters) > 0 && !selectorContains(stackFilters, stackName) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 		}
 
 		for _, partitionName := range partitions {

@@ -1,0 +1,14 @@
+mode: shared
+secrets:
+  - name: rpc_secret
+  - name: vault_secret
+services:
+  drone:
+    source:
+      path: drone.service.yaml.tmpl
+  drone-vault:
+    source:
+      path: drone-vault.service.yaml.tmpl
+  drone-runner:
+    source:
+      path: drone-runner.service.yaml.tmpl

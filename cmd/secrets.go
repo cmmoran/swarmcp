@@ -24,18 +24,25 @@ var secretsCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Report missing secrets required by templates",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		deployment, err := singleSelector("deployment", opts.Deployments)
+		if err != nil {
+			return err
+		}
+		partitionFilter, err := singleSelector("partition", opts.Partitions)
+		if err != nil {
+			return err
+		}
 		cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 		if err != nil {
 			return err
 		}
 		config.SetBaseDir(cfg, opts.ConfigPath)
-		if opts.Deployment != "" {
-			cfg.Project.Deployment = opts.Deployment
+		if deployment != "" {
+			cfg.Project.Deployment = deployment
 		}
 		if err := config.ValidateDeployment(cfg); err != nil {
 			return err
 		}
-		partitionFilter := opts.Partition
 		if partitionFilter != "" && !cmdutil.PartitionInProject(cfg, partitionFilter) {
 			return fmt.Errorf("partition %q not found in project.partitions", partitionFilter)
 		}
@@ -63,7 +70,8 @@ var secretsCheckCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		summary, err := render.RenderProject(cfg, store, values, partitionFilter, true, !opts.NoInfer)
+		partitionFilters := normalizeSelectors(opts.Partitions)
+		summary, err := render.RenderProject(cfg, store, values, partitionFilters, nil, true, !opts.NoInfer)
 		if err != nil {
 			return err
 		}
@@ -71,17 +79,17 @@ var secretsCheckCmd = &cobra.Command{
 		out := cmd.OutOrStdout()
 		printSecretsCheckSources(out, secretsFile, cfg, useEngine)
 		if len(summary.MissingSecrets) == 0 {
-			fmt.Fprintln(out, "secrets check OK\nmissing secrets: 0")
+			_, _ = fmt.Fprintln(out, "secrets check OK\nmissing secrets: 0")
 			return nil
 		}
-		fmt.Fprintf(out, "secrets check OK\nmissing secrets: %d\n", len(summary.MissingSecrets))
+		_, _ = fmt.Fprintf(out, "secrets check OK\nmissing secrets: %d\n", len(summary.MissingSecrets))
 		for _, item := range summary.MissingSecrets {
 			command, ok := formatSecretsPutCommand(item)
 			if !ok {
-				fmt.Fprintf(out, "  - %s\n", item)
+				_, _ = fmt.Fprintf(out, "  - %s\n", item)
 				continue
 			}
-			fmt.Fprintf(out, "  - %s\n", command)
+			_, _ = fmt.Fprintf(out, "  - %s\n", command)
 		}
 		return nil
 	},
@@ -100,13 +108,17 @@ var secretsPutCmd = &cobra.Command{
 	Short: "Write a secret value to the secrets file or engine",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		deployment, err := singleSelector("deployment", opts.Deployments)
+		if err != nil {
+			return err
+		}
 		cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 		if err != nil {
 			return err
 		}
 		config.SetBaseDir(cfg, opts.ConfigPath)
-		if opts.Deployment != "" {
-			cfg.Project.Deployment = opts.Deployment
+		if deployment != "" {
+			cfg.Project.Deployment = deployment
 		}
 		if err := config.ValidateDeployment(cfg); err != nil {
 			return err
@@ -165,7 +177,7 @@ var secretsPutCmd = &cobra.Command{
 			if err := secrets.Save(opts.SecretsFile, store); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "secrets put OK (file=%s)\n", opts.SecretsFile)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "secrets put OK (file=%s)\n", opts.SecretsFile)
 			return nil
 		}
 
@@ -188,7 +200,7 @@ var secretsPutCmd = &cobra.Command{
 			if err := writer.Put(scope, name, value); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "secrets put OK")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "secrets put OK")
 			return nil
 		}
 
@@ -204,7 +216,7 @@ var secretsPutCmd = &cobra.Command{
 		if err := secrets.Save(secretsFile, store); err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "secrets put OK (file=%s)\n", secretsFile)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "secrets put OK (file=%s)\n", secretsFile)
 		return nil
 	},
 }
@@ -229,10 +241,10 @@ func printSecretsCheckSources(out io.Writer, secretsFile string, cfg *config.Con
 		parts = append(parts, fmt.Sprintf("secrets engine=%s", cfg.Project.SecretsEngine.Provider))
 	}
 	if len(parts) == 0 {
-		fmt.Fprintln(out, "secrets sources: none")
+		_, _ = fmt.Fprintln(out, "secrets sources: none")
 		return
 	}
-	fmt.Fprintf(out, "secrets sources: %s\n", strings.Join(parts, ", "))
+	_, _ = fmt.Fprintf(out, "secrets sources: %s\n", strings.Join(parts, ", "))
 }
 
 type missingSecretScope struct {
@@ -287,8 +299,8 @@ func formatSecretsPutCommand(value string) (string, bool) {
 	if opts.SecretsFile != "" {
 		args = append(args, "--secrets-file", opts.SecretsFile)
 	}
-	if opts.Deployment != "" {
-		args = append(args, "--deployment", opts.Deployment)
+	if deployment := normalizeSelectors(opts.Deployments); len(deployment) == 1 {
+		args = append(args, "--deployment", deployment[0])
 	}
 	args = append(args, "secrets", "put", scope.Name, "--stdin")
 	if scope.Stack != "" && scope.Stack != "none" {

@@ -1,0 +1,14 @@
+image: {{ config_value "drone-vault_image" }}
+egress: true
+replicas: 1
+labels:
+  traefik.enable: "false"
+ports:
+  - target: 3000
+env:
+  DRONE_DEBUG: "true"
+  DRONE_SECRET_FILE: {{ secret_ref "vault_secret" }}
+  VAULT_ADDR: {{ config_value "vault_url" }}
+  VAULT_TOKEN_FILE: {{ secret_ref "vault_token" }}
+  VAULT_KV_MOUNT: {{ config_value "drone-vault_mount" }}
+  VAULT_CACERT: {{ config_ref "ca-chain" }}

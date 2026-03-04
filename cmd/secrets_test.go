@@ -24,7 +24,7 @@ func TestFormatSecretsPutCommand(t *testing.T) {
 	t.Cleanup(func() { opts = prev })
 	opts.ConfigPath = "config.yaml"
 	opts.SecretsFile = "secrets.yaml"
-	opts.Deployment = "prod"
+	opts.Deployments = []string{"prod"}
 
 	value := "project=primary stack=core partition=dev service=api name=db_password"
 	cmd, ok := formatSecretsPutCommand(value)

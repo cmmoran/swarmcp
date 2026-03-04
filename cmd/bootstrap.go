@@ -20,11 +20,19 @@ var bootstrapNetworksCmd = &cobra.Command{
 	Use:   "networks",
 	Short: "Create required overlay networks for the project",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		deployment, err := singleSelector("deployment", opts.Deployments)
+		if err != nil {
+			return err
+		}
+		partition, err := singleSelector("partition", opts.Partitions)
+		if err != nil {
+			return err
+		}
 		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
 			ConfigPath: opts.ConfigPath,
-			Deployment: opts.Deployment,
+			Deployment: deployment,
 			Context:    opts.Context,
-			Partition:  opts.Partition,
+			Partition:  partition,
 			Offline:    opts.Offline,
 			Debug:      opts.Debug,
 		}, false, false)
@@ -32,16 +40,17 @@ var bootstrapNetworksCmd = &cobra.Command{
 			return err
 		}
 		cfg := projectCtx.Config
-		partitionFilter := projectCtx.Partition
+		partitionFilters := normalizeSelectors(opts.Partitions)
+		stackFilters := normalizeSelectors(opts.Stacks)
 
 		client, err := projectCtx.SwarmClient()
 		if err != nil {
 			return err
 		}
 
-		desired := apply.DesiredNetworks(cfg, partitionFilter)
+		desired := apply.DesiredNetworks(cfg, partitionFilters, stackFilters)
 		if len(desired) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "bootstrap networks OK\nnetworks to create: 0")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "bootstrap networks OK\nnetworks to create: 0")
 			return nil
 		}
 
@@ -69,12 +78,12 @@ var bootstrapNetworksCmd = &cobra.Command{
 		}
 
 		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "bootstrap networks OK\nnetworks to create: %d\n", len(toCreate))
+		_, _ = fmt.Fprintf(out, "bootstrap networks OK\nnetworks to create: %d\n", len(toCreate))
 		if len(toCreate) > 0 {
 			sort.Slice(toCreate, func(i, j int) bool { return toCreate[i].Name < toCreate[j].Name })
-			fmt.Fprintln(out, "networks created:")
+			_, _ = fmt.Fprintln(out, "networks created:")
 			for _, network := range toCreate {
-				fmt.Fprintf(out, "  - %s\n", network.Name)
+				_, _ = fmt.Fprintf(out, "  - %s\n", network.Name)
 			}
 		}
 		return nil
@@ -85,11 +94,19 @@ var bootstrapLabelsCmd = &cobra.Command{
 	Use:   "labels",
 	Short: "Ensure node labels match project config",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		deployment, err := singleSelector("deployment", opts.Deployments)
+		if err != nil {
+			return err
+		}
+		partition, err := singleSelector("partition", opts.Partitions)
+		if err != nil {
+			return err
+		}
 		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
 			ConfigPath: opts.ConfigPath,
-			Deployment: opts.Deployment,
+			Deployment: deployment,
 			Context:    opts.Context,
-			Partition:  opts.Partition,
+			Partition:  partition,
 			Offline:    opts.Offline,
 			Debug:      opts.Debug,
 		}, false, false)
@@ -157,7 +174,7 @@ var bootstrapLabelsCmd = &cobra.Command{
 		writeback, err := cmdutil.WriteAutoNodeLabels(cmdutil.AutoLabelWriteOptions{
 			ConfigPath:      opts.ConfigPath,
 			Config:          cfg,
-			PartitionFilter: opts.Partition,
+			PartitionFilter: partition,
 			Prune:           opts.PruneAutoLabels,
 		})
 		if err != nil {
@@ -165,28 +182,28 @@ var bootstrapLabelsCmd = &cobra.Command{
 		}
 
 		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "bootstrap labels OK\nnodes updated: %d\nnodes missing: %d\n", len(updated), len(missing))
+		_, _ = fmt.Fprintf(out, "bootstrap labels OK\nnodes updated: %d\nnodes missing: %d\n", len(updated), len(missing))
 		if len(updated) > 0 {
-			fmt.Fprintln(out, "nodes updated:")
+			_, _ = fmt.Fprintln(out, "nodes updated:")
 			for _, name := range updated {
-				fmt.Fprintf(out, "  - %s\n", name)
+				_, _ = fmt.Fprintf(out, "  - %s\n", name)
 			}
 		}
 		if len(missing) > 0 {
-			fmt.Fprintln(out, "nodes missing:")
+			_, _ = fmt.Fprintln(out, "nodes missing:")
 			for _, name := range missing {
-				fmt.Fprintf(out, "  - %s\n", name)
+				_, _ = fmt.Fprintf(out, "  - %s\n", name)
 			}
 		}
 		if writeback.Skipped {
-			fmt.Fprintf(out, "config labels: skipped (%s)\n", writeback.SkipReason)
+			_, _ = fmt.Fprintf(out, "config labels: skipped (%s)\n", writeback.SkipReason)
 		} else {
-			fmt.Fprintf(out, "config labels: added=%d updated=%d pruned=%d\n", writeback.Added, writeback.Updated, writeback.Pruned)
+			_, _ = fmt.Fprintf(out, "config labels: added=%d updated=%d pruned=%d\n", writeback.Added, writeback.Updated, writeback.Pruned)
 		}
 		if len(writeback.Notes) > 0 {
-			fmt.Fprintln(out, "label notes:")
+			_, _ = fmt.Fprintln(out, "label notes:")
 			for _, note := range writeback.Notes {
-				fmt.Fprintf(out, "  - %s\n", note)
+				_, _ = fmt.Fprintf(out, "  - %s\n", note)
 			}
 		}
 		return nil

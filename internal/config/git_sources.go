@@ -725,7 +725,7 @@ func readBlobContent(blob *object.Blob) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	return io.ReadAll(reader)
 }
 
@@ -747,7 +747,7 @@ func advertisedRefs(ctx context.Context, rawURL string, auth transport.AuthMetho
 	if err != nil {
 		return nil, err
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	return session.AdvertisedReferencesContext(ctx)
 }
 
@@ -763,7 +763,7 @@ func fetchObjects(ctx context.Context, repo *git.Repository, rawURL string, auth
 	if err != nil {
 		return err
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 	adv, err := session.AdvertisedReferencesContext(ctx)
 	if err != nil {
 		return err
@@ -781,7 +781,7 @@ func fetchObjects(ctx context.Context, repo *git.Repository, rawURL string, auth
 		}
 		return err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	return packfile.UpdateObjectStorage(repo.Storer, buildSidebandIfSupported(req.Capabilities, reader))
 }
 
@@ -1355,7 +1355,7 @@ func sshConfig(host string, overridePath string) sshHostConfig {
 		if err != nil {
 			return sshHostConfig{Source: cfgPath}
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		cfg, err := sshconfig.Decode(f)
 		if err != nil {
 			return sshHostConfig{Source: cfgPath}

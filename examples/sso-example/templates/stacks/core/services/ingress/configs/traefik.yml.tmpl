@@ -1,0 +1,27 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+api:
+  dashboard: true
+  insecure: true
+log:
+  filePath: /var/log/traefik-proxy.log
+  level: {{ config_value "log_level" }}
+  format: json
+accessLog:
+  filePath: /var/log/traefik-access.log
+  format: json
+entryPoints:
+  websecure:
+    address: ":443"
+    forwardedHeaders:
+      trustedIPs:
+{{- range config_value "trusted_loadbalancers" }}
+        - "{{ . }}"
+{{- end }}
+providers:
+  swarm:
+    network: {{ runtime_value "{networks_shared}" }}
+    endpoint: "unix:///var/run/docker.sock"
+  file:
+    filename: {{ config_ref "dynamic_yml" }}

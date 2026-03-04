@@ -40,11 +40,11 @@ var sourcesViewCmd = &cobra.Command{
 		}
 		out := cmd.OutOrStdout()
 		if len(entries) == 0 {
-			fmt.Fprintln(out, "sources: none")
+			_, _ = fmt.Fprintln(out, "sources: none")
 			return nil
 		}
 		for i, entry := range entries {
-			fmt.Fprintf(out, "%d) %s\n", i+1, formatSourceEntry(entry))
+			_, _ = fmt.Fprintf(out, "%d) %s\n", i+1, formatSourceEntry(entry))
 		}
 		return nil
 	},
@@ -66,7 +66,7 @@ var sourcesPullCmd = &cobra.Command{
 			return err
 		}
 		if len(selected) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "sources: none")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "sources: none")
 			return nil
 		}
 		loadOpts, err := sourcesLoadOptions()
@@ -81,7 +81,7 @@ var sourcesPullCmd = &cobra.Command{
 				return err
 			}
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "sources pulled")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "sources pulled")
 		return nil
 	},
 }
@@ -102,7 +102,7 @@ var sourcesDiffCmd = &cobra.Command{
 			return err
 		}
 		if len(selected) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "sources: none")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "sources: none")
 			return nil
 		}
 		loadOpts, err := sourcesLoadOptions()
@@ -112,7 +112,7 @@ var sourcesDiffCmd = &cobra.Command{
 		out := cmd.OutOrStdout()
 		for _, entry := range selected {
 			if entry.Kind != "git" {
-				fmt.Fprintf(out, "%s: skipped (local source)\n", entry.Key)
+				_, _ = fmt.Fprintf(out, "%s: skipped (local source)\n", entry.Key)
 				continue
 			}
 			before, _, _ := config.ReadSourceMetadata(entry.URL, entry.Ref, entry.Path, loadOpts)
@@ -121,14 +121,14 @@ var sourcesDiffCmd = &cobra.Command{
 				return err
 			}
 			if before.Commit == "" {
-				fmt.Fprintf(out, "%s: new commit=%s subtree=%s\n", entry.Key, after.Commit, after.Subtree)
+				_, _ = fmt.Fprintf(out, "%s: new commit=%s subtree=%s\n", entry.Key, after.Commit, after.Subtree)
 				continue
 			}
 			if before.Commit == after.Commit && before.Subtree == after.Subtree {
-				fmt.Fprintf(out, "%s: no changes (commit=%s)\n", entry.Key, after.Commit)
+				_, _ = fmt.Fprintf(out, "%s: no changes (commit=%s)\n", entry.Key, after.Commit)
 				continue
 			}
-			fmt.Fprintf(out, "%s: commit %s -> %s subtree %s -> %s\n", entry.Key, before.Commit, after.Commit, before.Subtree, after.Subtree)
+			_, _ = fmt.Fprintf(out, "%s: commit %s -> %s subtree %s -> %s\n", entry.Key, before.Commit, after.Commit, before.Subtree, after.Subtree)
 		}
 		return nil
 	},
@@ -142,13 +142,21 @@ func init() {
 }
 
 func loadSourceEntries(cmd *cobra.Command) ([]sourceEntry, error) {
+	deployment, err := singleSelector("deployment", opts.Deployments)
+	if err != nil {
+		return nil, err
+	}
+	partition, err := singleSelector("partition", opts.Partitions)
+	if err != nil {
+		return nil, err
+	}
 	ctx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
 		ConfigPath:  opts.ConfigPath,
 		SecretsFile: opts.SecretsFile,
 		ValuesFiles: opts.ValuesFiles,
-		Deployment:  opts.Deployment,
+		Deployment:  deployment,
 		Context:     opts.Context,
-		Partition:   opts.Partition,
+		Partition:   partition,
 		Offline:     opts.Offline,
 		Debug:       opts.Debug,
 	}, false, false)

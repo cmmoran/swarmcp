@@ -18,12 +18,15 @@ type BindPathRequirement struct {
 	Constraints []string
 }
 
-func PlanBindPaths(cfg *config.Config, values any, partitionFilter string) ([]BindPathRequirement, error) {
+func PlanBindPaths(cfg *config.Config, values any, partitionFilters []string, stackFilters []string) ([]BindPathRequirement, error) {
 	var out []BindPathRequirement
 	for stackName, stack := range cfg.Stacks {
+		if len(stackFilters) > 0 && !selectorContains(stackFilters, stackName) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 		}
 		for _, partitionName := range partitions {
 			services, err := cfg.StackServices(stackName, partitionName)

@@ -9,9 +9,9 @@ func PrintWarnings(out io.Writer, warnings []string) {
 	if len(warnings) == 0 {
 		return
 	}
-	fmt.Fprintln(out, "warnings:")
+	_, _ = fmt.Fprintln(out, "warnings:")
 	for _, warning := range warnings {
-		fmt.Fprintf(out, "  - %s\n", warning)
+		_, _ = fmt.Fprintf(out, "  - %s\n", warning)
 	}
 }
 

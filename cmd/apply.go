@@ -20,153 +20,198 @@ var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply desired state to Swarm",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPath:  opts.ConfigPath,
-			SecretsFile: opts.SecretsFile,
-			ValuesFiles: opts.ValuesFiles,
-			Deployment:  opts.Deployment,
-			Context:     opts.Context,
-			Partition:   opts.Partition,
-			Offline:     opts.Offline,
-			Debug:       opts.Debug,
-		}, true, true)
-		if err != nil {
+		deployments := deploymentTargets(opts.Deployments)
+		partitionFilters := normalizeSelectors(opts.Partitions)
+		stackFilters := normalizeSelectors(opts.Stacks)
+		outputMode := strings.TrimSpace(opts.Output)
+		if outputMode == "" {
+			outputMode = "auto"
+		}
+		if err := apply.ValidateDeployOutputMode(outputMode); err != nil {
 			return err
 		}
-		cfg := projectCtx.Config
-		partitionFilter := projectCtx.Partition
-		values := projectCtx.Values
-		pruneServices := opts.Prune || opts.PruneServices
-		desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, values, partitionFilter, opts.AllowMissing, !opts.NoInfer)
-		if err != nil {
-			return err
-		}
+		outputFlagSet := cmd.Flags().Changed("output")
+		noUI := opts.NoUI || outputFlagSet
+		out := cmd.OutOrStdout()
 
-		contextName := projectCtx.ContextName
-		client, err := projectCtx.SwarmClient()
-		if err != nil {
-			return err
-		}
+		for deploymentIndex, deployment := range deployments {
+			if len(deployments) > 1 {
+				if deploymentIndex > 0 {
+					_, _ = fmt.Fprintln(out)
+				}
+				label := deployment
+				if label == "" {
+					label = "(default)"
+				}
+				_, _ = fmt.Fprintf(out, "target deployment: %s\n", label)
+			}
 
-		ctx := context.Background()
-		plan, err := apply.BuildPlan(ctx, client, cfg, desired, values, partitionFilter, !opts.NoInfer)
-		if err != nil {
-			return err
-		}
+			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
+				ConfigPath:  opts.ConfigPath,
+				SecretsFile: opts.SecretsFile,
+				ValuesFiles: opts.ValuesFiles,
+				Deployment:  deployment,
+				Context:     opts.Context,
+				Offline:     opts.Offline,
+				Debug:       opts.Debug,
+			}, true, true)
+			if err != nil {
+				return err
+			}
+			cfg := projectCtx.Config
+			for _, partition := range partitionFilters {
+				if !cmdutil.PartitionInProject(cfg, partition) {
+					return fmt.Errorf("partition %q not found in project.partitions", partition)
+				}
+			}
+			for _, stack := range stackFilters {
+				if !cmdutil.StackInProject(cfg, stack) {
+					return fmt.Errorf("stack %q not found in stacks", stack)
+				}
+			}
 
-		prune := opts.Prune
-		preserve, err := resolvePreserve(cmd, cfg, opts)
-		if err != nil {
-			return err
-		}
-		var pruneResult apply.PruneResult
-		if prune {
-			plan, pruneResult = apply.PrunePlan(plan, preserve)
-			if opts.Confirm {
-				confirmed, err := confirmPruneConfigs(cmd, plan, preserve, opts.Confirm)
+			values := projectCtx.Values
+			pruneServices := opts.Prune || opts.PruneServices
+			desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, values, partitionFilters, stackFilters, opts.AllowMissing, !opts.NoInfer)
+			if err != nil {
+				return err
+			}
+
+			contextName := projectCtx.ContextName
+			client, err := projectCtx.SwarmClient()
+			if err != nil {
+				return err
+			}
+
+			ctx := context.Background()
+			plan, err := apply.BuildPlan(ctx, client, cfg, desired, values, partitionFilters, stackFilters, !opts.NoInfer)
+			if err != nil {
+				return err
+			}
+
+			prune := opts.Prune
+			preserve, err := resolvePreserve(cmd, cfg, opts)
+			if err != nil {
+				return err
+			}
+			var pruneResult apply.PruneResult
+			if prune {
+				plan, pruneResult = apply.PrunePlan(plan, preserve)
+				if opts.Confirm {
+					confirmed, err := confirmPruneConfigs(cmd, plan, preserve, opts.Confirm)
+					if err != nil {
+						return err
+					}
+					if !confirmed {
+						prune = false
+						plan.DeleteConfigs = nil
+						plan.DeleteSecrets = nil
+					}
+				}
+			} else {
+				plan.DeleteConfigs = nil
+				plan.DeleteSecrets = nil
+			}
+			if pruneServices {
+				existingDeploys := make(map[string]struct{}, len(plan.StackDeploys))
+				for _, deploy := range plan.StackDeploys {
+					existingDeploys[deploy.Name] = struct{}{}
+				}
+				pruneOnly := make(map[string]struct{})
+				for _, name := range plan.PruneStacks {
+					if _, ok := existingDeploys[name]; ok {
+						continue
+					}
+					pruneOnly[name] = struct{}{}
+				}
+				if len(pruneOnly) > 0 {
+					pruneDeploys, err := apply.BuildStackDeploys(cfg, desired, values, partitionFilters, stackFilters, pruneOnly, nil, nil, !opts.NoInfer)
+					if err != nil {
+						return err
+					}
+					plan.StackDeploys = mergeStackDeploys(plan.StackDeploys, pruneDeploys)
+				}
+			}
+			if pruneServices && len(plan.StackDeploys) > 0 && opts.Confirm {
+				confirmed, err := confirmPruneServices(cmd, len(plan.StackDeploys), opts.Confirm)
 				if err != nil {
 					return err
 				}
 				if !confirmed {
-					prune = false
-					plan.DeleteConfigs = nil
-					plan.DeleteSecrets = nil
+					pruneServices = false
 				}
 			}
-		} else {
-			plan.DeleteConfigs = nil
-			plan.DeleteSecrets = nil
-		}
-		if pruneServices {
-			existingDeploys := make(map[string]struct{}, len(plan.StackDeploys))
-			for _, deploy := range plan.StackDeploys {
-				existingDeploys[deploy.Name] = struct{}{}
+
+			planSummary := buildPlanSummary(plan)
+			partitionState := ""
+			if len(partitionFilters) == 1 {
+				partitionState = partitionFilters[0]
 			}
-			pruneOnly := make(map[string]struct{})
-			for _, name := range plan.PruneStacks {
-				if _, ok := existingDeploys[name]; ok {
-					continue
+			stackState := ""
+			if len(stackFilters) == 1 {
+				stackState = stackFilters[0]
+			}
+			skipCache := len(deployments) > 1 || len(partitionFilters) > 1 || len(stackFilters) > 1
+			cached, cacheOK := loadStateCache(opts.ConfigPath, cfg, partitionState, stackState)
+			skipApply := !skipCache && cacheOK && cached.Command == "apply" && planSummaryZero(planSummary) && planSummariesEqual(cached.Plan, planSummary)
+			if !skipApply {
+				stackParallel := 0
+				if opts.Serial {
+					stackParallel = 1
 				}
-				pruneOnly[name] = struct{}{}
-			}
-			if len(pruneOnly) > 0 {
-				pruneDeploys, err := apply.BuildStackDeploys(cfg, desired, values, partitionFilter, pruneOnly, nil, nil, !opts.NoInfer)
-				if err != nil {
+				if err := apply.Apply(ctx, client, plan, contextName, pruneServices, stackParallel, noUI, outputMode, outputFlagSet); err != nil {
 					return err
 				}
-				plan.StackDeploys = mergeStackDeploys(plan.StackDeploys, pruneDeploys)
 			}
-		}
-		if pruneServices && len(plan.StackDeploys) > 0 && opts.Confirm {
-			confirmed, err := confirmPruneServices(cmd, len(plan.StackDeploys), opts.Confirm)
+
+			statePath, err := planStatePath(opts.ConfigPath)
 			if err != nil {
 				return err
 			}
-			if !confirmed {
-				pruneServices = false
+			stackNames, serviceCreates, serviceUpdates := planDeploySummary(plan.StackDeploys)
+			if len(stackNames) == 0 {
+				stackNames = nil
 			}
-		}
-
-		planSummary := buildPlanSummary(plan)
-		cached, cacheOK := loadStateCache(opts.ConfigPath, cfg, partitionFilter)
-		skipApply := cacheOK && cached.Command == "apply" && planSummaryZero(planSummary) && planSummariesEqual(cached.Plan, planSummary)
-		if !skipApply {
-			stackParallel := 0
-			if opts.Serial {
-				stackParallel = 1
+			planSummary.ServicesCreated = serviceCreates
+			planSummary.ServicesUpdated = serviceUpdates
+			planSummary.StackNames = stackNames
+			stateSnapshot := state.State{
+				Version:     state.CurrentVersion,
+				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+				Command:     "apply",
+				ConfigPath:  opts.ConfigPath,
+				Project:     cfg.Project.Name,
+				Deployment:  cfg.Project.Deployment,
+				Partition:   partitionState,
+				Stack:       stackState,
+				Plan:        planSummary,
 			}
-			if err := apply.Apply(ctx, client, plan, contextName, pruneServices, stackParallel, opts.NoUI); err != nil {
+			if err := state.Write(statePath, stateSnapshot); err != nil {
 				return err
 			}
-		}
 
-		statePath, err := planStatePath(opts.ConfigPath)
-		if err != nil {
-			return err
-		}
-		stackNames, serviceCreates, serviceUpdates := planDeploySummary(plan.StackDeploys)
-		if len(stackNames) == 0 {
-			stackNames = nil
-		}
-		planSummary.ServicesCreated = serviceCreates
-		planSummary.ServicesUpdated = serviceUpdates
-		planSummary.StackNames = stackNames
-		stateSnapshot := state.State{
-			Version:     state.CurrentVersion,
-			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-			Command:     "apply",
-			ConfigPath:  opts.ConfigPath,
-			Project:     cfg.Project.Name,
-			Deployment:  cfg.Project.Deployment,
-			Partition:   partitionFilter,
-			Plan:        planSummary,
-		}
-		if err := state.Write(statePath, stateSnapshot); err != nil {
-			return err
-		}
-
-		out := cmd.OutOrStdout()
-		if skipApply {
-			fmt.Fprintln(out, "apply OK (no changes)")
-		} else {
-			fmt.Fprintln(out, "apply OK")
-		}
-		fmt.Fprintf(out, "networks created: %d\nconfigs created: %d\nsecrets created: %d\nstacks deployed: %d\nconfigs removed: %d\nsecrets removed: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", planSummary.NetworksCreated, planSummary.ConfigsCreated, planSummary.SecretsCreated, planSummary.StacksDeployed, planSummary.ConfigsRemoved, planSummary.SecretsRemoved, planSummary.ConfigsSkipped, planSummary.SecretsSkipped)
-		if prune {
-			fmt.Fprintf(out, "prune enabled: preserve=%d configs preserved: %d secrets preserved: %d\n", pruneResult.PreserveCount, pruneResult.ConfigsPreserved, pruneResult.SecretsPreserved)
-		} else {
-			fmt.Fprintln(out, "prune disabled: unused configs/secrets preserved")
-		}
-		if pruneServices {
-			fmt.Fprintln(out, "prune services enabled: stack deploy uses --prune")
-		} else {
-			fmt.Fprintln(out, "prune services disabled")
-		}
-		if len(desired.Missing) > 0 {
-			sort.Strings(desired.Missing)
-			fmt.Fprintf(out, "missing secrets (placeholders): %d\n", len(desired.Missing))
-			for _, item := range desired.Missing {
-				fmt.Fprintf(out, "  - %s\n", item)
+			if skipApply {
+				_, _ = fmt.Fprintln(out, "apply OK (no changes)")
+			} else {
+				_, _ = fmt.Fprintln(out, "apply OK")
+			}
+			_, _ = fmt.Fprintf(out, "networks created: %d\nconfigs created: %d\nsecrets created: %d\nstacks deployed: %d\nconfigs removed: %d\nsecrets removed: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", planSummary.NetworksCreated, planSummary.ConfigsCreated, planSummary.SecretsCreated, planSummary.StacksDeployed, planSummary.ConfigsRemoved, planSummary.SecretsRemoved, planSummary.ConfigsSkipped, planSummary.SecretsSkipped)
+			if prune {
+				_, _ = fmt.Fprintf(out, "prune enabled: preserve=%d configs preserved: %d secrets preserved: %d\n", pruneResult.PreserveCount, pruneResult.ConfigsPreserved, pruneResult.SecretsPreserved)
+			} else {
+				_, _ = fmt.Fprintln(out, "prune disabled: unused configs/secrets preserved")
+			}
+			if pruneServices {
+				_, _ = fmt.Fprintln(out, "prune services enabled: stack deploy uses --prune")
+			} else {
+				_, _ = fmt.Fprintln(out, "prune services disabled")
+			}
+			if len(desired.Missing) > 0 {
+				sort.Strings(desired.Missing)
+				_, _ = fmt.Fprintf(out, "missing secrets (placeholders): %d\n", len(desired.Missing))
+				for _, item := range desired.Missing {
+					_, _ = fmt.Fprintf(out, "  - %s\n", item)
+				}
 			}
 		}
 		return nil
@@ -263,7 +308,7 @@ func planSummariesEqual(left, right state.PlanSummary) bool {
 		left.SecretsSkipped == right.SecretsSkipped
 }
 
-func loadStateCache(configPath string, cfg *config.Config, partition string) (state.State, bool) {
+func loadStateCache(configPath string, cfg *config.Config, partition string, stack string) (state.State, bool) {
 	statePath, err := planStatePath(configPath)
 	if err != nil {
 		return state.State{}, false
@@ -282,6 +327,9 @@ func loadStateCache(configPath string, cfg *config.Config, partition string) (st
 		return state.State{}, false
 	}
 	if cached.Partition != "" && cached.Partition != partition {
+		return state.State{}, false
+	}
+	if cached.Stack != "" && cached.Stack != stack {
 		return state.State{}, false
 	}
 	return cached, true

@@ -1,0 +1,104 @@
+log:
+  level: trace
+  leak_sensitive_values: true
+  format: json
+
+serve:
+  proxy:
+    trust_forwarded_headers: true
+    cors:
+      enabled: true
+      allowed_origins:
+{{- range (config_value "trusted_origins" )}}
+        - "{{.}}"
+{{- end }}
+      allowed_methods:
+        - POST
+        - GET
+        - PUT
+        - PATCH
+        - DELETE
+        - HEAD
+      allowed_headers:
+        - Authorization
+        - Content-Type
+        - X-Correlation-Id
+        - X-HTTP-Method-Override
+        - X-Jwks-Issuer
+        - X-Jwks-Signature-Kid
+        - X-Jwks-Signature
+      exposed_headers:
+        - Content-Type
+      allow_credentials: true
+      debug: true
+errors:
+  fallback:
+    - json
+  handlers:
+    json:
+      enabled: true
+      config:
+        verbose: true
+access_rules:
+  repositories:
+    - file://{{ config_ref "access_rules" }}
+authenticators:
+  noop:
+    enabled: true
+  anonymous:
+    enabled: true
+    config:
+      subject: guest
+  jwt:
+    enabled: true
+    config:
+      jwks_ttl: 24h
+      jwks_urls:
+{{- range (config_value "trusted_issuers" )}}
+        - "{{.}}/.well-known/jwks.json"
+{{- end }}
+      trusted_issuers:
+{{- range (config_value "trusted_issuers" )}}
+        - "{{.}}"
+{{- end }}
+  oauth2_introspection:
+    enabled: true
+    config:
+      introspection_url: "{{ config_value "introspection_url" }}"
+      pre_authorization:
+        enabled: true
+        client_id: "{{ config_value "introspection_client_id" }}"
+        client_secret: "{{ secret_ref "introspection_client_secret" }}"
+        token_url: "{{ config_value "token_url" }}"
+        scope:
+          - "introspect"
+      prefix: "ory_at_"
+      required_scope:
+        - "participant.*"
+        - "+.participant.*"
+        - "device.*"
+        - "+.device.*"
+        - "assignment.*"
+        - "+.assignment.*"
+      trusted_issuers:
+{{- range (config_value "trusted_issuers" )}}
+        - "{{.}}"
+{{- end }}
+  http_message_signing_pre9421:
+    enabled: true
+    config:
+      max_challenge_age: 5m
+      authorities:
+        - allowed_issuers:
+          - regex:https://(?:[-a-z0-9]+\\.)*sentinelsyn\\.com
+authorizers:
+  allow:
+    enabled: true
+mutators:
+  noop:
+    enabled: true
+  header:
+    enabled: true
+    config:
+      headers:
+        X-Correlation-Id: '{{ escape_template `{{ print (.MatchContext.Header.Get "X-Correlation-ID") }}` }}'

@@ -16,11 +16,7 @@ Helper image for CI/CD (including Drone docker-runner) that bundles:
 From repo root:
 
 ```bash
-docker build \
-  -f contrib/ci/swarmcp-runner/Dockerfile \
-  -t ghcr.io/<org>/swarmcp-runner:latest \
-  --build-arg VERSION="$(git rev-parse --short=12 HEAD)" \
-  .
+CI_IMAGE=ghcr.io/<org>/swarmcp-runner:latest task ci-image
 ```
 
 ## Typical Drone Step

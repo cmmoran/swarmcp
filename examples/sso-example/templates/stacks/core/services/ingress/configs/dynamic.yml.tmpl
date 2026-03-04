@@ -1,0 +1,18 @@
+tls:
+  options:
+    default:
+      clientAuth:
+        caFiles:
+          - /etc/ssl/certs/edge-ca.pem
+        clientAuthType: RequireAndVerifyClientCert
+  certificates:
+    - certFile: /etc/traefik/ingress.crt
+      keyFile: /run/secrets/ingress.key
+http:
+  routers:
+    dashboard:
+      entryPoints:
+        - websecure
+      rule: "Host(`traefik.{{ config_value "internal_domain" }}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`) || PathPrefix(`/callback`))"
+      service: api@internal
+      tls: {}

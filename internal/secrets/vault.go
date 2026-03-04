@@ -165,7 +165,7 @@ func (v *vaultProvider) readKVMap(ctx context.Context, path string) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, ErrSecretNotFound
 	}
@@ -204,7 +204,7 @@ func (v *vaultProvider) writeKV(ctx context.Context, path string, data map[strin
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("vault write %s: status %s", full, resp.Status)
 	}
@@ -332,7 +332,7 @@ func (v *vaultProvider) login(ctx context.Context, path string, payload map[stri
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("vault auth %s: status %s", full, resp.Status)
 	}

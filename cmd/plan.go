@@ -23,240 +23,273 @@ var planCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Compute desired state and show changes",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		deployments := deploymentTargets(opts.Deployments)
+		partitionFilters := normalizeSelectors(opts.Partitions)
+		stackFilters := normalizeSelectors(opts.Stacks)
 		progress := newPlanProgressReporter(cmd.ErrOrStderr(), planProgressEnabled)
+		out := cmd.OutOrStdout()
 
-		done := progress.start("load project context")
-		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPath:  opts.ConfigPath,
-			SecretsFile: opts.SecretsFile,
-			ValuesFiles: opts.ValuesFiles,
-			Deployment:  opts.Deployment,
-			Context:     opts.Context,
-			Partition:   opts.Partition,
-			Offline:     opts.Offline,
-			Debug:       opts.Debug,
-		}, true, true)
-		done(err)
-		if err != nil {
-			return err
-		}
-		cfg := projectCtx.Config
-		partitionFilter := projectCtx.Partition
-		nodesInScope := cmdutil.ResolveDeploymentNodes(cfg)
-
-		debugContentEnabled := opts.DebugContent
-		if flag := cmd.Flags().Lookup("debug-content-max"); flag != nil && flag.Changed {
-			debugContentEnabled = true
-		}
-		debugMax := opts.DebugContentMax
-		debugDefsEnabled := opts.Debug || debugContentEnabled
-
-		done = progress.start("detect template cycles")
-		warnings, err := templates.DetectCycles(cfg, !opts.NoInfer)
-		done(err)
-		if err != nil {
-			return err
-		}
-		warnings = filterInferredRefWarnings(warnings)
-		warnings = append(warnings, cmdutil.VolumePlacementWarnings(cfg, partitionFilter, opts.Debug)...)
-
-		done = progress.start("render desired configs/secrets")
-		summary, err := render.RenderProject(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilter, opts.AllowMissing, !opts.NoInfer)
-		done(err)
-		if err != nil {
-			return err
-		}
-		if summary.RuntimeGraph != nil {
-			if err := summary.RuntimeGraph.DetectCycles(); err != nil {
-				return fmt.Errorf("runtime cycle detection failed: %w", err)
+		for deploymentIndex, deployment := range deployments {
+			if len(deployments) > 1 {
+				if deploymentIndex > 0 {
+					_, _ = fmt.Fprintln(out)
+				}
+				label := deployment
+				if label == "" {
+					label = "(default)"
+				}
+				_, _ = fmt.Fprintf(out, "target deployment: %s\n", label)
 			}
-		}
 
-		var swarmClient swarm.Client
-		getSwarmClient := func() (swarm.Client, error) {
-			if swarmClient != nil {
+			done := progress.start("load project context")
+			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
+				ConfigPath:  opts.ConfigPath,
+				SecretsFile: opts.SecretsFile,
+				ValuesFiles: opts.ValuesFiles,
+				Deployment:  deployment,
+				Context:     opts.Context,
+				Offline:     opts.Offline,
+				Debug:       opts.Debug,
+			}, true, true)
+			done(err)
+			if err != nil {
+				return err
+			}
+			cfg := projectCtx.Config
+			for _, partition := range partitionFilters {
+				if !cmdutil.PartitionInProject(cfg, partition) {
+					return fmt.Errorf("partition %q not found in project.partitions", partition)
+				}
+			}
+			for _, stack := range stackFilters {
+				if !cmdutil.StackInProject(cfg, stack) {
+					return fmt.Errorf("stack %q not found in stacks", stack)
+				}
+			}
+			nodesInScope := cmdutil.ResolveDeploymentNodes(cfg)
+
+			debugContentEnabled := opts.DebugContent
+			if flag := cmd.Flags().Lookup("debug-content-max"); flag != nil && flag.Changed {
+				debugContentEnabled = true
+			}
+			debugMax := opts.DebugContentMax
+			debugDefsEnabled := opts.Debug || debugContentEnabled
+
+			done = progress.start("detect template cycles")
+			warnings, err := templates.DetectCycles(cfg, !opts.NoInfer)
+			done(err)
+			if err != nil {
+				return err
+			}
+			warnings = filterInferredRefWarnings(warnings)
+			warnings = append(warnings, cmdutil.VolumePlacementWarnings(cfg, partitionFilters, stackFilters, opts.Debug)...)
+
+			done = progress.start("render desired configs/secrets")
+			summary, err := render.RenderProject(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilters, stackFilters, opts.AllowMissing, !opts.NoInfer)
+			done(err)
+			if err != nil {
+				return err
+			}
+			if summary.RuntimeGraph != nil {
+				if err := summary.RuntimeGraph.DetectCycles(); err != nil {
+					return fmt.Errorf("runtime cycle detection failed: %w", err)
+				}
+			}
+
+			var swarmClient swarm.Client
+			getSwarmClient := func() (swarm.Client, error) {
+				if swarmClient != nil {
+					return swarmClient, nil
+				}
+				client, err := projectCtx.SwarmClient()
+				if err != nil {
+					return nil, err
+				}
+				swarmClient = client
 				return swarmClient, nil
 			}
-			client, err := projectCtx.SwarmClient()
-			if err != nil {
-				return nil, err
-			}
-			swarmClient = client
-			return swarmClient, nil
-		}
 
-		nodeSpecs := cmdutil.ResolveDeploymentNodeSpecs(cfg)
-		if len(nodeSpecs) > 0 {
-			done = progress.start("load swarm nodes")
-			client, err := getSwarmClient()
-			if err != nil {
+			nodeSpecs := cmdutil.ResolveDeploymentNodeSpecs(cfg)
+			if len(nodeSpecs) > 0 {
+				done = progress.start("load swarm nodes")
+				client, err := getSwarmClient()
+				if err != nil {
+					done(err)
+					return err
+				}
+				nodes, err := client.ListNodes(context.Background())
 				done(err)
-				return err
+				if err != nil {
+					return err
+				}
+				warnings = append(warnings, cmdutil.NodeLabelWarnings(cfg, nodeSpecs, nodes)...)
 			}
-			nodes, err := client.ListNodes(context.Background())
+
+			done = progress.start("compute desired plan")
+			desired := apply.DesiredStateFromSummary(cfg, summary, partitionFilters, stackFilters)
+			statePath, err := planStatePath(opts.ConfigPath)
 			done(err)
 			if err != nil {
 				return err
 			}
-			warnings = append(warnings, cmdutil.NodeLabelWarnings(cfg, nodeSpecs, nodes)...)
-		}
-
-		done = progress.start("compute desired plan")
-		desired := apply.DesiredStateFromSummary(cfg, summary, partitionFilter)
-		statePath, err := planStatePath(opts.ConfigPath)
-		done(err)
-		if err != nil {
-			return err
-		}
-		planSnapshot := state.State{
-			Version:     state.CurrentVersion,
-			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-			Command:     "plan",
-			ConfigPath:  opts.ConfigPath,
-			Project:     cfg.Project.Name,
-			Deployment:  cfg.Project.Deployment,
-			Partition:   partitionFilter,
-		}
-		type networkStatus struct {
-			Name   string
-			Status string
-		}
-		var networkStatuses []networkStatus
-		if len(desired.Networks) > 0 {
-			done = progress.start("load swarm networks")
-			existing := map[string]struct{}{}
-			client, err := getSwarmClient()
-			if err != nil {
+			partitionState := ""
+			if len(partitionFilters) == 1 {
+				partitionState = partitionFilters[0]
+			}
+			stackState := ""
+			if len(stackFilters) == 1 {
+				stackState = stackFilters[0]
+			}
+			planSnapshot := state.State{
+				Version:     state.CurrentVersion,
+				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+				Command:     "plan",
+				ConfigPath:  opts.ConfigPath,
+				Project:     cfg.Project.Name,
+				Deployment:  cfg.Project.Deployment,
+				Partition:   partitionState,
+				Stack:       stackState,
+			}
+			type networkStatus struct {
+				Name   string
+				Status string
+			}
+			var networkStatuses []networkStatus
+			if len(desired.Networks) > 0 {
+				done = progress.start("load swarm networks")
+				existing := map[string]struct{}{}
+				client, err := getSwarmClient()
+				if err != nil {
+					done(err)
+					return err
+				}
+				networks, err := client.ListNetworks(context.Background())
 				done(err)
-				return err
-			}
-			networks, err := client.ListNetworks(context.Background())
-			done(err)
-			if err != nil {
-				return err
-			}
-			for _, network := range networks {
-				existing[network.Name] = struct{}{}
-			}
-			for _, network := range desired.Networks {
-				status := "create"
-				if _, ok := existing[network.Name]; ok {
-					status = "exists"
+				if err != nil {
+					return err
 				}
-				networkStatuses = append(networkStatuses, networkStatus{Name: network.Name, Status: status})
-				if status == "create" {
-					warnings = append(warnings, fmt.Sprintf("bootstrap recommended: missing network %q", network.Name))
-					planSnapshot.Plan.NetworksCreated++
+				for _, network := range networks {
+					existing[network.Name] = struct{}{}
 				}
-			}
-		}
-		out := cmd.OutOrStdout()
-		cmdutil.PrintWarnings(out, warnings)
-		fmt.Fprintf(out, "plan OK (dry-run)\nconfigs rendered: %d\nsecrets rendered: %d\n", summary.Configs, summary.Secrets)
-		if len(summary.MissingSecrets) > 0 {
-			sort.Strings(summary.MissingSecrets)
-			fmt.Fprintf(out, "missing secrets (placeholders): %d\n", len(summary.MissingSecrets))
-			for _, item := range summary.MissingSecrets {
-				fmt.Fprintf(out, "  - %s\n", item)
-			}
-		}
-		if len(nodesInScope) > 0 {
-			fmt.Fprintln(out, "nodes in scope:")
-			for _, name := range nodesInScope {
-				fmt.Fprintf(out, "  - %s\n", name)
-			}
-		}
-		if len(summary.ConfigsRendered) > 0 {
-			fmt.Fprintln(out, "configs:")
-			printGroupedRenderedItems(out, summary.ConfigsRendered, splitRenderedDefItem)
-		}
-		if len(summary.SecretsRendered) > 0 {
-			fmt.Fprintln(out, "secrets:")
-			printGroupedRenderedItems(out, summary.SecretsRendered, splitRenderedDefItem)
-		}
-		if len(networkStatuses) > 0 {
-			fmt.Fprintln(out, "networks:")
-			for _, status := range networkStatuses {
-				fmt.Fprintf(out, "  - %s (%s)\n", status.Name, status.Status)
-			}
-		}
-		if len(summary.Mounts) > 0 {
-			fmt.Fprintln(out, "service mounts:")
-			printGroupedRenderedItems(out, summary.Mounts, splitMountItem)
-		}
-		done = progress.start("plan bind paths")
-		bindPaths, err := apply.PlanBindPaths(cfg, projectCtx.Values, partitionFilter)
-		done(err)
-		if err != nil {
-			return err
-		}
-		if len(bindPaths) > 0 {
-			fmt.Fprintln(out, "bind paths required:")
-			for _, item := range bindPaths {
-				line := apply.FormatBindPathLine(item)
-				if len(nodeSpecs) > 0 {
-					nodes, unknown := cmdutil.NodesForConstraints(nodeSpecs, item.Constraints)
-					if unknown {
-						line += " nodes: unknown"
-					} else if len(nodes) == 0 {
-						line += " nodes: none"
-					} else {
-						line += " nodes: " + strings.Join(nodes, ", ")
+				for _, network := range desired.Networks {
+					status := "create"
+					if _, ok := existing[network.Name]; ok {
+						status = "exists"
+					}
+					networkStatuses = append(networkStatuses, networkStatus{Name: network.Name, Status: status})
+					if status == "create" {
+						warnings = append(warnings, fmt.Sprintf("bootstrap recommended: missing network %q", network.Name))
+						planSnapshot.Plan.NetworksCreated++
 					}
 				}
-				fmt.Fprintf(out, "  - %s\n", line)
 			}
-		}
-		if debugDefsEnabled {
-			done = progress.start("build stack compose output")
-			stackDeploys, err := apply.BuildStackDeploys(cfg, desired, projectCtx.Values, partitionFilter, nil, nil, nil, !opts.NoInfer)
+			cmdutil.PrintWarnings(out, warnings)
+			_, _ = fmt.Fprintf(out, "plan OK (dry-run)\nconfigs rendered: %d\nsecrets rendered: %d\n", summary.Configs, summary.Secrets)
+			if len(summary.MissingSecrets) > 0 {
+				sort.Strings(summary.MissingSecrets)
+				_, _ = fmt.Fprintf(out, "missing secrets (placeholders): %d\n", len(summary.MissingSecrets))
+				for _, item := range summary.MissingSecrets {
+					_, _ = fmt.Fprintf(out, "  - %s\n", item)
+				}
+			}
+			if len(nodesInScope) > 0 {
+				_, _ = fmt.Fprintln(out, "nodes in scope:")
+				for _, name := range nodesInScope {
+					_, _ = fmt.Fprintf(out, "  - %s\n", name)
+				}
+			}
+			if len(summary.ConfigsRendered) > 0 {
+				_, _ = fmt.Fprintln(out, "configs:")
+				printGroupedRenderedItems(out, summary.ConfigsRendered, splitRenderedDefItem)
+			}
+			if len(summary.SecretsRendered) > 0 {
+				_, _ = fmt.Fprintln(out, "secrets:")
+				printGroupedRenderedItems(out, summary.SecretsRendered, splitRenderedDefItem)
+			}
+			if len(networkStatuses) > 0 {
+				_, _ = fmt.Fprintln(out, "networks:")
+				for _, status := range networkStatuses {
+					_, _ = fmt.Fprintf(out, "  - %s (%s)\n", status.Name, status.Status)
+				}
+			}
+			if len(summary.Mounts) > 0 {
+				_, _ = fmt.Fprintln(out, "service mounts:")
+				printGroupedRenderedItems(out, summary.Mounts, splitMountItem)
+			}
+			done = progress.start("plan bind paths")
+			bindPaths, err := apply.PlanBindPaths(cfg, projectCtx.Values, partitionFilters, stackFilters)
 			done(err)
 			if err != nil {
 				return err
 			}
-			if len(stackDeploys) > 0 {
-				fmt.Fprintln(out, "stacks:")
-				for _, deploy := range stackDeploys {
-					fmt.Fprintf(out, "  - %s\n", deploy.Name)
-					for _, line := range strings.Split(strings.TrimRight(string(deploy.Compose), "\n"), "\n") {
-						fmt.Fprintf(out, "      %s\n", line)
+			if len(bindPaths) > 0 {
+				_, _ = fmt.Fprintln(out, "bind paths required:")
+				for _, item := range bindPaths {
+					line := apply.FormatBindPathLine(item)
+					if len(nodeSpecs) > 0 {
+						nodes, unknown := cmdutil.NodesForConstraints(nodeSpecs, item.Constraints)
+						if unknown {
+							line += " nodes: unknown"
+						} else if len(nodes) == 0 {
+							line += " nodes: none"
+						} else {
+							line += " nodes: " + strings.Join(nodes, ", ")
+						}
 					}
-					planSnapshot.Plan.StackNames = append(planSnapshot.Plan.StackNames, deploy.Name)
+					_, _ = fmt.Fprintf(out, "  - %s\n", line)
 				}
 			}
-		}
-		if debugDefsEnabled && len(summary.Defs) > 0 {
-			fmt.Fprintln(out, "debug:")
-			for _, item := range summary.Defs {
-				physical, hash := render.PhysicalName(item.Name, item.Content)
-				labels := render.FormatLabels(render.Labels(item.ScopeID, item.Name, hash))
+			if debugDefsEnabled {
+				done = progress.start("build stack compose output")
+				stackDeploys, err := apply.BuildStackDeploys(cfg, desired, projectCtx.Values, partitionFilters, stackFilters, nil, nil, nil, !opts.NoInfer)
+				done(err)
+				if err != nil {
+					return err
+				}
+				if len(stackDeploys) > 0 {
+					_, _ = fmt.Fprintln(out, "stacks:")
+					for _, deploy := range stackDeploys {
+						_, _ = fmt.Fprintf(out, "  - %s\n", deploy.Name)
+						for _, line := range strings.Split(strings.TrimRight(string(deploy.Compose), "\n"), "\n") {
+							_, _ = fmt.Fprintf(out, "      %s\n", line)
+						}
+						planSnapshot.Plan.StackNames = append(planSnapshot.Plan.StackNames, deploy.Name)
+					}
+				}
+			}
+			if debugDefsEnabled && len(summary.Defs) > 0 {
+				_, _ = fmt.Fprintln(out, "debug:")
+				for _, item := range summary.Defs {
+					physical, hash := render.PhysicalName(item.Name, item.Content)
+					labels := render.FormatLabels(render.Labels(item.ScopeID, item.Name, hash))
+					if opts.Debug {
+						_, _ = fmt.Fprintf(out, "  - %s %q (%s) physical=%s labels=%s\n", item.Kind, item.Name, item.Scope, physical, labels)
+					}
+					if debugContentEnabled {
+						content := cmdutil.TruncateContent(item.Content, debugMax)
+						_, _ = fmt.Fprintf(out, "  - %s %q content:\n", item.Kind, item.Name)
+						for _, line := range strings.Split(content, "\n") {
+							_, _ = fmt.Fprintf(out, "      %s\n", line)
+						}
+					}
+				}
 				if opts.Debug {
-					fmt.Fprintf(out, "  - %s %q (%s) physical=%s labels=%s\n", item.Kind, item.Name, item.Scope, physical, labels)
-				}
-				if debugContentEnabled {
-					content := cmdutil.TruncateContent(item.Content, debugMax)
-					fmt.Fprintf(out, "  - %s %q content:\n", item.Kind, item.Name)
-					for _, line := range strings.Split(content, "\n") {
-						fmt.Fprintf(out, "      %s\n", line)
+					for _, item := range summary.RuntimeRefs {
+						qualifier := ""
+						if item.Missing {
+							qualifier = " inferred"
+						}
+						_, _ = fmt.Fprintf(out, "  - runtime%s %s %q -> %s %q (from %s via %s)\n", qualifier, item.FromKind, item.FromName, item.ToKind, item.ToName, cmdutil.ScopeLabel(item.From), item.FuncName)
 					}
 				}
 			}
-			if opts.Debug {
-				for _, item := range summary.RuntimeRefs {
-					qualifier := ""
-					if item.Missing {
-						qualifier = " inferred"
-					}
-					fmt.Fprintf(out, "  - runtime%s %s %q -> %s %q (from %s via %s)\n", qualifier, item.FromKind, item.FromName, item.ToKind, item.ToName, cmdutil.ScopeLabel(item.From), item.FuncName)
-				}
+			done = progress.start("write plan state")
+			if err := state.Write(statePath, planSnapshot); err != nil {
+				done(err)
+				return err
 			}
+			done(nil)
 		}
-		done = progress.start("write plan state")
-		if err := state.Write(statePath, planSnapshot); err != nil {
-			done(err)
-			return err
-		}
-		done(nil)
 		return nil
 	},
 }
@@ -275,14 +308,14 @@ func (p planProgressReporter) start(phase string) func(error) {
 		return func(error) {}
 	}
 	started := time.Now()
-	fmt.Fprintf(p.out, "plan: %s...\n", phase)
+	_, _ = fmt.Fprintf(p.out, "plan: %s...\n", phase)
 	return func(err error) {
 		elapsed := time.Since(started).Round(time.Millisecond)
 		if err != nil {
-			fmt.Fprintf(p.out, "plan: %s failed (%s): %v\n", phase, elapsed, err)
+			_, _ = fmt.Fprintf(p.out, "plan: %s failed (%s): %v\n", phase, elapsed, err)
 			return
 		}
-		fmt.Fprintf(p.out, "plan: %s done (%s)\n", phase, elapsed)
+		_, _ = fmt.Fprintf(p.out, "plan: %s done (%s)\n", phase, elapsed)
 	}
 }
 
@@ -322,9 +355,9 @@ type renderedGroup struct {
 func printGroupedRenderedItems(out io.Writer, items []string, split func(string) (string, string)) {
 	groups := groupRenderedItems(items, split)
 	for _, group := range groups {
-		fmt.Fprintf(out, "  %s:\n", group.scope)
+		_, _ = fmt.Fprintf(out, "  %s:\n", group.scope)
 		for _, item := range group.items {
-			fmt.Fprintf(out, "    - %s\n", item)
+			_, _ = fmt.Fprintf(out, "    - %s\n", item)
 		}
 	}
 }

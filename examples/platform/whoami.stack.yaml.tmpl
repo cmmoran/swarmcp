@@ -1,0 +1,33 @@
+mode: partitioned
+services:
+  whoami:
+    source:
+      path: whoami.service.yaml.tmpl
+
+overlays:
+  partitions:
+    - name: dev
+      match:
+        partition: dev
+      services:
+        whoami:
+          labels:
+            traefik.enable: "true"
+            traefik.http.routers.whoami-dev.entrypoints: websecure
+            traefik.http.routers.whoami-dev.rule: '{{ printf "Host(`whoami.%s.%s`)" (runtime_value "{partition}") (config_value "internal_domain") }}'
+            traefik.http.routers.whoami-dev.tls: "true"
+            traefik.http.routers.whoami-dev.service: "whoami-dev"
+            traefik.http.services.whoami-dev.loadbalancer.server.port: "2001"
+
+    - name: qa
+      match:
+        partition: qa
+      services:
+        whoami:
+          labels:
+            traefik.enable: "true"
+            traefik.http.routers.whoami-qa.entrypoints: websecure
+            traefik.http.routers.whoami-qa.rule: '{{ printf "Host(`whoami.%s.%s`)" (runtime_value "{partition}") (config_value "internal_domain") }}'
+            traefik.http.routers.whoami-qa.tls: "true"
+            traefik.http.routers.whoami-qa.service: "whoami-qa"
+            traefik.http.services.whoami-qa.loadbalancer.server.port: "2001"

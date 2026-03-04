@@ -98,7 +98,7 @@ func TestBuildPlanFiltersExistingNamesAndDeletesStale(t *testing.T) {
 		},
 	}
 
-	plan, err := BuildPlan(context.Background(), client, cfg, desired, nil, "", false)
+	plan, err := BuildPlan(context.Background(), client, cfg, desired, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestBuildPlanDedupesDesiredNames(t *testing.T) {
 		},
 	}
 
-	plan, err := BuildPlan(context.Background(), client, cfg, desired, nil, "", false)
+	plan, err := BuildPlan(context.Background(), client, cfg, desired, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

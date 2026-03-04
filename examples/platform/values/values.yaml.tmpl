@@ -1,0 +1,105 @@
+{{ $lbPrivate := "10.20.1.78/32" -}}
+{{ $docker_repo := "ocir.us-langley-1.oci.oraclegovcloud.com/focalpointcloud/synergy/coreservices" -}}
+global:
+  acme_email: admin@sentinelsyn.com
+  acme_vault_path: /core/etc/traefik/ssl/acme.json
+  sso_domain: "sentinelsyn.com"
+  public_domain: "core.sentinelsyn.com"
+  internal_domain: "core.int.sentinelsyn.com"
+  default_partitions: [ dev, qa ]
+  default_cert_main: "core.sentinelsyn.com"
+  default_cert_sans:
+    - "*.core.sentinelsyn.com"
+    - "*.core.int.sentinelsyn.com"
+  vault_url: https://10.20.4.82:8200
+  log_level: TRACE
+  disable_logfiles: true
+  docker_repo: {{ $docker_repo }}
+  trusted_loadbalancers:
+    - "{{ $lbPrivate}}"
+    - "10.244.20.0/24"
+    - "10.244.21.0/24"
+    - "172.18.21.0/24"
+    - "172.18.20.0/24"
+  ip_whitelist:
+    - "{{ external_ip }}/32"
+    - "{{ $lbPrivate }}"
+    - "10.244.20.0/24"
+    - "10.244.21.0/24"
+    - "172.18.21.0/24"
+    - "172.18.20.0/24"
+    - "10.20.1.0/24"
+    - "10.20.6.0/24"
+{{- range swarm_network_cidrs "{project}_core" }}
+    - "{{ . }}"
+{{- end }}
+  github_allowlist:
+    - "192.30.252.0/22"
+    - "185.199.108.0/22"
+    - "140.82.112.0/20"
+    - "143.55.64.0/20"
+    - "2a0a:a440::/29"
+    - "2606:50c0::/32"
+  aws_region: us-east-1
+  aws_hosted_zone_id: Z04199553734YJ3UCQK11
+  portainer_agent_image: "{{ $docker_repo }}:portainer.-agent__2.33.6"
+  portainer_image: "{{ $docker_repo }}:portainer.-portainer-ce__2.33.6"
+  traefik_image: "{{ $docker_repo }}:traefik__v3.6.7f"
+  whoami_image: "traefik/whoami:v1.11"
+  drone_image: "{{ $docker_repo}}:drone__2.25.1b"
+  drone-vault_image: "{{ $docker_repo}}:drone.-vault__latest"
+  drone-runner_image: "{{ $docker_repo}}:drone-docker.2"
+  drone_platform_github_client_id: "Ov23liltwaDnVGMZUuxP"
+  drone_user_filter: "cm-sentinel,bwarren,cnawarathne,kusabnis,saurabh-batra,psurabhihsc,ishuhsc,jcamp-nmrx,ksandeephsc,csurapaneni"
+  drone_create_users: "username:cm-sentinel,admin:true"
+  drone-vault_mount: "kv_drone"
+  oathkeeper_image: "{{ $docker_repo}}:oryd.-oathkeeper__v25.4.2a"
+  introspection_url: "https://id.{{ runtime_value "{partition}" }}.sentinelsyn.com/admin/oauth2/introspect"
+  token_url: "https://id.dev.sentinelsyn.com/oauth2/token"
+partitions:
+  dev:
+    db_username: platform_dev
+    introspection_client_id: "c0244c36-3a7f-458f-a744-b20ff1c55e72"
+    identity_client_id: "c57db3c3-f26c-4a05-8512-3040b8c5d459"
+    trusted_origins:
+      - "https://*.dev.sentinelsyn.com"
+    trusted_issuers:
+      - "https://id.dev.sentinelsyn.com"
+    token_url: "https://id.dev.sentinelsyn.com/oauth2/token"
+    introspection_url: "https://id.dev.sentinelsyn.com/admin/oauth2/introspect"
+    participant_image: "{{ $docker_repo }}:service.-synergy-participant__branch-main"
+    oci_image_bucket: "SynergyNonProd-ParticipantImages"
+    oci_image_namespace: "focalpointcloud"
+    pulsar_manager_url: "pulsar://10.20.4.28:6651"
+    pulsar_tenant: "synergy"
+    pulsar_namespace: "dev.shared"
+    pulsar_topic: "pre_participant_updates"
+    pulsar_nack_redelivery_delay: "10m"
+    manager_disabled: "false"
+    mail_host: "email-smtp.us-east-1.amazonaws.com"
+    mail_port: 465
+    mail_username: "AKIA6DD7LG4N4NSPHXEH"
+    mail_from_address: "noreply@sentrak.com"
+  qa:
+    db_username: platform
+    introspection_client_id: "dcb777c7-0ccd-4913-9740-db40f8f99ae3"
+    identity_client_id: "dcb777c7-0ccd-4913-9740-db40f8f99ae3"
+    trusted_origins:
+      - "https://*.dev.sentinelsyn.com"
+    trusted_issuers:
+      - "https://id.qa.sentinelsyn.com"
+    token_url: "https://id.qa.sentinelsyn.com/oauth2/token"
+    introspection_url: "https://id.qa.sentinelsyn.com/admin/oauth2/introspect"
+    participant_image: "{{ $docker_repo }}:service.-synergy-participant__branch-main"
+    oci_image_bucket: "SynergyNonProd-ParticipantImages"
+    oci_image_namespace: "focalpointcloud"
+    pulsar_manager_url: "pulsar://10.20.4.28:6651"
+    pulsar_tenant: "synergy"
+    pulsar_namespace: "qa.shared"
+    pulsar_topic: "pre_participant_updates"
+    pulsar_nack_redelivery_delay: "10m"
+    manager_disabled: "false"
+    mail_host: "email-smtp.us-east-1.amazonaws.com"
+    mail_port: 465
+    mail_username: "AKIA6DD7LG4N4NSPHXEH"
+    mail_from_address: "noreply@sentrak.com"

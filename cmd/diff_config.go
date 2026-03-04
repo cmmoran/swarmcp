@@ -59,11 +59,19 @@ func newDiffConfigListCmd() *cobra.Command {
 			if limit < 0 {
 				return fmt.Errorf("limit must be >= 0")
 			}
+			deployment, err := singleSelector("deployment", opts.Deployments)
+			if err != nil {
+				return err
+			}
+			partition, err := singleSelector("partition", opts.Partitions)
+			if err != nil {
+				return err
+			}
 			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
 				ConfigPath: opts.ConfigPath,
-				Deployment: opts.Deployment,
+				Deployment: deployment,
 				Context:    opts.Context,
-				Partition:  opts.Partition,
+				Partition:  partition,
 				Offline:    opts.Offline,
 				Debug:      opts.Debug,
 			}, false, false)
@@ -86,22 +94,22 @@ func newDiffConfigListCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if len(records) == 0 {
-				fmt.Fprintln(out, "config versions OK\nmatches: 0")
+				_, _ = fmt.Fprintln(out, "config versions OK\nmatches: 0")
 				return nil
 			}
 			groups := groupConfigVersions(records)
-			fmt.Fprintf(out, "config versions OK\nmatches: %d groups: %d\n", len(records), len(groups))
+			_, _ = fmt.Fprintf(out, "config versions OK\nmatches: %d groups: %d\n", len(records), len(groups))
 			for _, group := range groups {
-				fmt.Fprintf(out, "%s logical=%q\n", group.scope, group.name)
+				_, _ = fmt.Fprintf(out, "%s logical=%q\n", group.scope, group.name)
 				rows := group.rows
 				if limit > 0 && len(rows) > limit {
 					rows = rows[:limit]
 				}
 				for i, row := range rows {
-					fmt.Fprintf(out, "  @%d %s physical=%s id=%s\n", i, row.config.CreatedAt.UTC().Format(time.RFC3339), row.config.Name, row.config.ID)
+					_, _ = fmt.Fprintf(out, "  @%d %s physical=%s id=%s\n", i, row.config.CreatedAt.UTC().Format(time.RFC3339), row.config.Name, row.config.ID)
 				}
 				if limit > 0 && len(group.rows) > limit {
-					fmt.Fprintf(out, "  ... %d more\n", len(group.rows)-limit)
+					_, _ = fmt.Fprintf(out, "  ... %d more\n", len(group.rows)-limit)
 				}
 			}
 			return nil
@@ -137,11 +145,19 @@ func newDiffConfigCompareCmd() *cobra.Command {
 			if contextLines < 0 {
 				return fmt.Errorf("--context must be >= 0")
 			}
+			deployment, err := singleSelector("deployment", opts.Deployments)
+			if err != nil {
+				return err
+			}
+			partition, err := singleSelector("partition", opts.Partitions)
+			if err != nil {
+				return err
+			}
 			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
 				ConfigPath: opts.ConfigPath,
-				Deployment: opts.Deployment,
+				Deployment: deployment,
 				Context:    opts.Context,
-				Partition:  opts.Partition,
+				Partition:  partition,
 				Offline:    opts.Offline,
 				Debug:      opts.Debug,
 			}, false, false)
@@ -187,26 +203,26 @@ func newDiffConfigCompareCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintln(out, "config compare OK")
+			_, _ = fmt.Fprintln(out, "config compare OK")
 			if left.id.Key() == right.id.Key() {
-				fmt.Fprintf(out, "scope: %s\n", formatScopeLabel(left.id))
-				fmt.Fprintf(out, "name: %q\n", left.id.Name)
+				_, _ = fmt.Fprintf(out, "scope: %s\n", formatScopeLabel(left.id))
+				_, _ = fmt.Fprintf(out, "name: %q\n", left.id.Name)
 			} else {
-				fmt.Fprintf(out, "left scope: %s\n", formatScopeLabel(left.id))
-				fmt.Fprintf(out, "right scope: %s\n", formatScopeLabel(right.id))
+				_, _ = fmt.Fprintf(out, "left scope: %s\n", formatScopeLabel(left.id))
+				_, _ = fmt.Fprintf(out, "right scope: %s\n", formatScopeLabel(right.id))
 				if left.id.Name == right.id.Name {
-					fmt.Fprintf(out, "name: %q\n", left.id.Name)
+					_, _ = fmt.Fprintf(out, "name: %q\n", left.id.Name)
 				} else {
-					fmt.Fprintf(out, "left name: %q\n", left.id.Name)
-					fmt.Fprintf(out, "right name: %q\n", right.id.Name)
+					_, _ = fmt.Fprintf(out, "left name: %q\n", left.id.Name)
+					_, _ = fmt.Fprintf(out, "right name: %q\n", right.id.Name)
 				}
 			}
 			leftAge, rightAge := relativeAgeLabels(left.config.CreatedAt, right.config.CreatedAt)
-			fmt.Fprintf(out, "left: %s %s (%s) %s\n", left.config.Name, left.config.CreatedAt.UTC().Format(time.RFC3339), leftSel, leftAge)
-			fmt.Fprintf(out, "right: %s %s (%s) %s\n", right.config.Name, right.config.CreatedAt.UTC().Format(time.RFC3339), rightSel, rightAge)
-			fmt.Fprintln(out, "diff:")
+			_, _ = fmt.Fprintf(out, "left: %s %s (%s) %s\n", left.config.Name, left.config.CreatedAt.UTC().Format(time.RFC3339), leftSel, leftAge)
+			_, _ = fmt.Fprintf(out, "right: %s %s (%s) %s\n", right.config.Name, right.config.CreatedAt.UTC().Format(time.RFC3339), rightSel, rightAge)
+			_, _ = fmt.Fprintln(out, "diff:")
 			for _, line := range diff {
-				fmt.Fprintf(out, "  %s\n", renderDiffLine(line, color))
+				_, _ = fmt.Fprintf(out, "  %s\n", renderDiffLine(line, color))
 			}
 			return nil
 		},

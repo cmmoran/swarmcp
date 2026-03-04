@@ -110,7 +110,7 @@ type composeVolume struct {
 	DriverOpts map[string]string `yaml:"driver_opts,omitempty"`
 }
 
-func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, partitionFilter string, filter map[string]struct{}, creates []ServiceCreate, updates []ServiceUpdate, infer bool) ([]StackDeploy, error) {
+func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, partitionFilters []string, stackFilters []string, filter map[string]struct{}, creates []ServiceCreate, updates []ServiceUpdate, infer bool) ([]StackDeploy, error) {
 	index := buildDefIndex(desired.Defs)
 	var deploys []StackDeploy
 	changes := map[string]struct {
@@ -135,9 +135,12 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 	}
 
 	for stackName, stack := range cfg.Stacks {
+		if len(stackFilters) > 0 && !selectorContains(stackFilters, stackName) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 		}
 		for _, partitionName := range partitions {
 			services, err := cfg.StackServices(stackName, partitionName)
@@ -247,7 +250,16 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 	return deploys, nil
 }
 
-func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string, pruneServices bool, parallel int, noUI bool) error {
+func ValidateDeployOutputMode(mode string) error {
+	switch normalizeDeployOutputMode(mode) {
+	case "", "auto", "summary", "stack", "error-only":
+		return nil
+	default:
+		return fmt.Errorf("invalid --output %q (expected auto|summary|stack|error-only)", mode)
+	}
+}
+
+func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string, pruneServices bool, parallel int, noUI bool, outputMode string, outputExplicit bool) error {
 	if len(stacks) == 0 {
 		return nil
 	}
@@ -258,16 +270,31 @@ func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string,
 		}
 	}
 
+	mode := resolveDeployOutputMode(outputMode, noUI, outputExplicit)
+
 	var once sync.Once
 	var firstErr error
 	sem := make(chan struct{}, parallel)
 	wg := sync.WaitGroup{}
-	outputs := make(map[string]*bytes.Buffer, len(stacks))
+	outputs := make(map[string]string, len(stacks))
+	failed := make(map[string]struct{}, len(stacks))
+	outputsMu := sync.Mutex{}
 	statuses := make(map[string]string, len(stacks))
 	for _, deploy := range stacks {
 		statuses[deploy.Name] = "queued"
 	}
-	uiEnabled := !noUI && stdoutIsTTY()
+	uiEnabled := mode == "ui"
+	countMu := sync.Mutex{}
+	queuedCount := len(stacks)
+	runningCount := 0
+	doneCount := 0
+	failedCount := 0
+	startedAt := time.Now()
+
+	if mode == "summary" {
+		_, _ = fmt.Fprintf(os.Stdout, "deploy start: stacks=%d parallel=%d\n", len(stacks), parallel)
+	}
+
 	var ui *stackUI
 	if uiEnabled {
 		ui = newStackUI(os.Stdout, statuses)
@@ -289,6 +316,29 @@ func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string,
 			}
 		}()
 	}
+	var heartbeatDone chan struct{}
+	if mode == "error-only" {
+		heartbeatDone = make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					countMu.Lock()
+					q := queuedCount
+					r := runningCount
+					d := doneCount
+					f := failedCount
+					countMu.Unlock()
+					_, _ = fmt.Fprintf(os.Stdout, "deploy in progress: queued=%d running=%d done=%d failed=%d elapsed=%s\n", q, r, d, f, formatDuration(time.Since(startedAt)))
+				case <-heartbeatDone:
+					return
+				}
+			}
+		}()
+	}
+
 	printMutex := sync.Mutex{}
 	trackError := func(name string, err error) {
 		once.Do(func() { firstErr = fmt.Errorf("stack deploy %q: %w", name, err) })
@@ -305,15 +355,25 @@ func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string,
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			countMu.Lock()
+			queuedCount--
+			runningCount++
+			countMu.Unlock()
+			deployStarted := time.Now()
+
 			if uiEnabled {
 				ui.Update(deploy.Name, "running")
 			}
 			path, err := writeStackCompose(deploy)
 			if err != nil {
+				countMu.Lock()
+				runningCount--
+				failedCount++
+				countMu.Unlock()
 				trackError(deploy.Name, err)
 				return
 			}
-			defer os.Remove(path)
+			defer func() { _ = os.Remove(path) }()
 
 			args := []string{"stack", "deploy", "--with-registry-auth", "--detach=false"}
 			if pruneServices {
@@ -328,42 +388,97 @@ func DeployStacks(ctx context.Context, stacks []StackDeploy, contextName string,
 			cmd.Stdout = &buf
 			cmd.Stderr = &buf
 			if err := cmd.Run(); err != nil {
-				outputs[deploy.Name] = &buf
+				output := strings.TrimRight(buf.String(), "\n")
+				outputsMu.Lock()
+				outputs[deploy.Name] = output
+				failed[deploy.Name] = struct{}{}
+				outputsMu.Unlock()
+				countMu.Lock()
+				runningCount--
+				failedCount++
+				countMu.Unlock()
 				trackError(deploy.Name, err)
+				if mode == "summary" {
+					printMutex.Lock()
+					_, _ = fmt.Fprintf(os.Stdout, "stack %s: failed %s\n", deploy.Name, formatDuration(time.Since(deployStarted)))
+					printMutex.Unlock()
+				}
 				return
 			}
-			outputs[deploy.Name] = &buf
+			output := strings.TrimRight(buf.String(), "\n")
+			outputsMu.Lock()
+			outputs[deploy.Name] = output
+			outputsMu.Unlock()
+			countMu.Lock()
+			runningCount--
+			doneCount++
+			countMu.Unlock()
 			if uiEnabled {
 				ui.Update(deploy.Name, "done")
-			} else {
+			} else if mode == "stack" {
 				printMutex.Lock()
-				if buf.Len() > 0 {
-					fmt.Fprintf(os.Stdout, "stack %s output:\n%s\n", deploy.Name, strings.TrimRight(buf.String(), "\n"))
+				if output != "" {
+					_, _ = fmt.Fprintf(os.Stdout, "stack %s output:\n%s\n", deploy.Name, output)
 				}
+				printMutex.Unlock()
+			} else if mode == "summary" {
+				printMutex.Lock()
+				_, _ = fmt.Fprintf(os.Stdout, "stack %s: ok %s\n", deploy.Name, formatDuration(time.Since(deployStarted)))
 				printMutex.Unlock()
 			}
 		}()
 	}
 
 	wg.Wait()
+	if heartbeatDone != nil {
+		close(heartbeatDone)
+	}
 	if uiEnabled {
 		close(uiDone)
 		ui.Render()
 	}
-	if firstErr != nil && !uiEnabled {
-		return firstErr
+	if mode == "summary" || mode == "error-only" {
+		countMu.Lock()
+		d := doneCount
+		f := failedCount
+		countMu.Unlock()
+		_, _ = fmt.Fprintf(os.Stdout, "deploy complete: ok=%d failed=%d total=%d duration=%s\n", d, f, len(stacks), formatDuration(time.Since(startedAt)))
 	}
 	if firstErr != nil {
 		for _, deploy := range stacks {
-			buf := outputs[deploy.Name]
-			if buf == nil || buf.Len() == 0 {
+			if _, ok := failed[deploy.Name]; !ok {
 				continue
 			}
-			fmt.Fprintf(os.Stdout, "stack %s output:\n%s\n", deploy.Name, strings.TrimRight(buf.String(), "\n"))
+			output := outputs[deploy.Name]
+			if output == "" {
+				continue
+			}
+			_, _ = fmt.Fprintf(os.Stdout, "stack %s output:\n%s\n", deploy.Name, output)
 		}
 		return firstErr
 	}
 	return nil
+}
+
+func resolveDeployOutputMode(mode string, noUI bool, outputExplicit bool) string {
+	normalized := normalizeDeployOutputMode(mode)
+	if normalized == "" || normalized == "auto" {
+		if outputExplicit {
+			return "summary"
+		}
+		if noUI {
+			return "stack"
+		}
+		if stdoutIsTTY() {
+			return "ui"
+		}
+		return "summary"
+	}
+	return normalized
+}
+
+func normalizeDeployOutputMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
 }
 
 type stackUI struct {
@@ -419,7 +534,7 @@ func (ui *stackUI) renderLocked() {
 		return
 	}
 	if ui.inited {
-		fmt.Fprintf(ui.out, "\x1b[%dA", lines)
+		_, _ = fmt.Fprintf(ui.out, "\x1b[%dA", lines)
 	} else {
 		ui.inited = true
 	}
@@ -429,7 +544,7 @@ func (ui *stackUI) renderLocked() {
 		if elapsed != "" {
 			elapsed = " " + elapsed
 		}
-		fmt.Fprintf(ui.out, "\x1b[2K[%s] %s%s\n", status, name, elapsed)
+		_, _ = fmt.Fprintf(ui.out, "\x1b[2K[%s] %s%s\n", status, name, elapsed)
 	}
 }
 
@@ -481,7 +596,7 @@ func writeStackCompose(deploy StackDeploy) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := file.Write(deploy.Compose); err != nil {
 		return "", err
 	}

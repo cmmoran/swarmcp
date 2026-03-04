@@ -55,7 +55,11 @@ func WriteAutoNodeLabels(opts AutoLabelWriteOptions) (AutoLabelWriteResult, erro
 		return result, fmt.Errorf("config %q: empty document", opts.ConfigPath)
 	}
 
-	required := RequiredVolumes(opts.Config, opts.PartitionFilter)
+	var partitionFilters []string
+	if strings.TrimSpace(opts.PartitionFilter) != "" {
+		partitionFilters = []string{strings.TrimSpace(opts.PartitionFilter)}
+	}
+	required := RequiredVolumes(opts.Config, partitionFilters, nil)
 	execKnown := len(required) > 0
 
 	var notes []string

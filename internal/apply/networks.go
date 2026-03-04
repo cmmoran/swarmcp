@@ -10,8 +10,8 @@ import (
 	"github.com/cmmoran/swarmcp/internal/swarm"
 )
 
-func buildDesiredNetworks(cfg *config.Config, partitionFilter string) []swarm.NetworkSpec {
-	serviceNetworks := collectServiceNetworks(cfg, partitionFilter)
+func buildDesiredNetworks(cfg *config.Config, partitionFilters []string, stackFilters []string) []swarm.NetworkSpec {
+	serviceNetworks := collectServiceNetworks(cfg, partitionFilters, stackFilters)
 	if len(serviceNetworks) == 0 {
 		return nil
 	}
@@ -37,12 +37,15 @@ func buildDesiredNetworks(cfg *config.Config, partitionFilter string) []swarm.Ne
 	return out
 }
 
-func collectServiceNetworks(cfg *config.Config, partitionFilter string) map[string]struct{} {
+func collectServiceNetworks(cfg *config.Config, partitionFilters []string, stackFilters []string) map[string]struct{} {
 	out := make(map[string]struct{})
 	for stackName, stack := range cfg.Stacks {
+		if len(stackFilters) > 0 && !selectorContains(stackFilters, stackName) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartition(cfg.Project.Partitions, partitionFilter)
+			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
 		}
 		for _, partitionName := range partitions {
 			services, err := cfg.StackServices(stackName, partitionName)
@@ -60,6 +63,15 @@ func collectServiceNetworks(cfg *config.Config, partitionFilter string) map[stri
 		}
 	}
 	return out
+}
+
+func selectorContains(filters []string, value string) bool {
+	for _, filter := range filters {
+		if filter == value {
+			return true
+		}
+	}
+	return false
 }
 
 func desiredServiceExternalNetworks(cfg *config.Config, stackName string, stackMode string, partitionName string, serviceName string, service config.Service) []string {

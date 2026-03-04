@@ -10,7 +10,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintln(cmd.OutOrStdout(), Version)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), Version)
 		return nil
 	},
 }

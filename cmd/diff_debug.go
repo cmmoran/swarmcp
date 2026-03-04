@@ -33,7 +33,7 @@ type defIdentity struct {
 }
 
 func printDiffDebug(out io.Writer, ctx context.Context, client swarm.Client, report apply.StatusReport, changedServices, missingServices []apply.ServiceState, opts diffDebugOptions) error {
-	fmt.Fprintln(out, "debug:")
+	_, _ = fmt.Fprintln(out, "debug:")
 	printDiffDebugSummary(out, report, changedServices, missingServices)
 	if !opts.DebugContent {
 		return nil
@@ -53,31 +53,31 @@ func printDiffDebugSummary(out io.Writer, report apply.StatusReport, changedServ
 		len(missingServices) > 0 ||
 		len(unmanagedServiceStates(report.Services)) > 0
 	if !hasItems {
-		fmt.Fprintln(out, "  (no diff items)")
+		_, _ = fmt.Fprintln(out, "  (no diff items)")
 		return
 	}
 	if len(report.MissingConfigs) > 0 || len(report.StaleConfigs) > 0 || len(report.DriftConfigs) > 0 {
-		fmt.Fprintln(out, "  configs:")
+		_, _ = fmt.Fprintln(out, "  configs:")
 		for _, cfg := range report.MissingConfigs {
-			fmt.Fprintf(out, "    - %s reason=missing fields=presence\n", formatDefIdentity("config", cfg.Name, cfg.Labels))
+			_, _ = fmt.Fprintf(out, "    - %s reason=missing fields=presence\n", formatDefIdentity("config", cfg.Name, cfg.Labels))
 		}
 		for _, cfg := range report.StaleConfigs {
-			fmt.Fprintf(out, "    - %s reason=stale fields=presence\n", formatDefIdentity("config", cfg.Name, cfg.Labels))
+			_, _ = fmt.Fprintf(out, "    - %s reason=stale fields=presence\n", formatDefIdentity("config", cfg.Name, cfg.Labels))
 		}
 		for _, item := range report.DriftConfigs {
-			fmt.Fprintf(out, "    - %s reason=label drift fields=labels detail=%s\n", formatDefIdentity("config", item.Name, item.Labels), item.Reason)
+			_, _ = fmt.Fprintf(out, "    - %s reason=label drift fields=labels detail=%s\n", formatDefIdentity("config", item.Name, item.Labels), item.Reason)
 		}
 	}
 	if len(report.MissingSecrets) > 0 || len(report.StaleSecrets) > 0 || len(report.DriftSecrets) > 0 {
-		fmt.Fprintln(out, "  secrets:")
+		_, _ = fmt.Fprintln(out, "  secrets:")
 		for _, sec := range report.MissingSecrets {
-			fmt.Fprintf(out, "    - %s reason=missing fields=presence\n", formatDefIdentity("secret", sec.Name, sec.Labels))
+			_, _ = fmt.Fprintf(out, "    - %s reason=missing fields=presence\n", formatDefIdentity("secret", sec.Name, sec.Labels))
 		}
 		for _, sec := range report.StaleSecrets {
-			fmt.Fprintf(out, "    - %s reason=stale fields=presence\n", formatDefIdentity("secret", sec.Name, sec.Labels))
+			_, _ = fmt.Fprintf(out, "    - %s reason=stale fields=presence\n", formatDefIdentity("secret", sec.Name, sec.Labels))
 		}
 		for _, item := range report.DriftSecrets {
-			fmt.Fprintf(out, "    - %s reason=label drift fields=labels detail=%s\n", formatDefIdentity("secret", item.Name, item.Labels), item.Reason)
+			_, _ = fmt.Fprintf(out, "    - %s reason=label drift fields=labels detail=%s\n", formatDefIdentity("secret", item.Name, item.Labels), item.Reason)
 		}
 	}
 	if len(report.MissingNetworks) > 0 {
@@ -86,24 +86,24 @@ func printDiffDebugSummary(out io.Writer, report apply.StatusReport, changedServ
 			names = append(names, net.Name)
 		}
 		sort.Strings(names)
-		fmt.Fprintln(out, "  networks:")
+		_, _ = fmt.Fprintln(out, "  networks:")
 		for _, name := range names {
-			fmt.Fprintf(out, "    - %s reason=missing fields=presence\n", name)
+			_, _ = fmt.Fprintf(out, "    - %s reason=missing fields=presence\n", name)
 		}
 	}
 	if len(changedServices) > 0 || len(missingServices) > 0 || len(unmanagedServiceStates(report.Services)) > 0 {
-		fmt.Fprintln(out, "  services:")
+		_, _ = fmt.Fprintln(out, "  services:")
 		for _, state := range changedServices {
 			scope := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
 			fields := "none"
 			if len(state.IntentDiffs) > 0 {
 				fields = strings.Join(state.IntentDiffs, ", ")
 			}
-			fmt.Fprintf(out, "    - %s reason=intent drift fields=%s\n", scope, fields)
+			_, _ = fmt.Fprintf(out, "    - %s reason=intent drift fields=%s\n", scope, fields)
 		}
 		for _, state := range missingServices {
 			scope := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
-			fmt.Fprintf(out, "    - %s reason=missing fields=presence\n", scope)
+			_, _ = fmt.Fprintf(out, "    - %s reason=missing fields=presence\n", scope)
 		}
 		for _, state := range unmanagedServiceStates(report.Services) {
 			scope := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
@@ -111,13 +111,13 @@ func printDiffDebugSummary(out io.Writer, report apply.StatusReport, changedServ
 			if len(state.Unmanaged) > 0 {
 				fields = strings.Join(state.Unmanaged, ", ")
 			}
-			fmt.Fprintf(out, "    - %s reason=unmanaged drift fields=%s\n", scope, fields)
+			_, _ = fmt.Fprintf(out, "    - %s reason=unmanaged drift fields=%s\n", scope, fields)
 		}
 	}
 }
 
 func printDiffDebugContent(out io.Writer, ctx context.Context, client swarm.Client, report apply.StatusReport, changedServices []apply.ServiceState, maxContent int) error {
-	fmt.Fprintln(out, "debug content:")
+	_, _ = fmt.Fprintln(out, "debug content:")
 	if err := printConfigContentDiffs(out, ctx, client, report.MissingConfigs, report.StaleConfigs, maxContent); err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func printConfigContentDiffs(out io.Writer, ctx context.Context, client swarm.Cl
 	if len(keys) == 0 {
 		return nil
 	}
-	fmt.Fprintln(out, "  configs:")
+	_, _ = fmt.Fprintln(out, "  configs:")
 	for _, key := range keys {
 		desiredItem, hasDesired := desiredByKey[key]
 		staleItem, hasStale := staleByKey[key]
@@ -176,9 +176,9 @@ func printConfigContentDiffs(out io.Writer, ctx context.Context, client swarm.Cl
 		case hasStale && !hasDesired:
 			reason = "removed config"
 		}
-		fmt.Fprintf(out, "    - %s reason=%s\n", formatDefIdentity("config", label.Physical, label.Labels), reason)
+		_, _ = fmt.Fprintf(out, "    - %s reason=%s\n", formatDefIdentity("config", label.Physical, label.Labels), reason)
 		if hasStale && staleItem.Err != nil {
-			fmt.Fprintf(out, "      diff error: %v\n", staleItem.Err)
+			_, _ = fmt.Fprintf(out, "      diff error: %v\n", staleItem.Err)
 			continue
 		}
 		before := ""
@@ -193,11 +193,11 @@ func printConfigContentDiffs(out io.Writer, ctx context.Context, client swarm.Cl
 		after = cmdutil.TruncateContent(after, maxContent)
 		diff, err := semanticDiffLines(before, after)
 		if err != nil {
-			fmt.Fprintf(out, "      diff error: %v\n", err)
+			_, _ = fmt.Fprintf(out, "      diff error: %v\n", err)
 			continue
 		}
 		for _, line := range diff {
-			fmt.Fprintf(out, "      %s\n", line)
+			_, _ = fmt.Fprintf(out, "      %s\n", line)
 		}
 	}
 	return nil
@@ -218,7 +218,7 @@ func printSecretContentChanges(out io.Writer, missing []swarm.SecretSpec, stale 
 	if len(keys) == 0 {
 		return
 	}
-	fmt.Fprintln(out, "  secrets:")
+	_, _ = fmt.Fprintln(out, "  secrets:")
 	for _, key := range keys {
 		desiredItem, hasDesired := desiredByKey[key]
 		staleItem, hasStale := staleByKey[key]
@@ -233,7 +233,7 @@ func printSecretContentChanges(out io.Writer, missing []swarm.SecretSpec, stale 
 		case hasStale && !hasDesired:
 			reason = "removed secret"
 		}
-		fmt.Fprintf(out, "    - %s reason=%s content=hidden\n", formatDefIdentity("secret", label.Physical, label.Labels), reason)
+		_, _ = fmt.Fprintf(out, "    - %s reason=%s content=hidden\n", formatDefIdentity("secret", label.Physical, label.Labels), reason)
 	}
 }
 
@@ -241,13 +241,13 @@ func printServiceContentDiffs(out io.Writer, states []apply.ServiceState) {
 	if len(states) == 0 {
 		return
 	}
-	fmt.Fprintln(out, "  services:")
+	_, _ = fmt.Fprintln(out, "  services:")
 	for _, state := range states {
 		if state.IntentCurrent == nil || state.IntentDesired == nil {
 			continue
 		}
 		scope := cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service)
-		fmt.Fprintf(out, "    - %s\n", scope)
+		_, _ = fmt.Fprintf(out, "    - %s\n", scope)
 		diffSet := make(map[string]struct{}, len(state.IntentDiffs))
 		for _, diff := range state.IntentDiffs {
 			diffSet[diff] = struct{}{}
@@ -275,12 +275,12 @@ func printValueDiff(out io.Writer, label string, before, after any) {
 	afterText := formatStructuredValue(after)
 	diff, err := diffLinesText(beforeText, afterText)
 	if err != nil {
-		fmt.Fprintf(out, "      %s diff error: %v\n", label, err)
+		_, _ = fmt.Fprintf(out, "      %s diff error: %v\n", label, err)
 		return
 	}
-	fmt.Fprintf(out, "      %s:\n", label)
+	_, _ = fmt.Fprintf(out, "      %s:\n", label)
 	for _, line := range diff {
-		fmt.Fprintf(out, "        %s\n", line)
+		_, _ = fmt.Fprintf(out, "        %s\n", line)
 	}
 }
 

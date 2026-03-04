@@ -17,6 +17,7 @@ type ProjectOptions struct {
 	Deployment    string
 	Context       string
 	Partition     string
+	Stack         string
 	Offline       bool
 	Debug         bool
 	ClientFactory func(string) (swarm.Client, error)
@@ -25,6 +26,7 @@ type ProjectOptions struct {
 type ProjectContext struct {
 	Config        *config.Config
 	Partition     string
+	Stack         string
 	Values        any
 	Secrets       *secrets.Store
 	ContextName   string
@@ -49,6 +51,10 @@ func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets 
 	if partition != "" && !PartitionInProject(cfg, partition) {
 		return nil, fmt.Errorf("partition %q not found in project.partitions", partition)
 	}
+	stack := opts.Stack
+	if stack != "" && !StackInProject(cfg, stack) {
+		return nil, fmt.Errorf("stack %q not found in stacks", stack)
+	}
 
 	contextName := ResolveContext(cfg, opts.Context)
 	ConfigureTemplateNetworkResolver(contextName)
@@ -56,6 +62,7 @@ func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets 
 	ctx := &ProjectContext{
 		Config:      cfg,
 		Partition:   partition,
+		Stack:       stack,
 		ContextName: contextName,
 		ValuesScope: templates.Scope{
 			Project:        cfg.Project.Name,

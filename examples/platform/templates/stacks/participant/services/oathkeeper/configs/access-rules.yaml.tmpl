@@ -1,0 +1,270 @@
+{{ $phost := printf "https://p.%s.%s" (runtime_value "{partition}") (config_value "public_domain") -}}
+{{ $ihost := printf "https://p.%s.%s" (runtime_value "{partition}") (config_value "internal_domain") -}}
+{{ $task := printf "%s" (runtime_value "http://tasks.{project}_{partition}_{stack}_participant:8080") -}}
+### Internal facing
+- id: "participant-internal:v1:well-known"
+  upstream:
+    preserve_host: true
+    url: "{{ $task }}"
+  match:
+    url: "{{ $ihost }}<<(?:/.well-known/.*)>>"
+    methods:
+      - GET
+  authenticators:
+    - handler: noop
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant-internal:v1:public"
+  upstream:
+    preserve_host: true
+    url: "{{ $task }}"
+  match:
+    url: "{{ $ihost }}/api/v1<<(?:/ping)|(?:/swagger.*)|(?:/openapi.*)|(?:/build)>>"
+    methods:
+      - GET
+  authenticators:
+    - handler: noop
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant-internal:v1:public:health"
+  upstream:
+    preserve_host: true
+    url: "{{ $task }}"
+  match:
+    url: "{{ $ihost }}/api/v1/health"
+    methods:
+      - GET
+  authenticators:
+    - handler: http_message_signing_pre9421
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant-internal:v1:read:agency-root"
+  upstream:
+    preserve_host: true
+    url: "{{ $task }}"
+  match:
+    url: "{{ $ihost }}/api/v1<</agencies/(?<agency_id>[^/]+?)(?:(?:/assignments)?(?:/devices(?:/(?<device_id>[^/]+?))?)?|/participants(?:/(?<participant_id>[^/]+?))?)$>>"
+    methods:
+      - GET
+      - LIST
+  authenticators:
+    - handler: jwt
+    - handler: oauth2_introspection
+      config:
+        required_scope:
+          - assignment.*
+          - device.*
+          - participant.*
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant-internal:v1:write:no-agency-root-root_no-participant-id-provisioning"
+  upstream:
+    preserve_host: true
+    url: "{{ $task }}"
+  match:
+    url: "{{ $ihost }}/api/v1<</provisioning$>>"
+    methods:
+      - POST
+      - DELETE
+  authenticators:
+    - handler: jwt
+    - handler: oauth2_introspection
+      config:
+        required_scope:
+          - participant.admin
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant-internal:v1:write:no-agency-provisioning"
+  upstream:
+    preserve_host: true
+    url: "{{ $task }}"
+  match:
+    url: "{{ $ihost }}/api/v1<</participants(?:/(?<participant_id>[^/]+?))/provisioning$>>"
+    methods:
+      - POST
+      - DELETE
+  authenticators:
+    - handler: jwt
+    - handler: oauth2_introspection
+      config:
+        required_scope:
+          - participant.write
+          - participant.post
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant-internal:v1:write:provisioning"
+  upstream:
+    preserve_host: true
+    url: "{{ $task }}"
+  match:
+    url: "{{ $ihost }}/api/v1<</agencies/(?<agency_id>[^/]+?)/participants/(?<participant_id>[^/]+?)/provisioning$>>"
+    methods:
+      - POST
+      - DELETE
+  authenticators:
+    - handler: jwt
+    - handler: oauth2_introspection
+      config:
+        required_scope:
+          - participant.write
+          - participant.post
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant-internal:v1:read:no-agency-root"
+  upstream:
+    preserve_host: true
+    url: "{{ $task }}"
+  match:
+    url: "{{ $ihost }}/api/v1<<(?:(?:/assignments)?(?:/devices(?:/(?<device_id>[^/]+?))?)?|/participants(?:/(?<participant_id>[^/]+?))?)$>>"
+    methods:
+      - GET
+      - LIST
+  authenticators:
+    - handler: jwt
+    - handler: oauth2_introspection
+      config:
+        required_scope:
+          - assignment.*
+          - device.*
+          - participant.*
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+### External facing
+- id: "participant:v1:well-known"
+  upstream:
+    preserve_host: false
+    url: "{{ $ihost }}"
+  match:
+    url: "{{ $phost }}<<(?:/.well-known/.*)>>"
+    methods:
+      - GET
+  authenticators:
+    - handler: noop
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant:v1:public"
+  upstream:
+    preserve_host: false
+    url: "{{ $ihost }}"
+  match:
+    url: "{{ $phost }}/api/v1<<(?:/ping)|(?:/swagger.*)|(?:/openapi.*)>>"
+    methods:
+      - GET
+  authenticators:
+    - handler: noop
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant:v1:public:health"
+  upstream:
+    preserve_host: false
+    url: "{{ $ihost }}"
+  match:
+    url: "{{ $phost }}/api/v1/health"
+    methods:
+      - GET
+  authenticators:
+    - handler: http_message_signing_pre9421
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant:v1:read:agency-root"
+  upstream:
+    preserve_host: false
+    url: "{{ $ihost }}"
+  match:
+    url: "{{ $phost }}/api/v1<</agencies/(?<agency_id>[^/]+?)(?:(?:/assignments)?(?:/devices(?:/(?<device_id>[^/]+?))?)?|/participants(?:/(?<participant_id>[^/]+?))?)$>>"
+    methods:
+      - GET
+      - LIST
+  authenticators:
+    - handler: jwt
+    - handler: oauth2_introspection
+      config:
+        required_scope:
+          - assignment.*
+          - device.*
+          - participant.*
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json
+
+- id: "participant:v1:read:no-agency-root"
+  upstream:
+    preserve_host: false
+    url: "{{ $ihost }}"
+  match:
+    url: "{{ $phost }}/api/v1<<(?:(?:/assignments)?(?:/devices(?:/(?<device_id>[^/]+?))?)?|/participants(?:/(?<participant_id>[^/]+?))?)$>>"
+    methods:
+      - GET
+      - LIST
+  authenticators:
+    - handler: jwt
+    - handler: oauth2_introspection
+      config:
+        required_scope:
+          - assignment.*
+          - device.*
+          - participant.*
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+  errors:
+    - handler: json

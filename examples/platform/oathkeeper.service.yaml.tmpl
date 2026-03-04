@@ -1,0 +1,29 @@
+image: {{ config_value "oathkeeper_image" }}
+egress: true
+replicas: 1
+labels:
+  traefik.enable: "true"
+  traefik.swarm.network: {{ runtime_value "{networks_shared}" }}
+  traefik.http.routers.oathkeeper-{partition}.entrypoints: websecure
+  traefik.http.routers.oathkeeper-{partition}.rule: '{{ printf "Host(`p.%s.%s`)" (runtime_value "{partition}") (config_value "public_domain") }}'
+  traefik.http.routers.oathkeeper-{partition}.tls: "true"
+  traefik.http.routers.oathkeeper-{partition}.service: {{ runtime_value "oathkeeper-{partition}"}}
+  traefik.http.services.oathkeeper-{partition}.loadbalancer.server.port: "4455"
+  traefik.http.routers.oathkeeper-{partition}-internal.entrypoints: websecure
+  traefik.http.routers.oathkeeper-{partition}-internal.rule: '{{ printf "Host(`p.%s.%s`)" (runtime_value "{partition}") (config_value "internal_domain") }}'
+  traefik.http.routers.oathkeeper-{partition}-internal.tls: "true"
+  traefik.http.routers.oathkeeper-{partition}-internal.service: {{ runtime_value "oathkeeper-{partition}"}}
+args:
+  - serve
+  - --disable-telemetry
+  - --sqa-opt-out
+  - proxy
+  - -c
+  - {{ config_ref "oathkeeper_config" }}
+configs:
+  - name: access_rules
+    source: templates/stacks/participant/services/oathkeeper/configs/access-rules.yaml.tmpl
+    target: /etc/oathkeeper/access-rules.yml
+  - name: oathkeeper_config
+    source: templates/stacks/participant/services/oathkeeper/configs/oathkeeper.yaml.tmpl
+    target: /etc/oathkeeper/oathkeeper.yml
