@@ -156,5 +156,6 @@ swarmcp sources diff
 ## Example Layouts
 
 - `examples/nginx`: minimal single-stack example.
+- `examples/local-upgrade-smoke`: minimal local-Swarm smoke test for Docker SDK/daemon upgrade validation.
 - `examples/primary`: primary project with multiple stacks.
 - `examples/primary-imported`: demonstrates stack import and git/local sources.

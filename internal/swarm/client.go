@@ -16,6 +16,7 @@ import (
 	"github.com/cmmoran/swarmcp/internal/fsutil"
 	"github.com/docker/cli/cli/connhelper"
 	"github.com/docker/docker/api/types"
+	networktypes "github.com/docker/docker/api/types/network"
 	dockerapi "github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/client"
 )
@@ -147,7 +148,7 @@ func (c *apiClient) ListServices(ctx context.Context) ([]Service, error) {
 }
 
 func (c *apiClient) ListNetworks(ctx context.Context) ([]Network, error) {
-	networks, err := c.cli.NetworkList(ctx, types.NetworkListOptions{})
+	networks, err := c.cli.NetworkList(ctx, networktypes.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +199,7 @@ func (c *apiClient) ConfigContent(ctx context.Context, id string) ([]byte, error
 }
 
 func (c *apiClient) CreateNetwork(ctx context.Context, spec NetworkSpec) (string, error) {
-	resp, err := c.cli.NetworkCreate(ctx, spec.Name, types.NetworkCreate{
+	resp, err := c.cli.NetworkCreate(ctx, spec.Name, networktypes.CreateOptions{
 		Driver:     spec.Driver,
 		Attachable: spec.Attachable,
 		Internal:   spec.Internal,
