@@ -72,6 +72,6 @@ tasks:
 
   # Build the CI helper container image used by pipeline jobs.
   ci-image:
-    desc: "Build the swarmcp CI runner image (default tag: chrismoran/swarmcp:{{.VERSION}}; override CI_IMAGE to change tag)"
+    desc: "Build+push the swarmcp CI runner image using Docker context default (default tag: chrismoran/swarmcp:{{.VERSION}}; override CI_IMAGE to change tag)"
     cmds:
-      - docker build -f contrib/ci/swarmcp-runner/Dockerfile -t {{.CI_IMAGE}} --build-arg VERSION={{.VERSION}} .
+      - docker --context default buildx build --push -f contrib/ci/swarmcp-runner/Dockerfile -t {{.CI_IMAGE}} --build-arg VERSION={{.VERSION}} .
