@@ -112,9 +112,6 @@ func minimalConfig() *config.Config {
 }
 
 func policyConfig() *config.Config {
-	condition := "on-failure"
-	delay := "0s"
-	maxAttempts := 0
 	updateDelay := "0s"
 	failureAction := "pause"
 	parallelism := 0
@@ -130,9 +127,9 @@ func policyConfig() *config.Config {
 					"web": {
 						Image: "nginx:latest",
 						RestartPolicy: &config.RestartPolicy{
-							Condition:   &condition,
-							Delay:       &delay,
-							MaxAttempts: &maxAttempts,
+							Condition:   new("on-failure"),
+							Delay:       new("0s"),
+							MaxAttempts: new(0),
 						},
 						UpdateConfig: &config.UpdatePolicy{
 							Parallelism:     &parallelism,

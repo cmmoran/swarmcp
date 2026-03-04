@@ -210,11 +210,11 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 				}
 				compose.Services[serviceName] = composeService
 
-				for _, mount := range configMounts {
-					configs[mount.Name] = composeExternal{External: true, Name: mount.Name}
+				for _, configMount := range configMounts {
+					configs[configMount.Name] = composeExternal{External: true, Name: configMount.Name}
 				}
-				for _, mount := range secretMounts {
-					secrets[mount.Name] = composeExternal{External: true, Name: mount.Name}
+				for _, secretMount := range secretMounts {
+					secrets[secretMount.Name] = composeExternal{External: true, Name: secretMount.Name}
 				}
 				for _, name := range externalNetworks {
 					networks[name] = composeNetwork{External: true, Name: name}
@@ -637,8 +637,7 @@ func composeDeploySpec(service config.Service, constraints []string, labels map[
 		deploy.RollbackConfig = configSpec
 	}
 	if mode != "global" {
-		replicas := service.Replicas
-		deploy.Replicas = &replicas
+		deploy.Replicas = new(service.Replicas)
 	}
 	if len(constraints) > 0 {
 		deploy.Placement = &composePlacement{Constraints: cloneStrings(constraints)}
@@ -650,7 +649,7 @@ func ephemeralNetworkSettings(spec *config.ServiceNetworkEphemeral) (bool, bool)
 	attachable := true
 	internal := false
 	if spec == nil {
-		return attachable, internal
+		return true, false
 	}
 	if spec.Attachable != nil {
 		attachable = *spec.Attachable
@@ -671,8 +670,7 @@ func composePorts(ports []config.Port) []composePort {
 			Target: port.Target,
 		}
 		if port.Published != 0 {
-			published := port.Published
-			entry.Published = &published
+			entry.Published = new(port.Published)
 		}
 		if port.Protocol != "" {
 			entry.Protocol = port.Protocol
@@ -690,15 +688,15 @@ func composeConfigRefs(mounts []ServiceMount) []composeConfigRef {
 		return nil
 	}
 	out := make([]composeConfigRef, 0, len(mounts))
-	for _, mount := range mounts {
+	for _, serviceMount := range mounts {
 		ref := composeConfigRef{
-			Source: mount.Name,
-			Target: mount.Target,
-			UID:    mount.UID,
-			GID:    mount.GID,
+			Source: serviceMount.Name,
+			Target: serviceMount.Target,
+			UID:    serviceMount.UID,
+			GID:    serviceMount.GID,
 		}
-		if mount.Mode != 0 {
-			ref.Mode = fmt.Sprintf("%#o", mount.Mode)
+		if serviceMount.Mode != 0 {
+			ref.Mode = fmt.Sprintf("%#o", serviceMount.Mode)
 		}
 		out = append(out, ref)
 	}
@@ -710,15 +708,15 @@ func composeSecretRefs(mounts []ServiceMount) []composeSecretRef {
 		return nil
 	}
 	out := make([]composeSecretRef, 0, len(mounts))
-	for _, mount := range mounts {
+	for _, serviceMount := range mounts {
 		ref := composeSecretRef{
-			Source: mount.Name,
-			Target: mount.Target,
-			UID:    mount.UID,
-			GID:    mount.GID,
+			Source: serviceMount.Name,
+			Target: serviceMount.Target,
+			UID:    serviceMount.UID,
+			GID:    serviceMount.GID,
 		}
-		if mount.Mode != 0 {
-			ref.Mode = fmt.Sprintf("%#o", mount.Mode)
+		if serviceMount.Mode != 0 {
+			ref.Mode = fmt.Sprintf("%#o", serviceMount.Mode)
 		}
 		out = append(out, ref)
 	}
@@ -730,12 +728,12 @@ func composeMounts(mounts []mount.Mount) []composeMount {
 		return nil
 	}
 	out := make([]composeMount, 0, len(mounts))
-	for _, mount := range mounts {
+	for _, m := range mounts {
 		out = append(out, composeMount{
-			Type:     string(mount.Type),
-			Source:   mount.Source,
-			Target:   mount.Target,
-			ReadOnly: mount.ReadOnly,
+			Type:     string(m.Type),
+			Source:   m.Source,
+			Target:   m.Target,
+			ReadOnly: m.ReadOnly,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

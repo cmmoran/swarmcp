@@ -9,15 +9,11 @@ import (
 )
 
 func TestSwarmRestartPolicy(t *testing.T) {
-	condition := "on-failure"
-	delay := "5s"
-	window := "2m"
-	maxAttempts := 1
 	policy := &config.RestartPolicy{
-		Condition:   &condition,
-		Delay:       &delay,
-		MaxAttempts: &maxAttempts,
-		Window:      &window,
+		Condition:   new("on-failure"),
+		Delay:       new("5s"),
+		MaxAttempts: new(1),
+		Window:      new("2m"),
 	}
 	converted, err := swarmRestartPolicy(policy)
 	if err != nil {

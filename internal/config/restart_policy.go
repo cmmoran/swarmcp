@@ -57,8 +57,7 @@ func MergeRestartPolicies(policies ...*RestartPolicy) *RestartPolicy {
 			}
 		}
 		if policy.MaxAttempts != nil {
-			value := *policy.MaxAttempts
-			out.MaxAttempts = &value
+			out.MaxAttempts = new(*policy.MaxAttempts)
 			set = true
 		}
 		if policy.Window != nil {

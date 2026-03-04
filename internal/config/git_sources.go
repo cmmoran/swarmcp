@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	gitcfg "github.com/go-git/go-git/v5/plumbing/format/config"
@@ -865,15 +865,15 @@ func netrcAuth(ep *transport.Endpoint) (transport.AuthMethod, bool) {
 }
 
 func readNetrc() map[string]netrcEntry {
-	path := os.Getenv("NETRC")
-	if path == "" {
+	netrcPath := os.Getenv("NETRC")
+	if netrcPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil
 		}
-		path = filepath.Join(home, ".netrc")
+		netrcPath = filepath.Join(home, ".netrc")
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(netrcPath)
 	if err != nil {
 		return nil
 	}
@@ -1127,8 +1127,8 @@ func findLocalGitConfig(start string) (string, bool) {
 func loadGitConfigs() []*gitcfg.Config {
 	paths := gitConfigPaths()
 	configs := make([]*gitcfg.Config, 0, len(paths))
-	for _, path := range paths {
-		f, err := os.Open(path)
+	for _, gcfgPath := range paths {
+		f, err := os.Open(gcfgPath)
 		if err != nil {
 			continue
 		}
@@ -1145,8 +1145,8 @@ func loadGitConfigs() []*gitcfg.Config {
 
 func gitConfigPaths() []string {
 	var paths []string
-	if path := os.Getenv("GIT_CONFIG_GLOBAL"); path != "" {
-		paths = append(paths, path)
+	if globalGitConfig := os.Getenv("GIT_CONFIG_GLOBAL"); globalGitConfig != "" {
+		paths = append(paths, globalGitConfig)
 	}
 	home, err := os.UserHomeDir()
 	if err == nil {
@@ -1212,7 +1212,7 @@ func debugf(opts LoadOptions, format string, args ...any) {
 	if !opts.Debug {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "debug: "+format+"\n", args...)
+	_, _ = fmt.Fprintf(os.Stderr, "debug: "+format+"\n", args...)
 }
 
 func sshAuth(ep *transport.Endpoint, opts LoadOptions) (transport.AuthMethod, error) {
@@ -1271,8 +1271,9 @@ func sshAuth(ep *transport.Endpoint, opts LoadOptions) (transport.AuthMethod, er
 		}, nil
 	}
 
-	agentSigners := []ssh.Signer{}
+	agentSigners := make([]ssh.Signer, 0)
 	var agentFingerprints []string
+	//goland:noinspection GoResourceLeak
 	agent, _, err := sshagent.New()
 	if err == nil {
 		agentSigners, _ = agent.Signers()
@@ -1516,8 +1517,7 @@ func applySSHOption(opts *sshCommandOptions, raw string) {
 		if val == "" {
 			return
 		}
-		boolVal := strings.EqualFold(val, "yes") || strings.EqualFold(val, "true") || val == "1"
-		opts.IdentitiesOnly = &boolVal
+		opts.IdentitiesOnly = new(strings.EqualFold(val, "yes") || strings.EqualFold(val, "true") || val == "1")
 	}
 }
 
@@ -1573,8 +1573,8 @@ func writeSourceMetadata(repoDir, url, ref, commit, pathValue, subtree string) e
 	if err := os.MkdirAll(metaDir, 0o755); err != nil {
 		return err
 	}
-	path := filepath.Join(metaDir, hashKey(url+"|"+ref+"|"+pathValue)+".json")
-	return os.WriteFile(path, encoded, 0o644)
+	sourceFilePath := filepath.Join(metaDir, hashKey(url+"|"+ref+"|"+pathValue)+".json")
+	return os.WriteFile(sourceFilePath, encoded, 0o644)
 }
 
 func hashKey(value string) string {

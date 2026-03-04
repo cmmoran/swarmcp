@@ -77,8 +77,7 @@ func composeUpdateConfigSpec(policy *config.UpdatePolicy, name string) (*compose
 		if *policy.Parallelism < 0 {
 			return nil, fmt.Errorf("%s.parallelism: must be >= 0", name)
 		}
-		value := uint64(*policy.Parallelism)
-		out.Parallelism = &value
+		out.Parallelism = new(uint64(*policy.Parallelism))
 	}
 	if policy.Delay != nil {
 		value := strings.TrimSpace(*policy.Delay)
@@ -105,8 +104,7 @@ func composeUpdateConfigSpec(policy *config.UpdatePolicy, name string) (*compose
 		if *policy.MaxFailureRatio < 0 || *policy.MaxFailureRatio > 1 {
 			return nil, fmt.Errorf("%s.max_failure_ratio: must be between 0 and 1", name)
 		}
-		value := *policy.MaxFailureRatio
-		out.MaxFailureRatio = &value
+		out.MaxFailureRatio = new(*policy.MaxFailureRatio)
 	}
 	if policy.Order != nil {
 		value, err := config.NormalizeUpdatePolicyOrder(*policy.Order)
@@ -143,8 +141,7 @@ func cloneUpdateConfig(cfg *dockerapi.UpdateConfig) *dockerapi.UpdateConfig {
 	if cfg == nil {
 		return nil
 	}
-	out := *cfg
-	return &out
+	return new(*cfg)
 }
 
 func updateConfigsEqual(left, right *dockerapi.UpdateConfig) bool {

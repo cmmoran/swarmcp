@@ -59,8 +59,7 @@ func MergeUpdatePolicies(policies ...*UpdatePolicy) *UpdatePolicy {
 			continue
 		}
 		if policy.Parallelism != nil {
-			value := *policy.Parallelism
-			out.Parallelism = &value
+			out.Parallelism = new(*policy.Parallelism)
 			set = true
 		}
 		if policy.Delay != nil {
@@ -85,8 +84,7 @@ func MergeUpdatePolicies(policies ...*UpdatePolicy) *UpdatePolicy {
 			}
 		}
 		if policy.MaxFailureRatio != nil {
-			value := *policy.MaxFailureRatio
-			out.MaxFailureRatio = &value
+			out.MaxFailureRatio = new(*policy.MaxFailureRatio)
 			set = true
 		}
 		if policy.Order != nil {

@@ -39,8 +39,7 @@ func swarmRestartPolicy(policy *config.RestartPolicy) (*dockerapi.RestartPolicy,
 		if *policy.MaxAttempts < 0 {
 			return nil, fmt.Errorf("restart_policy.max_attempts: must be >= 0")
 		}
-		value := uint64(*policy.MaxAttempts)
-		out.MaxAttempts = &value
+		out.MaxAttempts = new(uint64(*policy.MaxAttempts))
 	}
 	if policy.Window != nil {
 		window, err := config.ParseRestartPolicyDuration("window", *policy.Window)
@@ -78,8 +77,7 @@ func composeRestartPolicySpec(policy *config.RestartPolicy) (*composeRestartPoli
 		if *policy.MaxAttempts < 0 {
 			return nil, fmt.Errorf("restart_policy.max_attempts: must be >= 0")
 		}
-		value := uint64(*policy.MaxAttempts)
-		out.MaxAttempts = &value
+		out.MaxAttempts = new(uint64(*policy.MaxAttempts))
 	}
 	if policy.Window != nil {
 		value := strings.TrimSpace(*policy.Window)
@@ -100,16 +98,13 @@ func cloneRestartPolicy(policy *dockerapi.RestartPolicy) *dockerapi.RestartPolic
 	}
 	out := *policy
 	if policy.Delay != nil {
-		delay := *policy.Delay
-		out.Delay = &delay
+		out.Delay = new(*policy.Delay)
 	}
 	if policy.MaxAttempts != nil {
-		value := *policy.MaxAttempts
-		out.MaxAttempts = &value
+		out.MaxAttempts = new(*policy.MaxAttempts)
 	}
 	if policy.Window != nil {
-		window := *policy.Window
-		out.Window = &window
+		out.Window = new(*policy.Window)
 	}
 	return &out
 }

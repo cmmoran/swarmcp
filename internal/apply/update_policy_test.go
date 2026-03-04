@@ -8,19 +8,13 @@ import (
 )
 
 func TestSwarmUpdateConfig(t *testing.T) {
-	parallelism := 2
-	delay := "5s"
-	failureAction := "pause"
-	monitor := "30s"
-	maxFailureRatio := 0.25
-	order := "start-first"
 	policy := &config.UpdatePolicy{
-		Parallelism:     &parallelism,
-		Delay:           &delay,
-		FailureAction:   &failureAction,
-		Monitor:         &monitor,
-		MaxFailureRatio: &maxFailureRatio,
-		Order:           &order,
+		Parallelism:     new(2),
+		Delay:           new("5s"),
+		FailureAction:   new("pause"),
+		Monitor:         new("30s"),
+		MaxFailureRatio: new(0.25),
+		Order:           new("start-first"),
 	}
 	converted, err := swarmUpdateConfig(policy)
 	if err != nil {
