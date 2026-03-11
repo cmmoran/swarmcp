@@ -56,6 +56,12 @@ func newDiffConfigListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List config versions grouped by scope",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			configPaths, err := effectiveProjectConfigPaths()
+			if err != nil {
+				return err
+			}
+			releaseConfigPaths := effectiveReleaseConfigPaths()
+			configPath := configPaths[0]
 			if limit < 0 {
 				return fmt.Errorf("limit must be >= 0")
 			}
@@ -68,12 +74,14 @@ func newDiffConfigListCmd() *cobra.Command {
 				return err
 			}
 			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPath: opts.ConfigPath,
-				Deployment: deployment,
-				Context:    opts.Context,
-				Partition:  partition,
-				Offline:    opts.Offline,
-				Debug:      opts.Debug,
+				ConfigPaths:        configPaths,
+				ReleaseConfigPaths: releaseConfigPaths,
+				ConfigPath:         configPath,
+				Deployment:         deployment,
+				Context:            opts.Context,
+				Partition:          partition,
+				Offline:            opts.Offline,
+				Debug:              opts.Debug,
 			}, false, false)
 			if err != nil {
 				return err
@@ -134,6 +142,12 @@ func newDiffConfigCompareCmd() *cobra.Command {
 		Use:   "compare",
 		Short: "Compare two config versions with pretty diff",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			configPaths, err := effectiveProjectConfigPaths()
+			if err != nil {
+				return err
+			}
+			releaseConfigPaths := effectiveReleaseConfigPaths()
+			configPath := configPaths[0]
 			if strings.TrimSpace(name) == "" {
 				return fmt.Errorf("--name is required")
 			}
@@ -154,12 +168,14 @@ func newDiffConfigCompareCmd() *cobra.Command {
 				return err
 			}
 			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPath: opts.ConfigPath,
-				Deployment: deployment,
-				Context:    opts.Context,
-				Partition:  partition,
-				Offline:    opts.Offline,
-				Debug:      opts.Debug,
+				ConfigPaths:        configPaths,
+				ReleaseConfigPaths: releaseConfigPaths,
+				ConfigPath:         configPath,
+				Deployment:         deployment,
+				Context:            opts.Context,
+				Partition:          partition,
+				Offline:            opts.Offline,
+				Debug:              opts.Debug,
 			}, false, false)
 			if err != nil {
 				return err

@@ -10,11 +10,13 @@ import (
 
 	"github.com/cmmoran/swarmcp/internal/apply"
 	"github.com/cmmoran/swarmcp/internal/cmdutil"
+	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/cmmoran/swarmcp/internal/state"
 	"github.com/cmmoran/swarmcp/internal/swarm"
 	"github.com/cmmoran/swarmcp/internal/templates"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var planProgressEnabled = true
@@ -23,9 +25,20 @@ var planCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Compute desired state and show changes",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		deployments := deploymentTargets(opts.Deployments)
 		partitionFilters := normalizeSelectors(opts.Partitions)
 		stackFilters := normalizeSelectors(opts.Stacks)
+		if opts.DebugConfig {
+			if len(deployments) > 1 || len(partitionFilters) > 1 || len(stackFilters) > 1 {
+				return fmt.Errorf("--debug-config requires a single target; repeated --deployment, --partition, and --stack are not supported")
+			}
+		}
 		progress := newPlanProgressReporter(cmd.ErrOrStderr(), planProgressEnabled)
 		out := cmd.OutOrStdout()
 
@@ -43,13 +56,15 @@ var planCmd = &cobra.Command{
 
 			done := progress.start("load project context")
 			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPath:  opts.ConfigPath,
-				SecretsFile: opts.SecretsFile,
-				ValuesFiles: opts.ValuesFiles,
-				Deployment:  deployment,
-				Context:     opts.Context,
-				Offline:     opts.Offline,
-				Debug:       opts.Debug,
+				ConfigPaths:        configPaths,
+				ReleaseConfigPaths: releaseConfigPaths,
+				ConfigPath:         configPath,
+				SecretsFile:        opts.SecretsFile,
+				ValuesFiles:        opts.ValuesFiles,
+				Deployment:         deployment,
+				Context:            opts.Context,
+				Offline:            opts.Offline,
+				Debug:              opts.Debug,
 			}, true, true)
 			done(err)
 			if err != nil {
@@ -64,6 +79,20 @@ var planCmd = &cobra.Command{
 			for _, stack := range stackFilters {
 				if !cmdutil.StackInProject(cfg, stack) {
 					return fmt.Errorf("stack %q not found in stacks", stack)
+				}
+			}
+			if opts.DebugConfig {
+				resolvedConfig, err := config.DebugResolvedMap(cfg, singleSelectorValue(partitionFilters), stackFilters)
+				if err != nil {
+					return err
+				}
+				encoded, err := yaml.Marshal(resolvedConfig)
+				if err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintln(out, "debug config:")
+				for _, line := range strings.Split(strings.TrimRight(string(encoded), "\n"), "\n") {
+					_, _ = fmt.Fprintln(out, line)
 				}
 			}
 			nodesInScope := cmdutil.ResolveDeploymentNodes(cfg)
@@ -127,7 +156,7 @@ var planCmd = &cobra.Command{
 
 			done = progress.start("compute desired plan")
 			desired := apply.DesiredStateFromSummary(cfg, summary, partitionFilters, stackFilters)
-			statePath, err := planStatePath(opts.ConfigPath)
+			statePath, err := planStatePath(configPath)
 			done(err)
 			if err != nil {
 				return err
@@ -144,7 +173,7 @@ var planCmd = &cobra.Command{
 				Version:     state.CurrentVersion,
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 				Command:     "plan",
-				ConfigPath:  opts.ConfigPath,
+				ConfigPath:  configPath,
 				Project:     cfg.Project.Name,
 				Deployment:  cfg.Project.Deployment,
 				Partition:   partitionState,
@@ -321,6 +350,13 @@ func (p planProgressReporter) start(phase string) func(error) {
 
 func init() {
 	planCmd.Flags().BoolVar(&planProgressEnabled, "progress", true, "Show phase progress while computing plan")
+}
+
+func singleSelectorValue(items []string) string {
+	if len(items) != 1 {
+		return ""
+	}
+	return items[0]
 }
 
 func filterInferredRefWarnings(warnings []string) []string {

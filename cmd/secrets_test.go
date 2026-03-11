@@ -22,7 +22,7 @@ func TestParseMissingSecret(t *testing.T) {
 func TestFormatSecretsPutCommand(t *testing.T) {
 	prev := opts
 	t.Cleanup(func() { opts = prev })
-	opts.ConfigPath = "config.yaml"
+	opts.ConfigPaths = []string{"config.yaml"}
 	opts.SecretsFile = "secrets.yaml"
 	opts.Deployments = []string{"prod"}
 

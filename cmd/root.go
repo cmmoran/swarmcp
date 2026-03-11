@@ -3,9 +3,7 @@ package cmd
 import (
 	"errors"
 	"flag"
-	"github.com/cmmoran/swarmcp/internal/fsutil"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,6 +18,12 @@ var rootCmd = &cobra.Command{
 	Short:         "SwarmCP provisions and manages Docker Swarm resources from YAML",
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
+		if len(normalizeConfigPaths(opts.ConfigPaths)) == 0 {
+			return nil
+		}
+		return writeProjectConfigPaths(opts.ConfigPaths)
+	},
 }
 
 func Execute() {
@@ -38,14 +42,8 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&opts.ConfigPath, "config", "", "Path to project config")
-	if absFile, err := filepath.Abs(".swarmcp.project"); err == nil {
-		if ok := fsutil.FileExists(absFile); len(opts.ConfigPath) == 0 && ok {
-			if cfg, cerr := os.ReadFile(".swarmcp.project"); cerr == nil {
-				opts.ConfigPath = strings.TrimSpace(string(cfg))
-			}
-		}
-	}
+	rootCmd.PersistentFlags().StringArrayVar(&opts.ConfigPaths, "config", nil, "Path to project config (repeatable; later files overlay earlier files)")
+	rootCmd.PersistentFlags().StringArrayVar(&opts.ReleaseConfigs, "release-config", nil, "Path to release overlay config (repeatable; validated as deploy-time pins only)")
 	rootCmd.PersistentFlags().BoolVar(&opts.NoWarnUnmanaged, "no-warn-unmanaged", false, "Suppress warnings for unmanaged resources")
 	rootCmd.PersistentFlags().BoolVar(&opts.SkipHealthcheck, "skip-healthcheck", false, "Skip healthcheck requirement (not recommended)")
 	rootCmd.PersistentFlags().StringVar(&opts.SecretsFile, "secrets-file", "", "Path to secrets values file (YAML)")
@@ -59,6 +57,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&opts.DebugContent, "debug-content", false, "Print rendered config/secret content")
 	rootCmd.PersistentFlags().IntVar(&opts.DebugContentMax, "debug-content-max", 0, "Max bytes of rendered content to print (0 for unlimited)")
 	rootCmd.PersistentFlags().BoolVar(&opts.Debug, "debug", false, "Enable debug output")
+	rootCmd.PersistentFlags().BoolVar(&opts.DebugConfig, "debug-config", false, "Print the resolved config model for the selected target")
 	rootCmd.PersistentFlags().BoolVar(&opts.Prune, "prune", false, "Remove unused managed configs/secrets and prune removed services")
 	rootCmd.PersistentFlags().BoolVar(&opts.PruneServices, "prune-services", false, "Prune removed services without touching configs/secrets")
 	rootCmd.PersistentFlags().IntVar(&opts.Preserve, "preserve", 0, "Preserve the most recent unused configs/secrets when pruning (0 for none)")

@@ -87,6 +87,41 @@ func TestProjectContextSwarmClientWrap(t *testing.T) {
 	}
 }
 
+func TestLoadProjectContextAppliesReleaseConfigValidationAndMerge(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	writeFile(t, configPath, `project:
+  name: demo
+stacks:
+  core:
+    services:
+      api:
+        image: ghcr.io/acme/api:main
+        replicas: 1
+`)
+	writeFile(t, releasePath, `stacks:
+  core:
+    services:
+      api:
+        image: ghcr.io/acme/api:1.2.3
+        replicas: 2
+`)
+
+	ctx, err := LoadProjectContext(ProjectOptions{
+		ConfigPaths:        []string{configPath},
+		ReleaseConfigPaths: []string{releasePath},
+		ConfigPath:         configPath,
+	}, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	service := ctx.Config.Stacks["core"].Services["api"]
+	if service.Image != "ghcr.io/acme/api:1.2.3" || service.Replicas != 2 {
+		t.Fatalf("expected release override, got %#v", service)
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

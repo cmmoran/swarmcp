@@ -1,7 +1,8 @@
 package cmd
 
 type Options struct {
-	ConfigPath      string
+	ConfigPaths     []string
+	ReleaseConfigs  []string
 	NoWarnUnmanaged bool
 	SkipHealthcheck bool
 	SecretsFile     string
@@ -25,4 +26,5 @@ type Options struct {
 	Offline         bool
 	PruneAutoLabels bool
 	DiffSources     bool
+	DebugConfig     bool
 }

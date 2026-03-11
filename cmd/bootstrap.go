@@ -20,6 +20,12 @@ var bootstrapNetworksCmd = &cobra.Command{
 	Use:   "networks",
 	Short: "Create required overlay networks for the project",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
@@ -29,12 +35,14 @@ var bootstrapNetworksCmd = &cobra.Command{
 			return err
 		}
 		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPath: opts.ConfigPath,
-			Deployment: deployment,
-			Context:    opts.Context,
-			Partition:  partition,
-			Offline:    opts.Offline,
-			Debug:      opts.Debug,
+			ConfigPaths:        configPaths,
+			ReleaseConfigPaths: releaseConfigPaths,
+			ConfigPath:         configPath,
+			Deployment:         deployment,
+			Context:            opts.Context,
+			Partition:          partition,
+			Offline:            opts.Offline,
+			Debug:              opts.Debug,
 		}, false, false)
 		if err != nil {
 			return err
@@ -94,6 +102,12 @@ var bootstrapLabelsCmd = &cobra.Command{
 	Use:   "labels",
 	Short: "Ensure node labels match project config",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
@@ -103,12 +117,14 @@ var bootstrapLabelsCmd = &cobra.Command{
 			return err
 		}
 		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPath: opts.ConfigPath,
-			Deployment: deployment,
-			Context:    opts.Context,
-			Partition:  partition,
-			Offline:    opts.Offline,
-			Debug:      opts.Debug,
+			ConfigPaths:        configPaths,
+			ReleaseConfigPaths: releaseConfigPaths,
+			ConfigPath:         configPath,
+			Deployment:         deployment,
+			Context:            opts.Context,
+			Partition:          partition,
+			Offline:            opts.Offline,
+			Debug:              opts.Debug,
 		}, false, false)
 		if err != nil {
 			return err
@@ -172,7 +188,7 @@ var bootstrapLabelsCmd = &cobra.Command{
 		sort.Strings(missing)
 
 		writeback, err := cmdutil.WriteAutoNodeLabels(cmdutil.AutoLabelWriteOptions{
-			ConfigPath:      opts.ConfigPath,
+			ConfigPath:      configPath,
 			Config:          cfg,
 			PartitionFilter: partition,
 			Prune:           opts.PruneAutoLabels,

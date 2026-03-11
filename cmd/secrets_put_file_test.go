@@ -30,7 +30,7 @@ func TestSecretsPutWritesToFile(t *testing.T) {
 	}
 
 	secretsPath := filepath.Join(t.TempDir(), "secrets.yaml")
-	opts.ConfigPath = configPath
+	opts.ConfigPaths = []string{configPath}
 	opts.SecretsFile = secretsPath
 
 	if err := secretsPutCmd.RunE(secretsPutCmd, []string{"db_password", "value"}); err != nil {
@@ -62,7 +62,7 @@ func TestSecretsPutWritesFromFile(t *testing.T) {
 	}
 
 	secretsPath := filepath.Join(t.TempDir(), "secrets.yaml")
-	opts.ConfigPath = configPath
+	opts.ConfigPaths = []string{configPath}
 	opts.SecretsFile = secretsPath
 
 	valuePath := filepath.Join(t.TempDir(), "secret.txt")
@@ -102,7 +102,7 @@ func TestSecretsPutWritesFromStdin(t *testing.T) {
 	}
 
 	secretsPath := filepath.Join(t.TempDir(), "secrets.yaml")
-	opts.ConfigPath = configPath
+	opts.ConfigPaths = []string{configPath}
 	opts.SecretsFile = secretsPath
 	secretsPutStdin = true
 

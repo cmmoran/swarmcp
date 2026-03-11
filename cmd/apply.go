@@ -20,6 +20,12 @@ var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply desired state to Swarm",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		deployments := deploymentTargets(opts.Deployments)
 		partitionFilters := normalizeSelectors(opts.Partitions)
 		stackFilters := normalizeSelectors(opts.Stacks)
@@ -47,13 +53,15 @@ var applyCmd = &cobra.Command{
 			}
 
 			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPath:  opts.ConfigPath,
-				SecretsFile: opts.SecretsFile,
-				ValuesFiles: opts.ValuesFiles,
-				Deployment:  deployment,
-				Context:     opts.Context,
-				Offline:     opts.Offline,
-				Debug:       opts.Debug,
+				ConfigPaths:        configPaths,
+				ReleaseConfigPaths: releaseConfigPaths,
+				ConfigPath:         configPath,
+				SecretsFile:        opts.SecretsFile,
+				ValuesFiles:        opts.ValuesFiles,
+				Deployment:         deployment,
+				Context:            opts.Context,
+				Offline:            opts.Offline,
+				Debug:              opts.Debug,
 			}, true, true)
 			if err != nil {
 				return err
@@ -152,7 +160,7 @@ var applyCmd = &cobra.Command{
 				stackState = stackFilters[0]
 			}
 			skipCache := len(deployments) > 1 || len(partitionFilters) > 1 || len(stackFilters) > 1
-			cached, cacheOK := loadStateCache(opts.ConfigPath, cfg, partitionState, stackState)
+			cached, cacheOK := loadStateCache(configPath, cfg, partitionState, stackState)
 			skipApply := !skipCache && cacheOK && cached.Command == "apply" && planSummaryZero(planSummary) && planSummariesEqual(cached.Plan, planSummary)
 			if !skipApply {
 				stackParallel := 0
@@ -164,7 +172,7 @@ var applyCmd = &cobra.Command{
 				}
 			}
 
-			statePath, err := planStatePath(opts.ConfigPath)
+			statePath, err := planStatePath(configPath)
 			if err != nil {
 				return err
 			}
@@ -179,7 +187,7 @@ var applyCmd = &cobra.Command{
 				Version:     state.CurrentVersion,
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 				Command:     "apply",
-				ConfigPath:  opts.ConfigPath,
+				ConfigPath:  configPath,
 				Project:     cfg.Project.Name,
 				Deployment:  cfg.Project.Deployment,
 				Partition:   partitionState,

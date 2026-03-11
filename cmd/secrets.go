@@ -24,6 +24,12 @@ var secretsCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Report missing secrets required by templates",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
@@ -32,11 +38,11 @@ var secretsCheckCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+		cfg, err := config.LoadFilesWithReleaseOptions(configPaths, releaseConfigPaths, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 		if err != nil {
 			return err
 		}
-		config.SetBaseDir(cfg, opts.ConfigPath)
+		config.SetBaseDir(cfg, configPath)
 		if deployment != "" {
 			cfg.Project.Deployment = deployment
 		}
@@ -53,13 +59,13 @@ var secretsCheckCmd = &cobra.Command{
 		if opts.SecretsFile != "" {
 			secretsFile = opts.SecretsFile
 		} else if !useEngine {
-			secretsFile = cmdutil.InferSecretsFile(cfg, opts.ConfigPath, opts.SecretsFile)
+			secretsFile = cmdutil.InferSecretsFile(cfg, configPath, opts.SecretsFile)
 		}
 		store, err := cmdutil.LoadSecretsStore(secretsFile)
 		if err != nil {
 			return err
 		}
-		valuesFiles := cmdutil.InferValuesFiles(opts.ConfigPath, opts.ValuesFiles)
+		valuesFiles := cmdutil.InferValuesFiles(configPath, opts.ValuesFiles)
 		valuesScope := templates.Scope{
 			Project:        cfg.Project.Name,
 			Deployment:     cfg.Project.Deployment,
@@ -108,15 +114,21 @@ var secretsPutCmd = &cobra.Command{
 	Short: "Write a secret value to the secrets file or engine",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
 		}
-		cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+		cfg, err := config.LoadFilesWithReleaseOptions(configPaths, releaseConfigPaths, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 		if err != nil {
 			return err
 		}
-		config.SetBaseDir(cfg, opts.ConfigPath)
+		config.SetBaseDir(cfg, configPath)
 		if deployment != "" {
 			cfg.Project.Deployment = deployment
 		}
@@ -204,7 +216,7 @@ var secretsPutCmd = &cobra.Command{
 			return nil
 		}
 
-		secretsFile := cmdutil.InferSecretsFile(cfg, opts.ConfigPath, opts.SecretsFile)
+		secretsFile := cmdutil.InferSecretsFile(cfg, configPath, opts.SecretsFile)
 		if secretsFile == "" {
 			return fmt.Errorf("secrets file is required when secrets_engine is not configured")
 		}
@@ -293,8 +305,14 @@ func formatSecretsPutCommand(value string) (string, bool) {
 		return "", false
 	}
 	args := []string{"swarmcp"}
-	if opts.ConfigPath != "" && opts.ConfigPath != "swarmcp.yaml" {
-		args = append(args, "--config", opts.ConfigPath)
+	for _, path := range normalizeConfigPaths(opts.ConfigPaths) {
+		if path == "" {
+			continue
+		}
+		if path == "swarmcp.yaml" {
+			continue
+		}
+		args = append(args, "--config", path)
 	}
 	if opts.SecretsFile != "" {
 		args = append(args, "--secrets-file", opts.SecretsFile)

@@ -16,6 +16,12 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current Swarm status vs desired state",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		out := cmd.OutOrStdout()
 		deployments := deploymentTargets(opts.Deployments)
 		partitionFilters := normalizeSelectors(opts.Partitions)
@@ -34,13 +40,15 @@ var statusCmd = &cobra.Command{
 			}
 
 			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPath:  opts.ConfigPath,
-				SecretsFile: opts.SecretsFile,
-				ValuesFiles: opts.ValuesFiles,
-				Deployment:  deployment,
-				Context:     opts.Context,
-				Offline:     opts.Offline,
-				Debug:       opts.Debug,
+				ConfigPaths:        configPaths,
+				ReleaseConfigPaths: releaseConfigPaths,
+				ConfigPath:         configPath,
+				SecretsFile:        opts.SecretsFile,
+				ValuesFiles:        opts.ValuesFiles,
+				Deployment:         deployment,
+				Context:            opts.Context,
+				Offline:            opts.Offline,
+				Debug:              opts.Debug,
 			}, true, true)
 			if err != nil {
 				return err

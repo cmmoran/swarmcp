@@ -142,6 +142,12 @@ func init() {
 }
 
 func loadSourceEntries(cmd *cobra.Command) ([]sourceEntry, error) {
+	configPaths, err := effectiveProjectConfigPaths()
+	if err != nil {
+		return nil, err
+	}
+	releaseConfigPaths := effectiveReleaseConfigPaths()
+	configPath := configPaths[0]
 	deployment, err := singleSelector("deployment", opts.Deployments)
 	if err != nil {
 		return nil, err
@@ -151,14 +157,16 @@ func loadSourceEntries(cmd *cobra.Command) ([]sourceEntry, error) {
 		return nil, err
 	}
 	ctx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-		ConfigPath:  opts.ConfigPath,
-		SecretsFile: opts.SecretsFile,
-		ValuesFiles: opts.ValuesFiles,
-		Deployment:  deployment,
-		Context:     opts.Context,
-		Partition:   partition,
-		Offline:     opts.Offline,
-		Debug:       opts.Debug,
+		ConfigPaths:        configPaths,
+		ReleaseConfigPaths: releaseConfigPaths,
+		ConfigPath:         configPath,
+		SecretsFile:        opts.SecretsFile,
+		ValuesFiles:        opts.ValuesFiles,
+		Deployment:         deployment,
+		Context:            opts.Context,
+		Partition:          partition,
+		Offline:            opts.Offline,
+		Debug:              opts.Debug,
 	}, false, false)
 	if err != nil {
 		return nil, err
@@ -171,7 +179,11 @@ func loadSourceEntries(cmd *cobra.Command) ([]sourceEntry, error) {
 }
 
 func sourcesLoadOptions() (config.LoadOptions, error) {
-	cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+	configPaths, err := effectiveProjectConfigPaths()
+	if err != nil {
+		return config.LoadOptions{}, err
+	}
+	cfg, err := config.LoadFilesWithReleaseOptions(configPaths, effectiveReleaseConfigPaths(), config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 	if err != nil {
 		return config.LoadOptions{}, err
 	}

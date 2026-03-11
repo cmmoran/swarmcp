@@ -2,13 +2,11 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/dlclark/regexp2"
-	"gopkg.in/yaml.v3"
 )
 
 func normalizeTemplateScalars(input string) string {
@@ -107,42 +105,11 @@ type LoadOptions struct {
 }
 
 func Load(path string) (*Config, error) {
-	return LoadWithOptions(path, LoadOptions{})
+	return LoadFilesWithOptions([]string{path}, LoadOptions{})
 }
 
 func LoadWithOptions(path string, opts LoadOptions) (*Config, error) {
-	configPath := path
-	if abs, err := filepath.Abs(path); err == nil {
-		configPath = abs
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	normalized := normalizeTemplateScalars(string(data))
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(normalized), &cfg); err != nil {
-		return nil, err
-	}
-
-	SetBaseDir(&cfg, configPath)
-	opts = normalizeLoadOptions(opts, cfg.BaseDir)
-	cfg.CacheDir = opts.CacheDir
-	cfg.Offline = opts.Offline
-	cfg.Debug = opts.Debug
-	if err := ResolveImports(&cfg, opts); err != nil {
-		return nil, err
-	}
-	SetSourcesBaseDir(&cfg)
-	if err := ApplySourceBaseDir(&cfg, opts); err != nil {
-		return nil, err
-	}
-	if err := Validate(&cfg); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
+	return LoadFilesWithOptions([]string{path}, opts)
 }
 
 func normalizeLoadOptions(opts LoadOptions, baseDir string) LoadOptions {

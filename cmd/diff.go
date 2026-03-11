@@ -22,6 +22,12 @@ var diffCmd = &cobra.Command{
 	Use:   "diff",
 	Short: "Show planned changes vs current Swarm state",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		deployments := deploymentTargets(opts.Deployments)
 		partitionFilters := normalizeSelectors(opts.Partitions)
 		stackFilters := normalizeSelectors(opts.Stacks)
@@ -39,13 +45,15 @@ var diffCmd = &cobra.Command{
 			}
 
 			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPath:  opts.ConfigPath,
-				SecretsFile: opts.SecretsFile,
-				ValuesFiles: opts.ValuesFiles,
-				Deployment:  deployment,
-				Context:     opts.Context,
-				Offline:     opts.Offline,
-				Debug:       opts.Debug,
+				ConfigPaths:        configPaths,
+				ReleaseConfigPaths: releaseConfigPaths,
+				ConfigPath:         configPath,
+				SecretsFile:        opts.SecretsFile,
+				ValuesFiles:        opts.ValuesFiles,
+				Deployment:         deployment,
+				Context:            opts.Context,
+				Offline:            opts.Offline,
+				Debug:              opts.Debug,
 			}, true, true)
 			if err != nil {
 				return err
@@ -163,7 +171,7 @@ var diffCmd = &cobra.Command{
 					_, _ = fmt.Fprintf(out, "  - %s\n", cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service))
 				}
 			}
-			if err := printStateDiff(out, opts.ConfigPath, report, changedServices, missingServices); err != nil {
+			if err := printStateDiff(out, configPath, report, changedServices, missingServices); err != nil {
 				return err
 			}
 			if opts.Debug || debugContentEnabled {

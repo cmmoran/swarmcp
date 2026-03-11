@@ -11,6 +11,12 @@ var validateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate configuration and templates",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		configPaths, err := effectiveProjectConfigPaths()
+		if err != nil {
+			return err
+		}
+		releaseConfigPaths := effectiveReleaseConfigPaths()
+		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
@@ -20,12 +26,14 @@ var validateCmd = &cobra.Command{
 			return err
 		}
 		_, err = cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPath: opts.ConfigPath,
-			Deployment: deployment,
-			Context:    opts.Context,
-			Partition:  partition,
-			Offline:    opts.Offline,
-			Debug:      opts.Debug,
+			ConfigPaths:        configPaths,
+			ReleaseConfigPaths: releaseConfigPaths,
+			ConfigPath:         configPath,
+			Deployment:         deployment,
+			Context:            opts.Context,
+			Partition:          partition,
+			Offline:            opts.Offline,
+			Debug:              opts.Debug,
 		}, false, false)
 		if err != nil {
 			return err

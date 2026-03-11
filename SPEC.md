@@ -3,7 +3,9 @@
 ## Table of Contents
 - [Goals](#goals)
 - [Concepts and Naming](#concepts-and-naming)
+- [Recommended Project Model](#recommended-project-model)
 - [Configuration Sources](#configuration-sources)
+- [Config File Layering](#config-file-layering)
 - [External Imports (Stacks and Services)](#external-imports-stacks-and-services)
 - [Values Store (values#/path)](#values-store-valuespath)
 - [Template Resolution and Scope](#template-resolution-and-scope)
@@ -20,6 +22,7 @@
 - [State and Cache](#state-and-cache)
 - [Execution Targeting (Deployment + Partition + Stack)](#execution-targeting-deployment--partition--stack)
 - [CLI (Cobra)](#cli-cobra)
+- [Explain (Config Provenance)](#explain-config-provenance)
 - [YAML Schema](#yaml-schema)
 - [Examples](#examples)
 
@@ -37,6 +40,45 @@
   - **shared**: one per project. Name: `<project>_<stack>`.
   - **partitioned**: one per partition. Name: `<project>_<partition>_<stack>`.
 - **Reserved stack**: `core`.
+
+## Recommended Project Model
+SwarmCP should be documented around three artifacts with distinct intent:
+
+- `project.yaml`: desired topology, imports, and structural defaults
+- `values/*.yaml`: template inputs
+- `release.yaml`: deploy-time pins only
+
+Recommended workflow:
+1. Author and review `project.yaml` infrequently when topology changes.
+2. Author and review `values/*.yaml` when environment-specific template inputs change.
+3. For each deployment, author or generate a small `release.yaml` that pins the version or deploy intent for that run, and pass it with `--release-config`.
+
+`release.yaml` is intentionally narrow. It may change version selection and deploy intent, but it must not redefine topology. SwarmCP enforces this contract for files passed via `--release-config`.
+
+Allowed release fields:
+- `stacks.<name>.source.ref`
+- `stacks.<name>.services.<svc>.image`
+- `stacks.<name>.services.<svc>.replicas`
+- `stacks.<name>.services.<svc>.env.<key>`
+- `stacks.<name>.services.<svc>.labels.<key>`
+- `stacks.<name>.services.<svc>.update_config.{parallelism,delay,failure_action,monitor,max_failure_ratio,order}`
+- `stacks.<name>.services.<svc>.rollback_config.{parallelism,delay,failure_action,monitor,max_failure_ratio,order}`
+
+Release overlay validation rules:
+- The root of a release overlay may contain only `stacks`.
+- A release overlay may reference only stacks and services that already exist in the base config.
+- `stacks.<name>.source` may only set `ref`; it may not change `url`, `path`, or `overrides_path`.
+- A release overlay may not add new stacks or services.
+
+Disallowed in release overlays:
+- `project.nodes`
+- `project.partitions`
+- `project.deployment_targets`
+- adding or removing stacks
+- adding or removing services
+- broad structural network, volume, or import rewrites
+
+If a release overlay uses immutable refs and image digests, it already serves as a practical lock artifact. SwarmCP does not need a separate lockfile product to achieve basic reproducibility.
 
 ## Configuration Sources
 - **Primary source**: project repository (YAML + templates).
@@ -59,6 +101,226 @@ Behavior:
 - Absolute `sources.path` values are allowed and treated as their own source roots (symlink-aware), similar to a checked-out repo root.
 
 Local overrides continue to work by redefining `sources` at a narrower scope.
+
+## Config File Layering
+`--config` is repeatable. Repeatable `--config` is the implementation mechanism for composing the recommended project model, especially `project.yaml` plus a small deploy-time `release.yaml`. It is not the primary mental model and it is not intended as a general patch system.
+
+`--release-config` is also repeatable. It is the recommended way to apply deploy-time release overlays, because SwarmCP validates those files against the release-overlay allowlist above.
+
+Canonical example:
+```bash
+swarmcp plan \
+  --config project.yaml \
+  --values values/prod.yaml \
+  --release-config releases/prod-2026-03-10.yaml
+```
+
+```bash
+swarmcp apply \
+  --config project.yaml \
+  --values values/prod.yaml \
+  --release-config releases/prod-2026-03-10.yaml
+```
+
+Example release overlay:
+```yaml
+stacks:
+  core:
+    source:
+      ref: 2026.03.10-1842
+    services:
+      api:
+        image: ghcr.io/acme/api@sha256:7f3b...
+        replicas: 3
+```
+
+Layering rules:
+- Merge order is left to right.
+- The first `--config` is the base config.
+- Each later `--config` overlays the accumulated result.
+- The final merged document is the input to import resolution, validation, render, plan, diff, status, and apply.
+- If `.swarmcp.project` is used, it behaves as the implicit first config when no explicit `--config` flags are passed.
+
+Path and identity rules:
+- The first config file is the base identity for relative path resolution.
+- The first config file is also the base identity for inferred values/secrets lookup and local state/cache naming.
+- Later config files are partial overlays only; they do not establish independent path roots.
+
+Field policy:
+- Named maps merge by key.
+- Scalar fields replace earlier values.
+- Lists replace earlier values; they do not append.
+- Singular objects such as `source`, `restart_policy`, `update_config`, `rollback_config`, `healthcheck`, and `secrets_engine` replace as whole objects and are never field-merged.
+- Final merged configs must still satisfy the same validation rules as single-file configs.
+
+Repeated `--config` remains available for constrained config layering in general. The recommended project model for deploy-time pins is `project.yaml` plus `values/*.yaml` plus a deploy-specific `release.yaml` passed via `--release-config`.
+
+Release overlay intent rules:
+- Release overlays may change version-selection fields and a small set of deploy-intent fields.
+- Release overlays must not change project topology.
+- Release overlays should stay small enough to review as deployment intent rather than as structural authoring.
+- When stronger reproducibility is required, release overlays should use immutable refs and image digests.
+- Release overlays are validated only when passed via `--release-config`; plain repeated `--config` layering retains the broader config-layering rules below.
+
+Per-section policy:
+- Root:
+  - `project`: merge by the field rules below.
+  - `stacks`: merge by stack name.
+  - `overlays`: merge by deployment/partition/stack/service key using normal schema rules.
+- `project`:
+  - Merge: `contexts`, `deployment_targets`, `nodes`, `defaults`, `configs`, `secrets`, `sources`
+  - Replace-only: `name`, `deployment`, `restart_policy`, `update_config`, `rollback_config`, `secrets_engine`, `preserve_unused_resources`, `partitions`, `deployments`
+- `project.defaults`:
+  - Merge: `networks`, `volumes`, `volumes.standards`
+  - Replace-only: `networks.shared`, `networks.internal`, `networks.egress`, `networks.attachable`, `volumes.driver`, `volumes.base_path`, `volumes.layout`, `volumes.node_label_key`, `volumes.service_standard`, `volumes.service_target`
+- `project.nodes.<name>`:
+  - Merge: `labels`, `platform`
+  - Replace-only: `roles`, `volumes`
+- `project.deployment_targets.<name>`:
+  - Merge: `include.labels`, `exclude.labels`, `overrides`
+  - Replace-only: `include.names`, `exclude.names`
+- `project.deployment_targets.<name>.overrides.<node>`:
+  - Merge: `labels`, `platform`
+  - Replace-only: `roles`, `volumes`
+- `stacks.<name>`:
+  - Merge: `partitions`, `sources`, `configs`, `secrets`, `volumes`, `services`, `overlays`
+  - Replace-only: `source`, `mode`, `restart_policy`, `update_config`, `rollback_config`
+  - Invalid in later config files: `overrides`
+- `stacks.<name>.partitions.<name>`:
+  - Merge: `sources`, `configs`, `secrets`
+  - Replace-only: `restart_policy`, `update_config`, `rollback_config`
+- `stacks.<name>.services.<name>`:
+  - Merge: `env`, `labels`, `placement`, `sources`, `overlays`
+  - Replace-only: `source`, `image`, `command`, `args`, `workdir`, `ports`, `mode`, `replicas`, `restart_policy`, `update_config`, `rollback_config`, `healthcheck`, `depends_on`, `egress`, `networks`, `network_ephemeral`, `configs`, `secrets`, `volumes`
+  - Invalid in later config files: `overrides`
+
+Import constraints under layering:
+- `source` replaces as a whole object; `url`, `ref`, `path`, and `overrides_path` are never field-merged.
+- A later config file may not set stack/service import `overrides`.
+- Repeated `--config` layering does not permit new mixed local/import authoring states. The final merged stack/service must still obey the normal rule: sourced objects may only be modified through their own `overrides` in the defining file.
+- `project.partitions` and `project.deployments` are allowed in overlays but are advanced, high-risk replace-only fields.
+- The recommended `release.yaml` model is narrower than the full technical layering capability. Even where a field is technically mergeable, it should not be treated as release intent unless explicitly allowed by the release overlay rules above.
+
+Valid overlay example:
+```yaml
+# base: project.yaml
+project:
+  name: platform
+stacks:
+  core:
+    services:
+      api:
+        image: ghcr.io/acme/api:main
+        replicas: 2
+        env:
+          LOG_LEVEL: info
+```
+
+```yaml
+# overlay: releases/qa.yaml
+stacks:
+  core:
+    services:
+      api:
+        image: ghcr.io/acme/api:1.8.4
+        replicas: 3
+        env:
+          LOG_LEVEL: debug
+          FEATURE_FLAG_X: "true"
+```
+
+Result:
+- `image` is replaced.
+- `replicas` is replaced.
+- `env` merges by key.
+
+Replace-only list example:
+```yaml
+# base
+stacks:
+  core:
+    services:
+      api:
+        networks: [frontend]
+```
+
+```yaml
+# overlay
+stacks:
+  core:
+    services:
+      api:
+        networks: [frontend, metrics]
+```
+
+Result:
+- `networks` becomes `[frontend, metrics]`.
+- The overlay does not append; it replaces the full list.
+
+Rejected mixed-authoring example:
+```yaml
+# base
+stacks:
+  core:
+    source:
+      url: ssh://git@github.com/org/stack-library.git
+      ref: main
+      path: stacks/core.yaml
+```
+
+```yaml
+# overlay
+stacks:
+  core:
+    services:
+      api:
+        image: ghcr.io/acme/api:1.8.4
+```
+
+Result:
+- Invalid. Repeated `--config` layering must not create a sourced stack with local fields outside that stack's own defining `overrides`.
+
+Rejected import-override layering example:
+```yaml
+# overlay
+stacks:
+  core:
+    overrides:
+      services:
+        api:
+          image: ghcr.io/acme/api:1.8.4
+```
+
+Result:
+- Invalid. Later config files may not set stack/service import `overrides`.
+
+Acceptance criteria:
+- Single-file `--config` behavior remains unchanged.
+- Repeated `--config` merges left to right with later files overriding earlier files according to the field policy above.
+- The first config remains the root for relative path resolution, inferred values/secrets discovery, and local state/cache identity.
+- Invalid later-file `overrides` usage on sourced stacks/services is rejected with a validation error.
+- Invalid mixed local/import authoring states produced by layering are rejected with a validation error.
+
+Error cases:
+- No explicit `--config` and no `.swarmcp.project`: fail with a clear config-required error.
+- Any provided config file is unreadable: fail with the path and underlying read error.
+- Any provided config file root is not a YAML mapping: fail with the path and a root-must-be-mapping error.
+- A later config file sets stack/service import `overrides`: fail with a validation error naming the offending path.
+- Layering produces an invalid sourced/local hybrid: fail with the existing sourced-vs-local validation error naming the offending stack/service.
+
+Implementation checklist:
+1) CLI surface:
+- Change `--config` from singular to repeatable while preserving `.swarmcp.project` compatibility.
+2) Loader:
+- Add a merged-config load path that accepts ordered config files, parses them as mapping documents, applies the field-policy merge rules, and then runs import resolution and validation once on the merged result.
+3) Path semantics:
+- Preserve the first config path as the base identity for relative paths, inferred values/secrets, and state/cache naming.
+4) Validation:
+- Reject later-file stack/service `overrides`.
+- Preserve existing sourced-vs-local validation rules on the final merged config.
+5) Tests:
+- Add merge tests for map merge, scalar replace, list replace, whole-object replace, and invalid later-file `overrides`.
+- Add command-loading tests proving repeated `--config` is honored consistently by `plan`, `diff`, `status`, `apply`, and `validate`.
 
 ## External Imports (Stacks and Services)
 Stacks and services can be imported from external files (local or git) and overridden locally.
@@ -643,9 +905,37 @@ Notes:
 
 Debug output:
 - `plan --debug` prints derived physical names and labels for rendered configs/secrets.
+- `plan --debug-config` prints the resolved config model after repeated `--config` layering, import resolution, and scoped overlay application for the selected target.
 - `plan --debug-content` prints rendered config/secret content.
 - `plan --debug-content-max <bytes>` prints content with a max length (0 for unlimited).
 - `plan` prints required bind paths for services with volume mounts (and eligible nodes when deployment targets/nodes are configured).
+- `plan --debug-config` prints before the normal plan summary.
+- `plan --debug-config` defaults to YAML output.
+- `plan --debug-config` excludes rendered secret values, rendered config/secret payload content, Swarm state, and internal loader/runtime fields.
+- `plan --debug-config` is single-target introspection; repeated `--deployment`, `--partition`, or `--stack` selectors should be rejected when this flag is set.
+
+Acceptance criteria:
+- `plan --debug-config` prints the resolved config model for the active target before the normal plan summary.
+- Output reflects repeated `--config` layering, runtime deployment selection, import resolution, and scoped overlays.
+- Output excludes rendered payload content, secret values, Swarm state, and internal loader/runtime fields.
+- Multi-target selector invocations are rejected when `--debug-config` is set.
+
+Example:
+```bash
+swarmcp plan \
+  --config project.yaml \
+  --config releases/qa.yaml \
+  --deployment qa \
+  --partition dev \
+  --stack core \
+  --debug-config
+```
+
+Error cases:
+- Repeated `--deployment` with `--debug-config`: fail with a single-target-only error.
+- Repeated `--partition` with `--debug-config`: fail with a single-target-only error.
+- Repeated `--stack` with `--debug-config`: fail with a single-target-only error.
+- Unknown selected deployment/partition/stack: fail with the existing selector validation error before any debug-config output is printed.
 
 Values store:
 - `--values <path>` (repeatable) loads one or more YAML/JSON files and merges them.
@@ -688,6 +978,107 @@ Implementation checklist (`--stack` runtime targeting):
 - Add positive/negative selector validation tests.
 - Add command-level scope tests per command for shared and partitioned stacks.
 - Add prune safety regression tests proving no cross-stack deletions during stack-scoped apply.
+
+## Explain (Config Provenance)
+`explain` is a config-model provenance command. It answers why a final resolved field has its current value for a single selected target.
+
+Example:
+```bash
+swarmcp explain \
+  --config project.yaml \
+  --config releases/qa.yaml \
+  --deployment qa \
+  --partition dev \
+  --stack core \
+  stacks.core.services.api.image
+```
+
+Input model:
+- `explain` consumes the same resolved config model as `plan --debug-config`.
+- Repeated `--config` layering is applied first.
+- Runtime deployment selection is applied next.
+- Imports are resolved next.
+- Deployment/partition/stack/service overlays are then applied for the selected target.
+
+Scope:
+- `explain` is single-target only.
+- Repeated `--deployment`, `--partition`, or `--stack` selectors should be rejected.
+- The requested field path is evaluated against the resolved model for the active target.
+
+Field-path syntax:
+- Paths are rooted at the resolved config model.
+- Dot notation is used for map/object traversal.
+- Initial v1 examples:
+  - `project.deployment`
+  - `project.sources.ref`
+  - `stacks.core.services.api.image`
+  - `stacks.core.services.api.env.LOG_LEVEL`
+- v1 should target schema keys and map keys directly; no wildcard or query syntax is required.
+
+Output contract:
+- Print the requested field path.
+- Print the final resolved value.
+- Print the contributing layers in precedence order.
+- Identify the winning layer.
+
+Layer types to report in v1:
+- base config file
+- later repeated `--config` overlay files
+- imported stack/service source file
+- project deployment overlay
+- project partition overlay
+- stack deployment overlay
+- stack partition overlay
+- service deployment overlay
+- service partition overlay
+
+Example output shape:
+```text
+explain OK
+path: stacks.core.services.api.image
+final: ghcr.io/acme/api:1.8.4
+
+layers:
+1. config project.yaml -> ghcr.io/acme/api:main
+2. config releases/qa.yaml -> ghcr.io/acme/api:1.8.4
+
+winner:
+- config releases/qa.yaml
+```
+
+Non-goals for v1:
+- no values/template provenance
+- no rendered config/secret payload provenance
+- no secrets-engine lookup provenance
+- no Swarm runtime/state provenance
+
+`explain` is intended to explain the resolved project model, not rendered artifact content or runtime behavior.
+
+Acceptance criteria:
+- `explain` resolves the same single-target config model as `plan --debug-config`.
+- `explain` prints the requested path, final value, contributing layers, and winning layer.
+- Repeated `--config` files appear as distinct provenance layers when they affect the resolved field.
+- Multi-target selector invocations are rejected.
+- Requests for paths outside the resolved model fail with a clear error.
+
+Error cases:
+- Repeated `--deployment`, `--partition`, or `--stack`: fail with a single-target-only error.
+- Missing explain path argument: fail with a required-argument error.
+- Unknown field path: fail with a field-not-found error naming the requested path.
+- Path resolves through a non-traversable scalar/list step: fail with a clear invalid-path error naming the blocked segment.
+
+Implementation checklist:
+1) Resolution:
+- Reuse the same resolved-config pipeline as `plan --debug-config`.
+2) Path lookup:
+- Implement dotted-path lookup against the resolved config model with map-key traversal only for v1.
+3) Provenance tracking:
+- Capture provenance while merging repeated config files and applying import/overlay resolution rather than reconstructing it afterward.
+4) Output:
+- Print a stable, human-readable layer list and winner summary.
+5) Tests:
+- Add positive tests for repeated-config provenance, import provenance, and scoped overlay provenance.
+- Add negative tests for unknown paths and multi-target selector rejection.
 
 ## YAML Schema
 Outline:

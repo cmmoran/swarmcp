@@ -11,16 +11,18 @@ import (
 )
 
 type ProjectOptions struct {
-	ConfigPath    string
-	SecretsFile   string
-	ValuesFiles   []string
-	Deployment    string
-	Context       string
-	Partition     string
-	Stack         string
-	Offline       bool
-	Debug         bool
-	ClientFactory func(string) (swarm.Client, error)
+	ConfigPaths        []string
+	ReleaseConfigPaths []string
+	ConfigPath         string
+	SecretsFile        string
+	ValuesFiles        []string
+	Deployment         string
+	Context            string
+	Partition          string
+	Stack              string
+	Offline            bool
+	Debug              bool
+	ClientFactory      func(string) (swarm.Client, error)
 }
 
 type ProjectContext struct {
@@ -35,11 +37,25 @@ type ProjectContext struct {
 }
 
 func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets bool) (*ProjectContext, error) {
-	cfg, err := config.LoadWithOptions(opts.ConfigPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+	configPath := opts.ConfigPath
+	if configPath == "" && len(opts.ConfigPaths) > 0 {
+		configPath = opts.ConfigPaths[0]
+	}
+	var (
+		cfg *config.Config
+		err error
+	)
+	if len(opts.ConfigPaths) > 0 {
+		cfg, err = config.LoadFilesWithReleaseOptions(opts.ConfigPaths, opts.ReleaseConfigPaths, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+	} else if len(opts.ReleaseConfigPaths) > 0 {
+		cfg, err = config.LoadFilesWithReleaseOptions([]string{configPath}, opts.ReleaseConfigPaths, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+	} else {
+		cfg, err = config.LoadWithOptions(configPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+	}
 	if err != nil {
 		return nil, err
 	}
-	config.SetBaseDir(cfg, opts.ConfigPath)
+	config.SetBaseDir(cfg, configPath)
 	if opts.Deployment != "" {
 		cfg.Project.Deployment = opts.Deployment
 	}
@@ -74,7 +90,7 @@ func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets 
 	}
 
 	if includeSecrets {
-		secretsFile := InferSecretsFile(cfg, opts.ConfigPath, opts.SecretsFile)
+		secretsFile := InferSecretsFile(cfg, configPath, opts.SecretsFile)
 		store, err := LoadSecretsStore(secretsFile)
 		if err != nil {
 			return nil, err
@@ -83,7 +99,7 @@ func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets 
 	}
 
 	if includeValues {
-		valuesFiles := InferValuesFiles(opts.ConfigPath, opts.ValuesFiles)
+		valuesFiles := InferValuesFiles(configPath, opts.ValuesFiles)
 		values, err := LoadValuesStore(valuesFiles, ctx.ValuesScope)
 		if err != nil {
 			return nil, err
