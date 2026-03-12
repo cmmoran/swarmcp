@@ -236,3 +236,89 @@ stacks:
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadFilesWithReleaseTraceRecordsDocumentLayers(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+stacks:
+  core:
+    services:
+      api:
+        image: ghcr.io/acme/api:main
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+stacks:
+  core:
+    services:
+      api:
+        image: ghcr.io/acme/api:1.2.3
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	_, trace, err := LoadFilesWithReleaseTrace([]string{basePath}, []string{releasePath}, LoadOptions{}, []string{"stacks", "core", "services", "api", "image"})
+	if err != nil {
+		t.Fatalf("load with trace: %v", err)
+	}
+	if trace == nil {
+		t.Fatalf("expected trace")
+	}
+	if len(trace.Layers) != 2 {
+		t.Fatalf("expected 2 layers, got %#v", trace.Layers)
+	}
+	if trace.Layers[0].Label != "config "+basePath {
+		t.Fatalf("unexpected first label: %#v", trace.Layers[0])
+	}
+	if trace.Layers[1].Label != "release config "+releasePath {
+		t.Fatalf("unexpected second label: %#v", trace.Layers[1])
+	}
+	if value, ok := lookupPathValue(trace.MergedDoc, []string{"stacks", "core", "services", "api", "image"}); !ok || value != "ghcr.io/acme/api:1.2.3" {
+		t.Fatalf("unexpected merged doc value: %#v", trace.MergedDoc)
+	}
+}
+
+func TestLoadFilesWithReleaseTraceRecordsImportLayers(t *testing.T) {
+	dir := t.TempDir()
+	servicePath := filepath.Join(dir, "service.yaml")
+	projectPath := filepath.Join(dir, "project.yaml")
+	if err := os.WriteFile(servicePath, []byte(`
+image: ghcr.io/acme/api:main
+`), 0o644); err != nil {
+		t.Fatalf("write service source: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+stacks:
+  core:
+    services:
+      api:
+        source:
+          path: service.yaml
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	_, trace, err := LoadFilesWithReleaseTrace([]string{projectPath}, nil, LoadOptions{}, []string{"stacks", "core", "services", "api", "image"})
+	if err != nil {
+		t.Fatalf("load with trace: %v", err)
+	}
+	if trace == nil {
+		t.Fatalf("expected trace")
+	}
+	if len(trace.ImportLayers) != 1 {
+		t.Fatalf("expected 1 import layer, got %#v", trace.ImportLayers)
+	}
+	if trace.ImportLayers[0].Label != "import service source "+servicePath {
+		t.Fatalf("unexpected import label: %#v", trace.ImportLayers[0])
+	}
+	if trace.ImportLayers[0].Value != "ghcr.io/acme/api:main" {
+		t.Fatalf("unexpected import value: %#v", trace.ImportLayers[0])
+	}
+}

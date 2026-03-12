@@ -18,8 +18,18 @@ func LoadFilesWithOptions(paths []string, opts LoadOptions) (*Config, error) {
 }
 
 func LoadFilesWithReleaseOptions(paths []string, releasePaths []string, opts LoadOptions) (*Config, error) {
+	cfg, _, err := loadFilesWithReleaseTrace(paths, releasePaths, opts, nil)
+	return cfg, err
+}
+
+func LoadFilesWithReleaseTrace(paths []string, releasePaths []string, opts LoadOptions, fieldPath []string) (*Config, *LoadTrace, error) {
+	trace := &LoadTrace{FieldPath: append([]string(nil), fieldPath...)}
+	return loadFilesWithReleaseTrace(paths, releasePaths, opts, trace)
+}
+
+func loadFilesWithReleaseTrace(paths []string, releasePaths []string, opts LoadOptions, trace *LoadTrace) (*Config, *LoadTrace, error) {
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("project config is required")
+		return nil, nil, fmt.Errorf("project config is required")
 	}
 	absPaths := make([]string, 0, len(paths))
 	var merged map[string]any
@@ -30,19 +40,20 @@ func LoadFilesWithReleaseOptions(paths []string, releasePaths []string, opts Loa
 		}
 		doc, err := loadConfigDocument(absPath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		trace.record("config "+absPath, doc)
 		absPaths = append(absPaths, absPath)
 		if i == 0 {
 			merged = doc
 			continue
 		}
 		if err := validateLayeredOverlayMap(doc, nil); err != nil {
-			return nil, fmt.Errorf("config %q: %w", absPath, err)
+			return nil, nil, fmt.Errorf("config %q: %w", absPath, err)
 		}
 		merged, err = mergeLayeredConfigMaps(merged, doc, nil)
 		if err != nil {
-			return nil, fmt.Errorf("config %q: %w", absPath, err)
+			return nil, nil, fmt.Errorf("config %q: %w", absPath, err)
 		}
 	}
 	for _, path := range releasePaths {
@@ -52,25 +63,29 @@ func LoadFilesWithReleaseOptions(paths []string, releasePaths []string, opts Loa
 		}
 		doc, err := loadConfigDocument(absPath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		trace.record("release config "+absPath, doc)
 		if err := validateReleaseOverlayMap(merged, doc, nil); err != nil {
-			return nil, fmt.Errorf("release config %q: %w", absPath, err)
+			return nil, nil, fmt.Errorf("release config %q: %w", absPath, err)
 		}
 		merged, err = mergeReleaseOverlayMap(merged, doc)
 		if err != nil {
-			return nil, fmt.Errorf("release config %q: %w", absPath, err)
+			return nil, nil, fmt.Errorf("release config %q: %w", absPath, err)
 		}
+	}
+	if trace != nil && merged != nil {
+		trace.MergedDoc = cloneValue(merged).(map[string]any)
 	}
 
 	encoded, err := yaml.Marshal(merged)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(encoded, &cfg); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	SetBaseDir(&cfg, absPaths[0])
@@ -78,18 +93,18 @@ func LoadFilesWithReleaseOptions(paths []string, releasePaths []string, opts Loa
 	cfg.CacheDir = opts.CacheDir
 	cfg.Offline = opts.Offline
 	cfg.Debug = opts.Debug
-	if err := ResolveImports(&cfg, opts); err != nil {
-		return nil, err
+	if err := resolveImportsWithTrace(&cfg, opts, trace); err != nil {
+		return nil, nil, err
 	}
 	SetSourcesBaseDir(&cfg)
 	if err := ApplySourceBaseDir(&cfg, opts); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := Validate(&cfg); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &cfg, nil
+	return &cfg, trace, nil
 }
 
 func mergeReleaseOverlayMap(base map[string]any, overlay map[string]any) (map[string]any, error) {

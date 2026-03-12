@@ -11,6 +11,10 @@ import (
 )
 
 func ResolveImports(cfg *Config, opts LoadOptions) error {
+	return resolveImportsWithTrace(cfg, opts, nil)
+}
+
+func resolveImportsWithTrace(cfg *Config, opts LoadOptions, trace *LoadTrace) error {
 	if cfg == nil {
 		return nil
 	}
@@ -28,7 +32,7 @@ func ResolveImports(cfg *Config, opts LoadOptions) error {
 		if hasStackLocalFields(stack) {
 			return fmt.Errorf("stack %q: local fields are not allowed when source is set", stackName)
 		}
-		stackDef, baseDir, err := loadStackFromSource(stack.Source, stack.BaseDir, stack.Overrides, opts)
+		stackDef, baseDir, err := loadStackFromSource(stackName, stack.Source, stack.BaseDir, stack.Overrides, opts, trace)
 		if err != nil {
 			return fmt.Errorf("stack %q: %w", stackName, err)
 		}
@@ -36,7 +40,7 @@ func ResolveImports(cfg *Config, opts LoadOptions) error {
 		cfg.Stacks[stackName] = applyStackBaseDirs(stackDef)
 	}
 	for stackName, stack := range cfg.Stacks {
-		if err := resolveServiceImports(stackName, &stack, opts); err != nil {
+		if err := resolveServiceImports(stackName, &stack, opts, trace); err != nil {
 			return err
 		}
 		cfg.Stacks[stackName] = stack
@@ -44,7 +48,7 @@ func ResolveImports(cfg *Config, opts LoadOptions) error {
 	return nil
 }
 
-func loadStackFromSource(ref *SourceRef, baseDir string, overrides map[string]any, opts LoadOptions) (Stack, string, error) {
+func loadStackFromSource(stackName string, ref *SourceRef, baseDir string, overrides map[string]any, opts LoadOptions, trace *LoadTrace) (Stack, string, error) {
 	if ref == nil {
 		return Stack{}, "", fmt.Errorf("stack source is nil")
 	}
@@ -52,6 +56,7 @@ func loadStackFromSource(ref *SourceRef, baseDir string, overrides map[string]an
 	if err != nil {
 		return Stack{}, "", err
 	}
+	traceStackImportLayer(trace, stackName, "import stack source "+sourceLabel(basePath), baseMap)
 	var overlay map[string]any
 	if ref.OverridesPath != "" {
 		overlay, _, err = loadSourceMap(SourceRef{
@@ -62,11 +67,13 @@ func loadStackFromSource(ref *SourceRef, baseDir string, overrides map[string]an
 		if err != nil {
 			return Stack{}, "", err
 		}
+		traceStackImportLayer(trace, stackName, "import stack overrides "+ref.OverridesPath, overlay)
 	}
 	localOverrides, err := normalizeOverrideMap(overrides)
 	if err != nil {
 		return Stack{}, "", err
 	}
+	traceStackImportLayer(trace, stackName, "stack import overrides", localOverrides)
 	merged, err := mergeMaps(baseMap, overlay, localOverrides)
 	if err != nil {
 		return Stack{}, "", err
@@ -85,7 +92,7 @@ func loadStackFromSource(ref *SourceRef, baseDir string, overrides map[string]an
 	return stack, stackBaseDir, nil
 }
 
-func resolveServiceImports(stackName string, stack *Stack, opts LoadOptions) error {
+func resolveServiceImports(stackName string, stack *Stack, opts LoadOptions, trace *LoadTrace) error {
 	if stack == nil {
 		return nil
 	}
@@ -103,7 +110,7 @@ func resolveServiceImports(stackName string, stack *Stack, opts LoadOptions) err
 		if hasServiceLocalFields(service) {
 			return fmt.Errorf("stack %q service %q: local fields are not allowed when source is set", stackName, serviceName)
 		}
-		serviceDef, baseDir, err := loadServiceFromSource(service.Source, stack.BaseDir, service.Overrides, opts)
+		serviceDef, baseDir, err := loadServiceFromSource(stackName, serviceName, service.Source, stack.BaseDir, service.Overrides, opts, trace)
 		if err != nil {
 			return fmt.Errorf("stack %q service %q: %w", stackName, serviceName, err)
 		}
@@ -113,7 +120,7 @@ func resolveServiceImports(stackName string, stack *Stack, opts LoadOptions) err
 	return nil
 }
 
-func loadServiceFromSource(ref *SourceRef, baseDir string, overrides map[string]any, opts LoadOptions) (Service, string, error) {
+func loadServiceFromSource(stackName string, serviceName string, ref *SourceRef, baseDir string, overrides map[string]any, opts LoadOptions, trace *LoadTrace) (Service, string, error) {
 	if ref == nil {
 		return Service{}, "", fmt.Errorf("service source is nil")
 	}
@@ -121,6 +128,7 @@ func loadServiceFromSource(ref *SourceRef, baseDir string, overrides map[string]
 	if err != nil {
 		return Service{}, "", err
 	}
+	traceServiceImportLayer(trace, stackName, serviceName, "import service source "+sourceLabel(basePath), baseMap)
 	var overlay map[string]any
 	if ref.OverridesPath != "" {
 		overlay, _, err = loadSourceMap(SourceRef{
@@ -131,11 +139,13 @@ func loadServiceFromSource(ref *SourceRef, baseDir string, overrides map[string]
 		if err != nil {
 			return Service{}, "", err
 		}
+		traceServiceImportLayer(trace, stackName, serviceName, "import service overrides "+ref.OverridesPath, overlay)
 	}
 	localOverrides, err := normalizeOverrideMap(overrides)
 	if err != nil {
 		return Service{}, "", err
 	}
+	traceServiceImportLayer(trace, stackName, serviceName, "service import overrides", localOverrides)
 	merged, err := mergeMaps(baseMap, overlay, localOverrides)
 	if err != nil {
 		return Service{}, "", err
@@ -152,6 +162,26 @@ func loadServiceFromSource(ref *SourceRef, baseDir string, overrides map[string]
 		return Service{}, "", err
 	}
 	return service, serviceBaseDir, nil
+}
+
+func traceStackImportLayer(trace *LoadTrace, stackName string, label string, document map[string]any) {
+	if trace == nil || len(trace.FieldPath) < 2 {
+		return
+	}
+	if trace.FieldPath[0] != "stacks" || trace.FieldPath[1] != stackName {
+		return
+	}
+	trace.recordImport(label, document, trace.FieldPath[2:])
+}
+
+func traceServiceImportLayer(trace *LoadTrace, stackName string, serviceName string, label string, document map[string]any) {
+	if trace == nil || len(trace.FieldPath) < 4 {
+		return
+	}
+	if trace.FieldPath[0] != "stacks" || trace.FieldPath[1] != stackName || trace.FieldPath[2] != "services" || trace.FieldPath[3] != serviceName {
+		return
+	}
+	trace.recordImport(label, document, trace.FieldPath[4:])
 }
 
 func sourceBaseDirFromPath(basePath string) (string, error) {
