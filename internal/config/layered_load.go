@@ -154,10 +154,10 @@ func mergeLayeredConfigMaps(base map[string]any, overlay map[string]any, path []
 	out := cloneValue(base).(map[string]any)
 	for key, overlayValue := range overlay {
 		nextPath := appendPath(path, key)
-		if invalidLayeredConfigPath(nextPath) {
+		switch layeredPolicyForPath(nextPath) {
+		case layeredPolicyInvalid:
 			return nil, fmt.Errorf("%s is not allowed in later config files", joinPath(nextPath))
-		}
-		if replaceLayeredConfigPath(nextPath) {
+		case layeredPolicyReplace:
 			out[key] = cloneValue(overlayValue)
 			continue
 		}
@@ -178,11 +178,14 @@ func mergeLayeredConfigMaps(base map[string]any, overlay map[string]any, path []
 func validateLayeredOverlayMap(overlay map[string]any, path []string) error {
 	for key, value := range overlay {
 		nextPath := appendPath(path, key)
-		if invalidLayeredConfigPath(nextPath) {
+		switch layeredPolicyForPath(nextPath) {
+		case layeredPolicyInvalid:
 			return fmt.Errorf("%s is not allowed in later config files", joinPath(nextPath))
+		case layeredPolicyReplace:
+			continue
 		}
 		overlayMap, ok := value.(map[string]any)
-		if !ok || replaceLayeredConfigPath(nextPath) {
+		if !ok {
 			continue
 		}
 		if err := validateLayeredOverlayMap(overlayMap, nextPath); err != nil {
@@ -193,7 +196,7 @@ func validateLayeredOverlayMap(overlay map[string]any, path []string) error {
 }
 
 func mergeLayeredConfigValues(base any, overlay any, path []string) (any, error) {
-	if replaceLayeredConfigPath(path) {
+	if layeredPolicyForPath(path) == layeredPolicyReplace {
 		return cloneValue(overlay), nil
 	}
 	overlayMap, ok := overlay.(map[string]any)
@@ -244,66 +247,6 @@ func joinPath(path []string) string {
 	return out
 }
 
-func invalidLayeredConfigPath(path []string) bool {
-	return pathMatches(path, "stacks", "*", "overrides") ||
-		pathMatches(path, "stacks", "*", "services", "*", "overrides")
-}
-
-func replaceLayeredConfigPath(path []string) bool {
-	return pathMatches(path, "project", "name") ||
-		pathMatches(path, "project", "deployment") ||
-		pathMatches(path, "project", "restart_policy") ||
-		pathMatches(path, "project", "update_config") ||
-		pathMatches(path, "project", "rollback_config") ||
-		pathMatches(path, "project", "secrets_engine") ||
-		pathMatches(path, "project", "preserve_unused_resources") ||
-		pathMatches(path, "project", "partitions") ||
-		pathMatches(path, "project", "deployments") ||
-		pathMatches(path, "project", "defaults", "networks", "shared") ||
-		pathMatches(path, "project", "defaults", "networks", "internal") ||
-		pathMatches(path, "project", "defaults", "networks", "egress") ||
-		pathMatches(path, "project", "defaults", "networks", "attachable") ||
-		pathMatches(path, "project", "defaults", "volumes", "driver") ||
-		pathMatches(path, "project", "defaults", "volumes", "base_path") ||
-		pathMatches(path, "project", "defaults", "volumes", "layout") ||
-		pathMatches(path, "project", "defaults", "volumes", "node_label_key") ||
-		pathMatches(path, "project", "defaults", "volumes", "service_standard") ||
-		pathMatches(path, "project", "defaults", "volumes", "service_target") ||
-		pathMatches(path, "project", "nodes", "*", "roles") ||
-		pathMatches(path, "project", "nodes", "*", "volumes") ||
-		pathMatches(path, "project", "deployment_targets", "*", "include", "names") ||
-		pathMatches(path, "project", "deployment_targets", "*", "exclude", "names") ||
-		pathMatches(path, "project", "deployment_targets", "*", "overrides", "*", "roles") ||
-		pathMatches(path, "project", "deployment_targets", "*", "overrides", "*", "volumes") ||
-		pathMatches(path, "stacks", "*", "source") ||
-		pathMatches(path, "stacks", "*", "mode") ||
-		pathMatches(path, "stacks", "*", "restart_policy") ||
-		pathMatches(path, "stacks", "*", "update_config") ||
-		pathMatches(path, "stacks", "*", "rollback_config") ||
-		pathMatches(path, "stacks", "*", "partitions", "*", "restart_policy") ||
-		pathMatches(path, "stacks", "*", "partitions", "*", "update_config") ||
-		pathMatches(path, "stacks", "*", "partitions", "*", "rollback_config") ||
-		pathMatches(path, "stacks", "*", "services", "*", "source") ||
-		pathMatches(path, "stacks", "*", "services", "*", "image") ||
-		pathMatches(path, "stacks", "*", "services", "*", "command") ||
-		pathMatches(path, "stacks", "*", "services", "*", "args") ||
-		pathMatches(path, "stacks", "*", "services", "*", "workdir") ||
-		pathMatches(path, "stacks", "*", "services", "*", "ports") ||
-		pathMatches(path, "stacks", "*", "services", "*", "mode") ||
-		pathMatches(path, "stacks", "*", "services", "*", "replicas") ||
-		pathMatches(path, "stacks", "*", "services", "*", "restart_policy") ||
-		pathMatches(path, "stacks", "*", "services", "*", "update_config") ||
-		pathMatches(path, "stacks", "*", "services", "*", "rollback_config") ||
-		pathMatches(path, "stacks", "*", "services", "*", "healthcheck") ||
-		pathMatches(path, "stacks", "*", "services", "*", "depends_on") ||
-		pathMatches(path, "stacks", "*", "services", "*", "egress") ||
-		pathMatches(path, "stacks", "*", "services", "*", "networks") ||
-		pathMatches(path, "stacks", "*", "services", "*", "network_ephemeral") ||
-		pathMatches(path, "stacks", "*", "services", "*", "configs") ||
-		pathMatches(path, "stacks", "*", "services", "*", "secrets") ||
-		pathMatches(path, "stacks", "*", "services", "*", "volumes")
-}
-
 func pathMatches(path []string, pattern ...string) bool {
 	if len(path) != len(pattern) {
 		return false
@@ -320,89 +263,52 @@ func pathMatches(path []string, pattern ...string) bool {
 }
 
 func validateReleaseOverlayMap(base map[string]any, overlay map[string]any, path []string) error {
-	for key, value := range overlay {
-		nextPath := appendPath(path, key)
-		if err := validateReleaseOverlayEntry(base, value, nextPath); err != nil {
-			return err
-		}
-	}
-	return nil
+	return validateReleaseOverlayNode(base, overlay, nil, releasePolicyRoot)
 }
 
-func validateReleaseOverlayEntry(base map[string]any, value any, path []string) error {
-	switch {
-	case len(path) == 1:
-		if path[0] != "stacks" {
-			return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
-		}
-		mapped, err := requireMap(value, path)
-		if err != nil {
-			return err
-		}
-		return validateReleaseOverlayMap(base, mapped, path)
-	case len(path) == 2 && path[0] == "stacks":
-		if _, ok := lookupExistingMap(base, []string{"stacks", path[1]}); !ok {
+func validateReleaseOverlayNode(base map[string]any, value any, path []string, node *releasePolicyNode) error {
+	if node == nil {
+		return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
+	}
+	if node.requireExistingMap {
+		if _, ok := lookupExistingMap(base, path); !ok {
 			return fmt.Errorf("%s does not exist in the base config", joinPath(path))
 		}
+	}
+	switch node.kind {
+	case releaseValueMap:
 		mapped, err := requireMap(value, path)
 		if err != nil {
 			return err
 		}
-		return validateReleaseOverlayMap(base, mapped, path)
-	case len(path) == 3 && path[0] == "stacks":
-		switch path[2] {
-		case "source", "services":
-			mapped, err := requireMap(value, path)
-			if err != nil {
+		for key, childValue := range mapped {
+			nextPath := appendPath(path, key)
+			child := releasePolicyChild(node, key)
+			if child == nil {
+				return fmt.Errorf("%s is not allowed in release config files", joinPath(nextPath))
+			}
+			if err := validateReleaseOverlayNode(base, childValue, nextPath, child); err != nil {
 				return err
 			}
-			return validateReleaseOverlayMap(base, mapped, path)
-		default:
-			return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
 		}
-	case len(path) == 4 && path[0] == "stacks" && path[2] == "source":
-		if path[3] != "ref" {
-			return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
-		}
-		if _, ok := lookupExistingMap(base, path[:3]); !ok {
-			return fmt.Errorf("%s does not exist in the base config", joinPath(path[:3]))
-		}
+		return nil
+	case releaseValueScalar:
 		if _, ok := value.(map[string]any); ok {
 			return fmt.Errorf("%s must be a scalar value", joinPath(path))
 		}
 		return nil
-	case len(path) == 4 && path[0] == "stacks" && path[2] == "services":
-		serviceName := path[3]
-		if _, ok := lookupExistingMap(base, []string{"stacks", path[1], "services", serviceName}); !ok {
-			return fmt.Errorf("%s does not exist in the base config", joinPath(path))
-		}
+	case releaseValueScalarMap:
 		mapped, err := requireMap(value, path)
 		if err != nil {
 			return err
 		}
-		return validateReleaseOverlayMap(base, mapped, path)
-	case len(path) == 5 && path[0] == "stacks" && path[2] == "services":
-		switch path[4] {
-		case "image", "replicas":
-			if _, ok := value.(map[string]any); ok {
-				return fmt.Errorf("%s must be a scalar value", joinPath(path))
-			}
-			return nil
-		case "env", "labels":
-			mapped, err := requireMap(value, path)
-			if err != nil {
-				return err
-			}
-			return validateReleaseScalarMap(mapped, path)
-		case "update_config", "rollback_config":
-			mapped, err := requireMap(value, path)
-			if err != nil {
-				return err
-			}
-			return validateReleaseUpdatePolicyMap(mapped, path)
-		default:
-			return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
+		return validateReleaseScalarMap(mapped, path)
+	case releaseValueUpdatePolicyMap:
+		mapped, err := requireMap(value, path)
+		if err != nil {
+			return err
 		}
+		return validateReleaseUpdatePolicyMap(mapped, path)
 	default:
 		return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
 	}
