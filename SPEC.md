@@ -14,7 +14,6 @@
 - [Labeling](#labeling)
 - [Service Intent (Milestone 2)](#service-intent-milestone-2)
 - [Networks and Volumes](#networks-and-volumes)
-- [Volumes and Placement (Draft)](#volumes-and-placement-draft)
 - [Secrets Engines](#secrets-engines)
 - [Change Detection and Apply Flow](#change-detection-and-apply-flow)
 - [Service Dependencies and Update Policy](#service-dependencies-and-update-policy)
@@ -26,6 +25,8 @@
 - [Explain (Config Provenance)](#explain-config-provenance)
 - [YAML Schema](#yaml-schema)
 - [Examples](#examples)
+- [Appendix A. Implementation Notes (Non-Normative)](#appendix-a-implementation-notes-non-normative)
+- [Appendix B. Draft Design Areas (Non-Normative)](#appendix-b-draft-design-areas-non-normative)
 
 ## Goals
 - Provision and manage Docker Swarm resources from YAML configuration and templates.
@@ -309,20 +310,6 @@ Error cases:
 - A later config file sets stack/service import `overrides`: fail with a validation error naming the offending path.
 - Layering produces an invalid sourced/local hybrid: fail with the existing sourced-vs-local validation error naming the offending stack/service.
 
-Implementation checklist:
-1) CLI surface:
-- Change `--config` from singular to repeatable while preserving `.swarmcp.project` compatibility.
-2) Loader:
-- Add a merged-config load path that accepts ordered config files, parses them as mapping documents, applies the field-policy merge rules, and then runs import resolution and validation once on the merged result.
-3) Path semantics:
-- Preserve the first config path as the base identity for relative paths, inferred values/secrets, and state/cache naming.
-4) Validation:
-- Reject later-file stack/service `overrides`.
-- Preserve existing sourced-vs-local validation rules on the final merged config.
-5) Tests:
-- Add merge tests for map merge, scalar replace, list replace, whole-object replace, and invalid later-file `overrides`.
-- Add command-loading tests proving repeated `--config` is honored consistently by `plan`, `diff`, `status`, `apply`, and `validate`.
-
 ## External Imports (Stacks and Services)
 Stacks and services can be imported from external files (local or git) and overridden locally.
 
@@ -486,7 +473,8 @@ YAML quoting guidance:
 `swarm_network_cidrs` returns the CIDR subnets for a named Swarm network or all Swarm-scoped overlay networks when no name is provided.
 
 Service labels are rendered as templates using the service scope.
-Service definition string fields (env values, image, command/args, placement constraints, network names, volume targets, config/secret mount fields, etc.) are rendered as templates using the service scope.
+Service definition string fields (env values, image, command/args, placement constraints, network names, volume targets, config/secret mount fields, restart/update policy string fields, etc.) first expand scope tokens such as `{project}`, `{deployment}`, `{stack}`, `{partition}`, and `{service}`, then render as templates using the service scope.
+Environment map keys expand scope tokens but are not themselves rendered as templates; environment values follow the normal service string-field rendering rules.
 Bare `{{ ... }}` scalars in `project.yaml` are accepted for compatibility. The loader normalizes them before/while parsing so unquoted template expressions continue to work, including a narrow fallback path for cases that do not parse as standard YAML scalars initially.
 
 Tokens:
@@ -741,54 +729,6 @@ Derived (not configurable at service scope yet):
 - Stateful services must use volumes and will require node constraints.
 - Warn when a shared stack attaches to many partition networks (threshold configurable).
 
-## Volumes and Placement (Draft)
-- Volume policy defaults are configurable at the project level (driver, base path, and node label key).
-- Stack/service volume declarations define intent and mount targets; they do not override the base path.
-- Computed bind paths are derived from the project base path and scope:
-  - `<base>/<project>/<stack>` for stack-scoped volumes
-  - `<base>/<project>/<stack>/<service>` for service-scoped volumes
-  - `stack` is the resolved stack name (`<stack>` for shared, `<partition>_<stack>` for partitioned)
-  - Optional subpath is appended after the stack or service segment for finer granularity (defaults to the volume name when omitted).
-- Service-standard volumes:
-  - A reserved standard name provides per-service persistent binds with the service-scoped path above.
-  - The reserved name defaults to `service` and is configurable via `project.defaults.volumes.service_standard`.
-  - `project.defaults.volumes.standards` may not define the reserved name.
-  - Services may override the container `target`, `subpath`, and `readonly` for the service standard only.
-  - Placement/label requirements use a derived volume name: `<resolved_stack>.<service>` (e.g., `core.postgres`, `usw_api.redis`).
-- Example:
-```yaml
-project:
-  defaults:
-    volumes:
-      base_path: /srv/swarm
-      service_standard: persist
-      service_target: /data
-
-stacks:
-  core:
-    services:
-      postgres:
-        volumes:
-          - standard: persist
-            target: /var/lib/postgresql/data
-```
-- Bind mount prerequisites:
-  - Host paths must exist on target nodes before scheduling (Swarm will not create them).
-  - Path creation/ownership is a provisioning concern (bootstrap scripts, config management, or node init).
-- Volume declarations imply placement constraints:
-  - Each volume maps to a node label key/value pair (e.g., `swarmcp.volume.<volume>=true`).
-  - Services using a volume inherit the required node label constraint.
-  - If a service uses multiple volumes, all required labels must be satisfied.
-- Plan/status report volume placement checks using deployment targets and node volume/label declarations.
-- Node-volume mappings live in project config; the tool may auto-label nodes to satisfy placement.
-- Standard mounts:
-  - Defaults may define standard mounts for common ad-hoc binds.
-  - Standard mounts may declare required roles (e.g., `manager` for Docker socket access).
-- Node roles can be declared to identify managers for manager-only operations.
-- Omitted node roles imply `worker`.
-- Node label declarations are enforced; missing labels are applied when permitted.
-- For shared stacks, volume layouts use `_` as the partition directory.
-
 ## Secrets Engines
 Secrets are resolved during plan/apply via pluggable providers and resolvers:
 - `vault://path#key`
@@ -863,10 +803,6 @@ Prune behavior with stack targeting:
 - `--prune-services`: may remove services only within targeted stack instances (`docker stack deploy --prune` limited to targeted deploys).
 - `--prune` (configs/secrets): may remove only managed configs/secrets labeled for targeted stack scope; no cross-stack cleanup when `--stack` is set.
 
-Notes:
-- `--stack` applies to runtime commands (`plan`/`diff`/`status`/`apply`) and is independent of `diff config --stack`, which is a history filter.
-- Schema/template validation remains global where required for config integrity, but runtime render/plan/apply surface is target-scoped.
-
 ## Service Dependencies and Update Policy
 - Dependencies are explicit via `depends_on`.
 - Updates run in topological order; independent services update in parallel batches.
@@ -922,35 +858,6 @@ Values store:
 - Map keys ending in `~` perform keyed list merges using `_key` (default: `name`).
 - For scalar lists, `~` treats the item value as the key; unmatched items are appended (duplicates preserved).
 - Overlays deep-merge config/secret definitions; fields omitted in overlays inherit from base.
-
-Implementation checklist (`--stack` runtime targeting):
-1) CLI surface:
-- Add `Options.Stack string`.
-- Add persistent flag `--stack` with help text aligned to logical stack key semantics.
-
-2) Context and validation:
-- Extend project context/options to carry stack selector.
-- Validate stack existence during context load (same stage as deployment/partition checks).
-
-3) Filtering model:
-- Introduce stack filter in render/apply planning paths so desired state generation is stack-scoped.
-- Keep existing deployment/partition behavior and treat stack as additional intersection filter.
-
-4) Command wiring:
-- Pass stack selector through `plan`/`diff`/`status`/`apply` pipelines.
-- Scope warnings/output sections to selected stacks only.
-
-5) Prune guards:
-- For stack-scoped runs, constrain prune candidate selection to matching stack labels/scope IDs.
-- Keep non-stack-scoped behavior unchanged.
-
-6) State cache:
-- Include stack selector in state snapshot/cache compatibility checks to avoid false no-op cache hits across different stack scopes.
-
-7) Tests:
-- Add positive/negative selector validation tests.
-- Add command-level scope tests per command for shared and partitioned stacks.
-- Add prune safety regression tests proving no cross-stack deletions during stack-scoped apply.
 
 ## Resolve (Resolved Config Model)
 `resolve` prints the final resolved config model for the selected scope.
@@ -1136,19 +1043,6 @@ Error cases:
 - Unknown field path: fail with a field-not-found error naming the requested path.
 - Path resolves through a non-traversable scalar/list step: fail with a clear invalid-path error naming the blocked segment.
 - Omitted selectors leave multiple effective target contexts for the requested field: fail with an error that tells the user which selector to add.
-
-Implementation checklist:
-1) Resolution:
-- Reuse the same resolved-config pipeline as `resolve`.
-2) Path lookup:
-- Implement dotted-path lookup against the resolved config model with map-key traversal only for v1.
-3) Provenance tracking:
-- Capture provenance while merging repeated config files and applying import/overlay resolution rather than reconstructing it afterward.
-4) Output:
-- Print a stable, human-readable layer list and winner summary.
-5) Tests:
-- Add positive tests for repeated-config provenance, import provenance, and scoped overlay provenance.
-- Add negative tests for unknown paths and multi-target selector rejection.
 
 ## YAML Schema
 Outline:
@@ -1674,3 +1568,114 @@ Examples:
 - `examples/primary/secrets.yaml` provides a companion secrets values file for `--secrets-file`.
 - Example run: `swarmcp plan --config examples/primary/project.yaml --secrets-file examples/primary/secrets.yaml --values examples/primary/values/values.yaml.tmpl`
 - `examples/nginx/` provides a small, runnable nginx stack with configs, secrets, volumes, and an update-friendly HTML page.
+
+## Appendix A. Implementation Notes (Non-Normative)
+This appendix is non-normative. It records implementation-oriented notes and checklists that may change without changing the product contract.
+
+### Repeated `--config` Layering
+Implementation checklist:
+1. CLI surface:
+- Change `--config` from singular to repeatable while preserving `.swarmcp.project` compatibility.
+2. Loader:
+- Add a merged-config load path that accepts ordered config files, parses them as mapping documents, applies the field-policy merge rules, and then runs import resolution and validation once on the merged result.
+3. Path semantics:
+- Preserve the first config path as the base identity for relative paths, inferred values/secrets, and state/cache naming.
+4. Validation:
+- Reject later-file stack/service `overrides`.
+- Preserve existing sourced-vs-local validation rules on the final merged config.
+5. Tests:
+- Add merge tests for map merge, scalar replace, list replace, whole-object replace, and invalid later-file `overrides`.
+- Add command-loading tests proving repeated `--config` is honored consistently by `plan`, `diff`, `status`, `apply`, and `validate`.
+
+### Runtime `--stack` Targeting
+Notes:
+- `--stack` applies to runtime commands (`plan`/`diff`/`status`/`apply`) and is independent of `diff config --stack`, which is a history filter.
+- Schema/template validation remains global where required for config integrity, but runtime render/plan/apply surface is target-scoped.
+
+Implementation checklist:
+1. CLI surface:
+- Add `Options.Stack string`.
+- Add persistent flag `--stack` with help text aligned to logical stack key semantics.
+2. Context and validation:
+- Extend project context/options to carry stack selector.
+- Validate stack existence during context load (same stage as deployment/partition checks).
+3. Filtering model:
+- Introduce stack filter in render/apply planning paths so desired state generation is stack-scoped.
+- Keep existing deployment/partition behavior and treat stack as additional intersection filter.
+4. Command wiring:
+- Pass stack selector through `plan`/`diff`/`status`/`apply` pipelines.
+- Scope warnings/output sections to selected stacks only.
+5. Prune guards:
+- For stack-scoped runs, constrain prune candidate selection to matching stack labels/scope IDs.
+- Keep non-stack-scoped behavior unchanged.
+6. State cache:
+- Include stack selector in state snapshot/cache compatibility checks to avoid false no-op cache hits across different stack scopes.
+7. Tests:
+- Add positive/negative selector validation tests.
+- Add command-level scope tests per command for shared and partitioned stacks.
+- Add prune safety regression tests proving no cross-stack deletions during stack-scoped apply.
+
+### `explain` Provenance
+Implementation checklist:
+1. Resolution:
+- Reuse the same resolved-config pipeline as `resolve`.
+2. Path lookup:
+- Implement dotted-path lookup against the resolved config model with map-key traversal only for v1.
+3. Provenance tracking:
+- Capture provenance while merging repeated config files and applying import/overlay resolution rather than reconstructing it afterward.
+4. Output:
+- Print a stable, human-readable layer list and winner summary.
+5. Tests:
+- Add positive tests for repeated-config provenance, import provenance, and scoped overlay provenance.
+- Add negative tests for unknown paths and multi-target selector rejection.
+
+## Appendix B. Draft Design Areas (Non-Normative)
+This appendix is non-normative. It records draft design areas that have not yet been promoted to stable contract.
+
+### Volumes and Placement (Draft)
+- Volume policy defaults are configurable at the project level (driver, base path, and node label key).
+- Stack/service volume declarations define intent and mount targets; they do not override the base path.
+- Computed bind paths are derived from the project base path and scope:
+  - `<base>/<project>/<stack>` for stack-scoped volumes
+  - `<base>/<project>/<stack>/<service>` for service-scoped volumes
+  - `stack` is the resolved stack name (`<stack>` for shared, `<partition>_<stack>` for partitioned)
+  - Optional subpath is appended after the stack or service segment for finer granularity (defaults to the volume name when omitted).
+- Service-standard volumes:
+  - A reserved standard name provides per-service persistent binds with the service-scoped path above.
+  - The reserved name defaults to `service` and is configurable via `project.defaults.volumes.service_standard`.
+  - `project.defaults.volumes.standards` may not define the reserved name.
+  - Services may override the container `target`, `subpath`, and `readonly` for the service standard only.
+  - Placement/label requirements use a derived volume name: `<resolved_stack>.<service>` (e.g., `core.postgres`, `usw_api.redis`).
+- Example:
+```yaml
+project:
+  defaults:
+    volumes:
+      base_path: /srv/swarm
+      service_standard: persist
+      service_target: /data
+
+stacks:
+  core:
+    services:
+      postgres:
+        volumes:
+          - standard: persist
+            target: /var/lib/postgresql/data
+```
+- Bind mount prerequisites:
+  - Host paths must exist on target nodes before scheduling (Swarm will not create them).
+  - Path creation/ownership is a provisioning concern (bootstrap scripts, config management, or node init).
+- Volume declarations imply placement constraints:
+  - Each volume maps to a node label key/value pair (e.g., `swarmcp.volume.<volume>=true`).
+  - Services using a volume inherit the required node label constraint.
+  - If a service uses multiple volumes, all required labels must be satisfied.
+- Plan/status report volume placement checks using deployment targets and node volume/label declarations.
+- Node-volume mappings live in project config; the tool may auto-label nodes to satisfy placement.
+- Standard mounts:
+  - Defaults may define standard mounts for common ad-hoc binds.
+  - Standard mounts may declare required roles (e.g., `manager` for Docker socket access).
+- Node roles can be declared to identify managers for manager-only operations.
+- Omitted node roles imply `worker`.
+- Node label declarations are enforced; missing labels are applied when permitted.
+- For shared stacks, volume layouts use `_` as the partition directory.

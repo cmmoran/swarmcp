@@ -4,10 +4,14 @@
 !*.go
 !go.sum
 !go.mod
+!mkdocs.yml
+!requirements-docs.txt
+!Taskfile.yml
 !*.tmpl
 !*.md
 !LICENSE
 !/Dockerfile
+!**/Dockerfile
 AGENTS.md
 STATE.md
 .cache/

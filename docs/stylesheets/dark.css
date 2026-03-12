@@ -1,0 +1,220 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --panel: #151922;
+  --panel-alt: #1c2230;
+  --border: #2b3344;
+  --text: #e7ecf3;
+  --text-muted: #b7c1d1;
+  --link: #8ec5ff;
+  --link-hover: #b5d8ff;
+  --accent: #6fd3c2;
+  --code-bg: #0b0e14;
+}
+
+html,
+body,
+.wy-grid-for-nav,
+.wy-nav-content-wrap,
+.wy-nav-content {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+.wy-nav-side,
+.wy-side-nav-search,
+.wy-nav-top {
+  background: var(--panel) !important;
+}
+
+.wy-side-nav-search {
+  border-bottom: 1px solid var(--border);
+}
+
+.wy-menu-vertical a,
+.wy-side-nav-search > a,
+.wy-nav-top,
+.rst-content,
+.rst-content code,
+.rst-content pre,
+.rst-content tt,
+.rst-content p,
+.rst-content li,
+.rst-content h1,
+.rst-content h2,
+.rst-content h3,
+.rst-content h4,
+.rst-content h5,
+.rst-content h6 {
+  color: var(--text) !important;
+}
+
+.wy-menu-vertical a {
+  color: var(--text-muted) !important;
+}
+
+.wy-menu-vertical a:hover,
+.wy-menu-vertical a:focus,
+.wy-menu-vertical li.current > a,
+.wy-menu-vertical li.current > a:hover {
+  background: var(--panel-alt) !important;
+  color: var(--text) !important;
+}
+
+a {
+  color: var(--link) !important;
+}
+
+a:hover,
+a:focus {
+  color: var(--link-hover) !important;
+}
+
+.wy-breadcrumbs a,
+.rst-content a code,
+.rst-content a tt {
+  color: var(--link) !important;
+}
+
+.rst-content code,
+.rst-content tt,
+code,
+tt,
+pre {
+  background: var(--code-bg) !important;
+  border-color: var(--border) !important;
+}
+
+pre code {
+  background: transparent !important;
+}
+
+.rst-content pre,
+div[class^="highlight"] {
+  border: 1px solid var(--border) !important;
+}
+
+.rst-content table.docutils,
+.rst-content table.docutils th,
+.rst-content table.docutils td {
+  border-color: var(--border) !important;
+}
+
+.rst-content table.docutils thead th,
+.rst-content table.docutils tbody tr:nth-child(2n-1) td {
+  background: var(--panel) !important;
+}
+
+.rst-content table.docutils tbody tr:nth-child(2n) td {
+  background: var(--panel-alt) !important;
+}
+
+.wy-breadcrumbs,
+.wy-breadcrumbs li,
+.rst-footer,
+.rst-footer-buttons,
+.rst-content .caption,
+.rst-content .topic-title {
+  color: var(--text-muted) !important;
+}
+
+.rst-versions {
+  background: var(--panel) !important;
+  border-top: 1px solid var(--border) !important;
+}
+
+.rst-versions .rst-current-version {
+  display: flex !important;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+}
+
+.rst-versions .rst-current-version > span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.rst-versions .rst-current-version > span:first-child {
+  flex: 1 1 auto;
+}
+
+.rst-versions .rst-current-version > span:not(:first-child) {
+  flex: 0 0 auto;
+}
+
+.rst-versions .rst-current-version a {
+  color: var(--text) !important;
+}
+
+.rst-versions .rst-current-version a.fa-code-fork {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0 !important;
+}
+
+.rst-versions .rst-current-version a.fa-code-fork::before {
+  content: "\f09b";
+  font-family: FontAwesome;
+  font-size: 1.1rem;
+}
+
+.rst-versions .rst-current-version > span:not(:first-child) a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0 !important;
+}
+
+.rst-versions .rst-current-version > span:nth-child(2) a::before,
+.rst-versions .rst-current-version > span:nth-child(3) a::before {
+  font-family: FontAwesome;
+  font-size: 1rem;
+}
+
+.rst-versions .rst-current-version > span:nth-child(2) a::before {
+  content: "\f104";
+}
+
+.rst-versions .rst-current-version > span:nth-child(3) a::before {
+  content: "\f105";
+}
+
+@media (max-width: 480px) {
+  .rst-versions .rst-current-version {
+    gap: 0.5rem;
+  }
+
+  .rst-versions .rst-current-version a.fa-code-fork {
+    width: 1.25rem;
+  }
+
+  .rst-versions .rst-current-version > span:not(:first-child) a {
+    width: 1.25rem;
+  }
+}
+
+.wy-alert,
+.admonition,
+.rst-content .admonition {
+  background: var(--panel) !important;
+  border-color: var(--accent) !important;
+}
+
+.admonition-title,
+.rst-content .admonition-title {
+  background: var(--panel-alt) !important;
+  color: var(--text) !important;
+}
+
+hr {
+  border-color: var(--border) !important;
+}
