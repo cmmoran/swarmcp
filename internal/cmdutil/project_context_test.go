@@ -122,6 +122,86 @@ stacks:
 	}
 }
 
+func TestLoadProjectConfigAppliesDeploymentOverride(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "project.yaml")
+	writeFile(t, configPath, "project:\n  name: demo\n  deployments:\n    - qa\n    - prod\n  deployment: qa\n")
+
+	cfg, gotPath, err := LoadProjectConfig(ProjectOptions{
+		ConfigPath: configPath,
+		Deployment: "prod",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != configPath {
+		t.Fatalf("expected config path %q, got %q", configPath, gotPath)
+	}
+	if cfg.Project.Deployment != "prod" {
+		t.Fatalf("expected deployment override, got %q", cfg.Project.Deployment)
+	}
+}
+
+func TestResolveProjectScopeBuildsValuesScope(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "project.yaml")
+	writeFile(t, configPath, "project:\n  name: demo\n  partitions:\n    - dev\n")
+
+	cfg, _, err := LoadProjectConfig(ProjectOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	scope, err := ResolveProjectScope(cfg, ProjectOptions{Partition: "dev", Context: "demo"})
+	if err != nil {
+		t.Fatalf("resolve scope: %v", err)
+	}
+	if scope.Partition != "dev" {
+		t.Fatalf("expected partition dev, got %q", scope.Partition)
+	}
+	if scope.ContextName != "demo" {
+		t.Fatalf("expected context demo, got %q", scope.ContextName)
+	}
+	if scope.ValuesScope.Project != "demo" || scope.ValuesScope.Partition != "dev" {
+		t.Fatalf("unexpected values scope: %#v", scope.ValuesScope)
+	}
+}
+
+func TestLoadProjectInputsLoadsSelectedInputs(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "project.yaml")
+	writeFile(t, configPath, "project:\n  name: demo\n")
+	valuesDir := filepath.Join(dir, "values")
+	if err := os.MkdirAll(valuesDir, 0o755); err != nil {
+		t.Fatalf("values dir: %v", err)
+	}
+	writeFile(t, filepath.Join(valuesDir, "values.yaml"), "global:\n  foo: bar\n")
+	writeFile(t, filepath.Join(dir, "secrets.yaml"), "values:\n  token: abc\n")
+
+	cfg, _, err := LoadProjectConfig(ProjectOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	scope, err := ResolveProjectScope(cfg, ProjectOptions{})
+	if err != nil {
+		t.Fatalf("resolve scope: %v", err)
+	}
+	ctx := NewProjectContext(cfg, scope, ProjectOptions{})
+	if err := LoadProjectInputs(ctx, configPath, ProjectOptions{}, true, true); err != nil {
+		t.Fatalf("load inputs: %v", err)
+	}
+	if ctx.Secrets == nil || ctx.Secrets.Values["token"] != "abc" {
+		t.Fatalf("expected secrets to be loaded")
+	}
+	values, ok := ctx.Values.(map[string]any)
+	if !ok {
+		t.Fatalf("expected values map, got %T", ctx.Values)
+	}
+	global, ok := values["global"].(map[string]any)
+	if !ok || global["foo"] != "bar" {
+		t.Fatalf("expected values.global.foo to be 'bar'")
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

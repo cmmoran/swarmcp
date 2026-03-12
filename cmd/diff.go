@@ -22,59 +22,19 @@ var diffCmd = &cobra.Command{
 	Use:   "diff",
 	Short: "Show planned changes vs current Swarm state",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPaths, err := effectiveProjectConfigPaths()
+		targets, err := prepareRuntimeTargets()
 		if err != nil {
 			return err
 		}
-		releaseConfigPaths := effectiveReleaseConfigPaths()
-		configPath := configPaths[0]
-		deployments := deploymentTargets(opts.Deployments)
-		partitionFilters := normalizeSelectors(opts.Partitions)
-		stackFilters := normalizeSelectors(opts.Stacks)
 		out := cmd.OutOrStdout()
-		for deploymentIndex, deployment := range deployments {
-			if len(deployments) > 1 {
-				if deploymentIndex > 0 {
-					_, _ = fmt.Fprintln(out)
-				}
-				label := deployment
-				if label == "" {
-					label = "(default)"
-				}
-				_, _ = fmt.Fprintf(out, "target deployment: %s\n", label)
-			}
-
-			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPaths:        configPaths,
-				ReleaseConfigPaths: releaseConfigPaths,
-				ConfigPath:         configPath,
-				SecretsFile:        opts.SecretsFile,
-				ValuesFiles:        opts.ValuesFiles,
-				Deployment:         deployment,
-				Context:            opts.Context,
-				Offline:            opts.Offline,
-				Debug:              opts.Debug,
-			}, true, true)
-			if err != nil {
-				return err
-			}
-			cfg := projectCtx.Config
-			for _, partition := range partitionFilters {
-				if !cmdutil.PartitionInProject(cfg, partition) {
-					return fmt.Errorf("partition %q not found in project.partitions", partition)
-				}
-			}
-			for _, stack := range stackFilters {
-				if !cmdutil.StackInProject(cfg, stack) {
-					return fmt.Errorf("stack %q not found in stacks", stack)
-				}
-			}
-			desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilters, stackFilters, opts.AllowMissing, !opts.NoInfer)
+		return forEachRuntimeTarget(out, targets, runtimeTargetOptions{includeValues: true, includeSecrets: true}, func(target runtimeTarget) error {
+			cfg := target.projectCtx.Config
+			desired, err := apply.BuildDesiredState(cfg, target.projectCtx.Secrets, target.projectCtx.Values, target.partitionFilters, target.stackFilters, opts.AllowMissing, !opts.NoInfer)
 			if err != nil {
 				return err
 			}
 
-			client, err := projectCtx.SwarmClient()
+			client, err := target.projectCtx.SwarmClient()
 			if err != nil {
 				return err
 			}
@@ -83,12 +43,12 @@ var diffCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilters, stackFilters, !opts.NoInfer, preserve)
+			report, err := apply.BuildStatus(ctx, client, cfg, desired, target.projectCtx.Values, target.partitionFilters, target.stackFilters, !opts.NoInfer, preserve)
 			if err != nil {
 				return err
 			}
 
-			warnings := cmdutil.VolumePlacementWarnings(cfg, partitionFilters, stackFilters, opts.Debug)
+			warnings := cmdutil.VolumePlacementWarnings(cfg, target.partitionFilters, target.stackFilters, opts.Debug)
 			sortServiceStates(report.Services)
 			sortConfigSpecs(report.MissingConfigs)
 			sortSecretSpecs(report.MissingSecrets)
@@ -171,7 +131,7 @@ var diffCmd = &cobra.Command{
 					_, _ = fmt.Fprintf(out, "  - %s\n", cmdutil.ServiceScopeLabel(state.Stack, state.Partition, state.Service))
 				}
 			}
-			if err := printStateDiff(out, configPath, report, changedServices, missingServices); err != nil {
+			if err := printStateDiff(out, target.configPath, report, changedServices, missingServices); err != nil {
 				return err
 			}
 			if opts.Debug || debugContentEnabled {
@@ -188,8 +148,8 @@ var diffCmd = &cobra.Command{
 					return err
 				}
 			}
-		}
-		return nil
+			return nil
+		})
 	},
 }
 

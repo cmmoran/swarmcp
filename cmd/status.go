@@ -16,60 +16,19 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current Swarm status vs desired state",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPaths, err := effectiveProjectConfigPaths()
+		targets, err := prepareRuntimeTargets()
 		if err != nil {
 			return err
 		}
-		releaseConfigPaths := effectiveReleaseConfigPaths()
-		configPath := configPaths[0]
 		out := cmd.OutOrStdout()
-		deployments := deploymentTargets(opts.Deployments)
-		partitionFilters := normalizeSelectors(opts.Partitions)
-		stackFilters := normalizeSelectors(opts.Stacks)
-
-		for deploymentIndex, deployment := range deployments {
-			if len(deployments) > 1 {
-				if deploymentIndex > 0 {
-					_, _ = fmt.Fprintln(out)
-				}
-				label := deployment
-				if label == "" {
-					label = "(default)"
-				}
-				_, _ = fmt.Fprintf(out, "target deployment: %s\n", label)
-			}
-
-			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPaths:        configPaths,
-				ReleaseConfigPaths: releaseConfigPaths,
-				ConfigPath:         configPath,
-				SecretsFile:        opts.SecretsFile,
-				ValuesFiles:        opts.ValuesFiles,
-				Deployment:         deployment,
-				Context:            opts.Context,
-				Offline:            opts.Offline,
-				Debug:              opts.Debug,
-			}, true, true)
-			if err != nil {
-				return err
-			}
-			cfg := projectCtx.Config
-			for _, partition := range partitionFilters {
-				if !cmdutil.PartitionInProject(cfg, partition) {
-					return fmt.Errorf("partition %q not found in project.partitions", partition)
-				}
-			}
-			for _, stack := range stackFilters {
-				if !cmdutil.StackInProject(cfg, stack) {
-					return fmt.Errorf("stack %q not found in stacks", stack)
-				}
-			}
-			desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilters, stackFilters, opts.AllowMissing, !opts.NoInfer)
+		return forEachRuntimeTarget(out, targets, runtimeTargetOptions{includeValues: true, includeSecrets: true}, func(target runtimeTarget) error {
+			cfg := target.projectCtx.Config
+			desired, err := apply.BuildDesiredState(cfg, target.projectCtx.Secrets, target.projectCtx.Values, target.partitionFilters, target.stackFilters, opts.AllowMissing, !opts.NoInfer)
 			if err != nil {
 				return err
 			}
 
-			client, err := projectCtx.SwarmClient()
+			client, err := target.projectCtx.SwarmClient()
 			if err != nil {
 				return err
 			}
@@ -79,12 +38,12 @@ var statusCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			report, err := apply.BuildStatus(ctx, client, cfg, desired, projectCtx.Values, partitionFilters, stackFilters, !opts.NoInfer, preserve)
+			report, err := apply.BuildStatus(ctx, client, cfg, desired, target.projectCtx.Values, target.partitionFilters, target.stackFilters, !opts.NoInfer, preserve)
 			if err != nil {
 				return err
 			}
 
-			warnings := cmdutil.VolumePlacementWarnings(cfg, partitionFilters, stackFilters, opts.Debug)
+			warnings := cmdutil.VolumePlacementWarnings(cfg, target.partitionFilters, target.stackFilters, opts.Debug)
 			sortServiceStates(report.Services)
 			cmdutil.PrintWarnings(out, warnings)
 			_, _ = fmt.Fprintf(out, "status OK\nconfigs missing: %d\nsecrets missing: %d\nnetworks missing: %d\nconfigs stale: %d\nsecrets stale: %d\nconfigs drift: %d\nsecrets drift: %d\nconfigs preserved: %d\nsecrets preserved: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", len(report.MissingConfigs), len(report.MissingSecrets), len(report.MissingNetworks), len(report.StaleConfigs), len(report.StaleSecrets), len(report.DriftConfigs), len(report.DriftSecrets), report.Preserved.ConfigsPreserved, report.Preserved.SecretsPreserved, report.SkippedDeletes.Configs, report.SkippedDeletes.Secrets)
@@ -100,8 +59,8 @@ var statusCmd = &cobra.Command{
 					_, _ = fmt.Fprintf(out, "  - %s\n", item)
 				}
 			}
-		}
-		return nil
+			return nil
+		})
 	},
 }
 

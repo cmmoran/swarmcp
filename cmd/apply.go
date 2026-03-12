@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/cmmoran/swarmcp/internal/apply"
-	"github.com/cmmoran/swarmcp/internal/cmdutil"
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/state"
 	"github.com/spf13/cobra"
@@ -20,15 +19,10 @@ var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply desired state to Swarm",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPaths, err := effectiveProjectConfigPaths()
+		targets, err := prepareRuntimeTargets()
 		if err != nil {
 			return err
 		}
-		releaseConfigPaths := effectiveReleaseConfigPaths()
-		configPath := configPaths[0]
-		deployments := deploymentTargets(opts.Deployments)
-		partitionFilters := normalizeSelectors(opts.Partitions)
-		stackFilters := normalizeSelectors(opts.Stacks)
 		outputMode := strings.TrimSpace(opts.Output)
 		if outputMode == "" {
 			outputMode = "auto"
@@ -39,60 +33,23 @@ var applyCmd = &cobra.Command{
 		outputFlagSet := cmd.Flags().Changed("output")
 		noUI := opts.NoUI || outputFlagSet
 		out := cmd.OutOrStdout()
-
-		for deploymentIndex, deployment := range deployments {
-			if len(deployments) > 1 {
-				if deploymentIndex > 0 {
-					_, _ = fmt.Fprintln(out)
-				}
-				label := deployment
-				if label == "" {
-					label = "(default)"
-				}
-				_, _ = fmt.Fprintf(out, "target deployment: %s\n", label)
-			}
-
-			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPaths:        configPaths,
-				ReleaseConfigPaths: releaseConfigPaths,
-				ConfigPath:         configPath,
-				SecretsFile:        opts.SecretsFile,
-				ValuesFiles:        opts.ValuesFiles,
-				Deployment:         deployment,
-				Context:            opts.Context,
-				Offline:            opts.Offline,
-				Debug:              opts.Debug,
-			}, true, true)
-			if err != nil {
-				return err
-			}
-			cfg := projectCtx.Config
-			for _, partition := range partitionFilters {
-				if !cmdutil.PartitionInProject(cfg, partition) {
-					return fmt.Errorf("partition %q not found in project.partitions", partition)
-				}
-			}
-			for _, stack := range stackFilters {
-				if !cmdutil.StackInProject(cfg, stack) {
-					return fmt.Errorf("stack %q not found in stacks", stack)
-				}
-			}
-
-			values := projectCtx.Values
+		return forEachRuntimeTarget(out, targets, runtimeTargetOptions{includeValues: true, includeSecrets: true}, func(target runtimeTarget) error {
+			cfg := target.projectCtx.Config
+			values := target.projectCtx.Values
 			pruneServices := opts.Prune || opts.PruneServices
-			desired, err := apply.BuildDesiredState(cfg, projectCtx.Secrets, values, partitionFilters, stackFilters, opts.AllowMissing, !opts.NoInfer)
+			desired, err := apply.BuildDesiredState(cfg, target.projectCtx.Secrets, values, target.partitionFilters, target.stackFilters, opts.AllowMissing, !opts.NoInfer)
 			if err != nil {
 				return err
 			}
 
-			contextName := projectCtx.ContextName
-			client, err := projectCtx.SwarmClient()
+			contextName := target.projectCtx.ContextName
+			client, err := target.projectCtx.SwarmClient()
 			if err != nil {
 				return err
 			}
 
 			ctx := context.Background()
-			plan, err := apply.BuildPlan(ctx, client, cfg, desired, values, partitionFilters, stackFilters, !opts.NoInfer)
+			plan, err := apply.BuildPlan(ctx, client, cfg, desired, values, target.partitionFilters, target.stackFilters, !opts.NoInfer)
 			if err != nil {
 				return err
 			}
@@ -133,7 +90,7 @@ var applyCmd = &cobra.Command{
 					pruneOnly[name] = struct{}{}
 				}
 				if len(pruneOnly) > 0 {
-					pruneDeploys, err := apply.BuildStackDeploys(cfg, desired, values, partitionFilters, stackFilters, pruneOnly, nil, nil, !opts.NoInfer)
+					pruneDeploys, err := apply.BuildStackDeploys(cfg, desired, values, target.partitionFilters, target.stackFilters, pruneOnly, nil, nil, !opts.NoInfer)
 					if err != nil {
 						return err
 					}
@@ -152,15 +109,15 @@ var applyCmd = &cobra.Command{
 
 			planSummary := buildPlanSummary(plan)
 			partitionState := ""
-			if len(partitionFilters) == 1 {
-				partitionState = partitionFilters[0]
+			if len(target.partitionFilters) == 1 {
+				partitionState = target.partitionFilters[0]
 			}
 			stackState := ""
-			if len(stackFilters) == 1 {
-				stackState = stackFilters[0]
+			if len(target.stackFilters) == 1 {
+				stackState = target.stackFilters[0]
 			}
-			skipCache := len(deployments) > 1 || len(partitionFilters) > 1 || len(stackFilters) > 1
-			cached, cacheOK := loadStateCache(configPath, cfg, partitionState, stackState)
+			skipCache := len(targets.deployments) > 1 || len(target.partitionFilters) > 1 || len(target.stackFilters) > 1
+			cached, cacheOK := loadStateCache(target.configPath, cfg, partitionState, stackState)
 			skipApply := !skipCache && cacheOK && cached.Command == "apply" && planSummaryZero(planSummary) && planSummariesEqual(cached.Plan, planSummary)
 			if !skipApply {
 				stackParallel := 0
@@ -172,7 +129,7 @@ var applyCmd = &cobra.Command{
 				}
 			}
 
-			statePath, err := planStatePath(configPath)
+			statePath, err := planStatePath(target.configPath)
 			if err != nil {
 				return err
 			}
@@ -187,7 +144,7 @@ var applyCmd = &cobra.Command{
 				Version:     state.CurrentVersion,
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 				Command:     "apply",
-				ConfigPath:  configPath,
+				ConfigPath:  target.configPath,
 				Project:     cfg.Project.Name,
 				Deployment:  cfg.Project.Deployment,
 				Partition:   partitionState,
@@ -221,8 +178,8 @@ var applyCmd = &cobra.Command{
 					_, _ = fmt.Fprintf(out, "  - %s\n", item)
 				}
 			}
-		}
-		return nil
+			return nil
+		})
 	},
 }
 

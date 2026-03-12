@@ -36,11 +36,23 @@ type ProjectContext struct {
 	clientFactory func(string) (swarm.Client, error)
 }
 
-func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets bool) (*ProjectContext, error) {
+type ProjectScope struct {
+	Partition   string
+	Stack       string
+	ContextName string
+	ValuesScope templates.Scope
+}
+
+func ProjectConfigPath(opts ProjectOptions) string {
 	configPath := opts.ConfigPath
 	if configPath == "" && len(opts.ConfigPaths) > 0 {
 		configPath = opts.ConfigPaths[0]
 	}
+	return configPath
+}
+
+func LoadProjectConfig(opts ProjectOptions) (*config.Config, string, error) {
+	configPath := ProjectConfigPath(opts)
 	var (
 		cfg *config.Config
 		err error
@@ -53,16 +65,19 @@ func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets 
 		cfg, err = config.LoadWithOptions(configPath, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	config.SetBaseDir(cfg, configPath)
 	if opts.Deployment != "" {
 		cfg.Project.Deployment = opts.Deployment
 	}
 	if err := config.ValidateDeployment(cfg); err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	return cfg, configPath, nil
+}
 
+func ResolveProjectScope(cfg *config.Config, opts ProjectOptions) (*ProjectScope, error) {
 	partition := opts.Partition
 	if partition != "" && !PartitionInProject(cfg, partition) {
 		return nil, fmt.Errorf("partition %q not found in project.partitions", partition)
@@ -74,9 +89,7 @@ func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets 
 
 	contextName := ResolveContext(cfg, opts.Context)
 	ConfigureTemplateNetworkResolver(contextName)
-
-	ctx := &ProjectContext{
-		Config:      cfg,
+	return &ProjectScope{
 		Partition:   partition,
 		Stack:       stack,
 		ContextName: contextName,
@@ -86,14 +99,15 @@ func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets 
 			Partition:      partition,
 			NetworksShared: config.NetworksSharedString(cfg, partition),
 		},
-		clientFactory: opts.ClientFactory,
-	}
+	}, nil
+}
 
+func LoadProjectInputs(ctx *ProjectContext, configPath string, opts ProjectOptions, includeValues bool, includeSecrets bool) error {
 	if includeSecrets {
-		secretsFile := InferSecretsFile(cfg, configPath, opts.SecretsFile)
+		secretsFile := InferSecretsFile(ctx.Config, configPath, opts.SecretsFile)
 		store, err := LoadSecretsStore(secretsFile)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		ctx.Secrets = store
 	}
@@ -102,11 +116,37 @@ func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets 
 		valuesFiles := InferValuesFiles(configPath, opts.ValuesFiles)
 		values, err := LoadValuesStore(valuesFiles, ctx.ValuesScope)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		ctx.Values = values
 	}
+	return nil
+}
 
+func NewProjectContext(cfg *config.Config, scope *ProjectScope, opts ProjectOptions) *ProjectContext {
+	return &ProjectContext{
+		Config:        cfg,
+		Partition:     scope.Partition,
+		Stack:         scope.Stack,
+		ContextName:   scope.ContextName,
+		ValuesScope:   scope.ValuesScope,
+		clientFactory: opts.ClientFactory,
+	}
+}
+
+func LoadProjectContext(opts ProjectOptions, includeValues bool, includeSecrets bool) (*ProjectContext, error) {
+	cfg, configPath, err := LoadProjectConfig(opts)
+	if err != nil {
+		return nil, err
+	}
+	scope, err := ResolveProjectScope(cfg, opts)
+	if err != nil {
+		return nil, err
+	}
+	ctx := NewProjectContext(cfg, scope, opts)
+	if err := LoadProjectInputs(ctx, configPath, opts, includeValues, includeSecrets); err != nil {
+		return nil, err
+	}
 	return ctx, nil
 }
 
