@@ -205,6 +205,21 @@ overlays:
 	}
 }
 
+func TestFilterExplainLayersMatchesStructuredValuesByNormalizedContent(t *testing.T) {
+	layers := []ExplainLayer{
+		{Label: "config project.yaml", Value: map[any]any{"order": "start-first", "parallelism": 2}},
+		{Label: "stack deployment overlay", Value: map[string]any{"parallelism": 2, "order": "start-first"}},
+	}
+
+	filtered := filterExplainLayers(layers, map[string]any{"order": "start-first", "parallelism": 2})
+	if len(filtered) != 2 {
+		t.Fatalf("expected both layers to remain after normalized match, got %#v", filtered)
+	}
+	if filtered[1].Label != "stack deployment overlay" {
+		t.Fatalf("unexpected winner after normalized match: %#v", filtered)
+	}
+}
+
 func TestDebugResolvedMapAppliesOverlaySources(t *testing.T) {
 	cfg := &Config{
 		Project: Project{

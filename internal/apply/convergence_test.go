@@ -7,7 +7,7 @@ import (
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/render"
 	dockerapi "github.com/docker/docker/api/types/swarm"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func TestConvergenceMinimalService(t *testing.T) {

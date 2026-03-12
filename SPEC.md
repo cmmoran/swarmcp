@@ -487,7 +487,7 @@ YAML quoting guidance:
 
 Service labels are rendered as templates using the service scope.
 Service definition string fields (env values, image, command/args, placement constraints, network names, volume targets, config/secret mount fields, etc.) are rendered as templates using the service scope.
-Bare `{{ ... }}` scalars in `project.yaml` are auto-quoted before YAML parsing, so unquoted template expressions are accepted.
+Bare `{{ ... }}` scalars in `project.yaml` are accepted for compatibility. The loader normalizes them before/while parsing so unquoted template expressions continue to work, including a narrow fallback path for cases that do not parse as standard YAML scalars initially.
 
 Tokens:
 - `{partition}` is omitted for shared stacks unless noted otherwise.

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 type AutoLabelWriteOptions struct {

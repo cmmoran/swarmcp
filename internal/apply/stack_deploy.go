@@ -15,7 +15,7 @@ import (
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/sliceutil"
 	"github.com/docker/docker/api/types/mount"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 type StackDeploy struct {

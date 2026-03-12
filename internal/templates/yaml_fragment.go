@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/yamlutil"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func ResolveYAMLFragment(content string, fragment string) (string, error) {

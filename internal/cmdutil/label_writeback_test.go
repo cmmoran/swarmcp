@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/cmmoran/swarmcp/internal/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func TestWriteAutoNodeLabelsAddsAndKeeps(t *testing.T) {

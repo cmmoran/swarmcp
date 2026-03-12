@@ -15,7 +15,7 @@ import (
 	"github.com/cmmoran/swarmcp/internal/swarm"
 	"github.com/cmmoran/swarmcp/internal/templates"
 	"github.com/cmmoran/swarmcp/internal/yamlutil"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 type diffDebugOptions struct {

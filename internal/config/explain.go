@@ -1,9 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/cmmoran/swarmcp/internal/yamlutil"
 )
 
 type ExplainLayer struct {
@@ -32,47 +35,32 @@ func ExplainConfigPath(opts ExplainOptions, fieldPath string) (*ExplainResult, e
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("field path is required")
 	}
-	cfg, trace, err := LoadFilesWithReleaseTrace(opts.ConfigPaths, opts.ReleaseConfigPaths, opts.LoadOptions, segments)
+	resolvedModel, err := LoadResolvedModelTrace(ResolvedModelOptions{
+		ConfigPaths:        opts.ConfigPaths,
+		ReleaseConfigPaths: opts.ReleaseConfigPaths,
+		Deployment:         opts.Deployment,
+		Partition:          opts.Partition,
+		Stack:              opts.Stack,
+		LoadOptions:        opts.LoadOptions,
+	}, segments)
 	if err != nil {
 		return nil, err
 	}
-	if opts.Deployment != "" {
-		cfg.Project.Deployment = opts.Deployment
-	}
-	if err := ValidateDeployment(cfg); err != nil {
-		return nil, err
-	}
-	if opts.Partition != "" && !partitionExists(cfg, opts.Partition) {
-		return nil, fmt.Errorf("partition %q not found in project.partitions", opts.Partition)
-	}
-	if opts.Stack != "" {
-		if _, ok := cfg.Stacks[opts.Stack]; !ok {
-			return nil, fmt.Errorf("stack %q not found in stacks", opts.Stack)
-		}
-	}
-	stackFilters := []string(nil)
-	if opts.Stack != "" {
-		stackFilters = []string{opts.Stack}
-	}
-	resolved, err := DebugResolvedMap(cfg, opts.Partition, stackFilters)
-	if err != nil {
-		return nil, err
-	}
-	finalValue, ok, detail := lookupPathValueDetailed(resolved, segments)
+	finalValue, ok, detail := lookupPathValueDetailed(resolvedModel.Model, segments)
 	if !ok {
 		if detail != "" {
 			return nil, fmt.Errorf("invalid field path %q: %s", fieldPath, detail)
 		}
-		suggestions := explainPathSuggestions(resolved, segments)
+		suggestions := explainPathSuggestions(resolvedModel.Model, segments)
 		if len(suggestions) == 0 {
 			return nil, fmt.Errorf("field path %q not found", fieldPath)
 		}
 		return nil, fmt.Errorf("field path %q not found (available: %s)", fieldPath, strings.Join(suggestions, ", "))
 	}
 
-	layers := append([]ExplainLayer(nil), trace.Layers...)
-	layers = append(layers, trace.ImportLayers...)
-	layers = append(layers, ResolvedOverlayLayers(cfg, segments, opts.Partition)...)
+	layers := append([]ExplainLayer(nil), resolvedModel.Trace.Layers...)
+	layers = append(layers, resolvedModel.Trace.ImportLayers...)
+	layers = append(layers, resolvedModel.Trace.OverlayLayers...)
 	layers = filterExplainLayers(layers, finalValue)
 	if len(layers) == 0 {
 		layers = []ExplainLayer{{Label: "resolved config", Value: finalValue}}
@@ -101,8 +89,9 @@ func filterExplainLayers(layers []ExplainLayer, finalValue any) []ExplainLayer {
 		return nil
 	}
 	lastMatch := -1
+	finalKey := explainValueKey(finalValue)
 	for i, layer := range out {
-		if fmt.Sprint(layer.Value) == fmt.Sprint(finalValue) {
+		if explainValueKey(layer.Value) == finalKey {
 			lastMatch = i
 		}
 	}
@@ -110,6 +99,15 @@ func filterExplainLayers(layers []ExplainLayer, finalValue any) []ExplainLayer {
 		return out[:lastMatch+1]
 	}
 	return out
+}
+
+func explainValueKey(value any) string {
+	normalized := yamlutil.NormalizeValue(value)
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return fmt.Sprintf("%#v", normalized)
+	}
+	return string(data)
 }
 
 func partitionExists(cfg *Config, partition string) bool {

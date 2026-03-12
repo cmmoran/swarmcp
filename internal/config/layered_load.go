@@ -5,8 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cmmoran/swarmcp/internal/yamlutil"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func LoadFiles(paths []string) (*Config, error) {
@@ -149,20 +148,7 @@ func loadConfigDocument(configPath string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	normalized := normalizeTemplateScalars(string(data))
-	var parsed any
-	if err := yaml.Unmarshal([]byte(normalized), &parsed); err != nil {
-		return nil, err
-	}
-	value := yamlutil.NormalizeValue(parsed)
-	if value == nil {
-		return map[string]any{}, nil
-	}
-	mapped, ok := value.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("root is not a mapping")
-	}
-	return mapped, nil
+	return parseNormalizedYAMLDocument(data)
 }
 
 func mergeLayeredConfigMaps(base map[string]any, overlay map[string]any, path []string) (map[string]any, error) {

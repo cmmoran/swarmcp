@@ -5,9 +5,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/yamlutil"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func ResolveImports(cfg *Config, opts LoadOptions) error {
@@ -184,6 +185,10 @@ func traceServiceImportLayer(trace *LoadTrace, stackName string, serviceName str
 	trace.recordImport(label, document, trace.FieldPath[4:])
 }
 
+func sourceLabel(path string) string {
+	return strings.TrimSpace(path)
+}
+
 func sourceBaseDirFromPath(basePath string) (string, error) {
 	if IsGitSource(basePath) {
 		parsed, ok, err := parseGitSource(basePath)
@@ -214,17 +219,17 @@ func loadSourceMap(ref SourceRef, baseDir string, opts LoadOptions) (map[string]
 	if err != nil {
 		return nil, "", err
 	}
-	normalizedText := normalizeTemplateScalars(string(data))
-	var parsed any
-	if err := yaml.Unmarshal([]byte(normalizedText), &parsed); err != nil {
+	out, err := parseNormalizedYAMLDocument(data)
+	if err != nil {
 		return nil, "", err
 	}
-	normalized := yamlutil.NormalizeValue(parsed)
-	if normalized == nil {
-		return map[string]any{}, path, nil
+	if out == nil {
+		out = map[string]any{}
 	}
-	out, ok := normalized.(map[string]any)
-	if !ok {
+	if len(out) == 0 {
+		return out, path, nil
+	}
+	if _, ok := any(out).(map[string]any); !ok {
 		return nil, "", fmt.Errorf("expected map at root of %q", path)
 	}
 	return out, path, nil

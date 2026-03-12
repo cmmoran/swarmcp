@@ -169,3 +169,82 @@ stacks:
 		t.Fatalf("expected stack config vault_conf")
 	}
 }
+
+func TestNormalizeTemplateScalarsQuotesBareMappingTemplate(t *testing.T) {
+	input := "source: {{ config_value \"app\" }}\n"
+	got := normalizeTemplateScalars(input)
+	want := "source: '{{ config_value \"app\" }}'\n"
+	if got != want {
+		t.Fatalf("unexpected normalized mapping scalar:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsQuotesBareListTemplate(t *testing.T) {
+	input := "- {{ config_value \"app\" }}\n"
+	got := normalizeTemplateScalars(input)
+	want := "- '{{ config_value \"app\" }}'\n"
+	if got != want {
+		t.Fatalf("unexpected normalized list scalar:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsPreservesInlineComment(t *testing.T) {
+	input := "source: {{ config_value \"app\" }} # comment\n"
+	got := normalizeTemplateScalars(input)
+	want := "source: '{{ config_value \"app\" }}' # comment\n"
+	if got != want {
+		t.Fatalf("unexpected normalized scalar with comment:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsDoesNotTouchQuotedTemplate(t *testing.T) {
+	input := "source: \"{{ config_value \\\"app\\\" }}\"\n"
+	got := normalizeTemplateScalars(input)
+	if got != input {
+		t.Fatalf("expected quoted template scalar to remain unchanged:\nwant: %q\ngot:  %q", input, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsDoesNotTouchEmbeddedTemplateText(t *testing.T) {
+	input := "source: prefix-{{ config_value \"app\" }}\n"
+	got := normalizeTemplateScalars(input)
+	want := "source: 'prefix-{{ config_value \"app\" }}'\n"
+	if got != want {
+		t.Fatalf("expected embedded template text to be quoted:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsQuotesBareFlowTemplate(t *testing.T) {
+	input := "source: {{ config_value \"app\" }}\n"
+	got := normalizeTemplateScalars(input)
+	want := "source: '{{ config_value \"app\" }}'\n"
+	if got != want {
+		t.Fatalf("unexpected normalized bare flow template:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsDoesNotTouchUnbalancedTemplateText(t *testing.T) {
+	input := "source: prefix-{{ config_value \"app\"\n"
+	got := normalizeTemplateScalars(input)
+	if got != input {
+		t.Fatalf("expected unbalanced template text to remain unchanged:\nwant: %q\ngot:  %q", input, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsFallbackHandlesRuntimeValueWithBackticks(t *testing.T) {
+	input := "source: {{ runtime_value `{project}_{stack}` }}\n"
+	got := normalizeTemplateScalars(input)
+	want := "source: '{{ runtime_value `{project}_{stack}` }}'\n"
+	if got != want {
+		t.Fatalf("unexpected normalized fallback scalar:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsFallbackHandlesEmbeddedTemplateWithBackticks(t *testing.T) {
+	input := "source: prefix-{{ runtime_value `{project}_{stack}` }}\n"
+	got := normalizeTemplateScalars(input)
+	want := "source: 'prefix-{{ runtime_value `{project}_{stack}` }}'\n"
+	if got != want {
+		t.Fatalf("unexpected normalized fallback embedded scalar:\nwant: %q\ngot:  %q", want, got)
+	}
+}

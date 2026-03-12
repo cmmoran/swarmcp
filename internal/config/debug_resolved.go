@@ -5,10 +5,14 @@ import (
 	"sort"
 
 	"github.com/cmmoran/swarmcp/internal/yamlutil"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func DebugResolvedMap(cfg *Config, partition string, stackFilters []string) (map[string]any, error) {
+	return debugResolvedMapWithTrace(cfg, partition, stackFilters, nil)
+}
+
+func debugResolvedMapWithTrace(cfg *Config, partition string, stackFilters []string, trace *LoadTrace) (map[string]any, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is nil")
 	}
@@ -16,9 +20,9 @@ func DebugResolvedMap(cfg *Config, partition string, stackFilters []string) (map
 	if err != nil {
 		return nil, err
 	}
-	projectMap["sources"] = resolvedProjectSources(cfg, partition)
-	projectMap["configs"] = cfg.ProjectConfigDefs(partition)
-	projectMap["secrets"] = cfg.ProjectSecretDefs(partition)
+	projectMap["sources"] = resolvedProjectSourcesWithTrace(cfg, partition, trace)
+	projectMap["configs"] = cfg.projectConfigDefsWithTrace(partition, trace)
+	projectMap["secrets"] = cfg.projectSecretDefsWithTrace(partition, trace)
 	if partition != "" {
 		projectMap["partitions"] = []string{partition}
 	}
@@ -35,11 +39,11 @@ func DebugResolvedMap(cfg *Config, partition string, stackFilters []string) (map
 			return nil, err
 		}
 		delete(stackMap, "overlays")
-		stackMap["sources"] = resolvedStackSources(cfg, stackName, partition)
-		stackMap["configs"] = cfg.StackConfigDefs(stackName, partition)
-		stackMap["secrets"] = cfg.StackSecretDefs(stackName, partition)
+		stackMap["sources"] = resolvedStackSourcesWithTrace(cfg, stackName, partition, trace)
+		stackMap["configs"] = cfg.stackConfigDefsWithTrace(stackName, partition, trace)
+		stackMap["secrets"] = cfg.stackSecretDefsWithTrace(stackName, partition, trace)
 
-		services, err := cfg.StackServices(stackName, partition)
+		services, err := cfg.stackServicesWithTrace(stackName, partition, trace)
 		if err != nil {
 			return nil, err
 		}
@@ -59,7 +63,7 @@ func DebugResolvedMap(cfg *Config, partition string, stackFilters []string) (map
 		}
 		stackMap["services"] = serviceMap
 
-		partitionsMap, err := debugResolvedPartitions(cfg, stackName, stack, partition)
+		partitionsMap, err := debugResolvedPartitions(cfg, stackName, stack, partition, trace)
 		if err != nil {
 			return nil, err
 		}
@@ -78,7 +82,7 @@ func DebugResolvedMap(cfg *Config, partition string, stackFilters []string) (map
 	})
 }
 
-func debugResolvedPartitions(cfg *Config, stackName string, stack Stack, partition string) (map[string]any, error) {
+func debugResolvedPartitions(cfg *Config, stackName string, stack Stack, partition string, trace *LoadTrace) (map[string]any, error) {
 	if partition != "" {
 		part, ok := stack.Partitions[partition]
 		if !ok {
@@ -88,9 +92,9 @@ func debugResolvedPartitions(cfg *Config, stackName string, stack Stack, partiti
 		if err != nil {
 			return nil, err
 		}
-		mapped["sources"] = resolvedStackPartitionSources(cfg, stackName, partition)
-		mapped["configs"] = cfg.StackPartitionConfigDefs(stackName, partition)
-		mapped["secrets"] = cfg.StackPartitionSecretDefs(stackName, partition)
+		mapped["sources"] = resolvedStackPartitionSourcesWithTrace(cfg, stackName, partition, trace)
+		mapped["configs"] = cfg.stackPartitionConfigDefsWithTrace(stackName, partition, trace)
+		mapped["secrets"] = cfg.stackPartitionSecretDefsWithTrace(stackName, partition, trace)
 		return map[string]any{partition: mapped}, nil
 	}
 
@@ -108,9 +112,9 @@ func debugResolvedPartitions(cfg *Config, stackName string, stack Stack, partiti
 		if err != nil {
 			return nil, err
 		}
-		mapped["sources"] = resolvedStackPartitionSources(cfg, stackName, name)
-		mapped["configs"] = cfg.StackPartitionConfigDefs(stackName, name)
-		mapped["secrets"] = cfg.StackPartitionSecretDefs(stackName, name)
+		mapped["sources"] = resolvedStackPartitionSourcesWithTrace(cfg, stackName, name, trace)
+		mapped["configs"] = cfg.stackPartitionConfigDefsWithTrace(stackName, name, trace)
+		mapped["secrets"] = cfg.stackPartitionSecretDefsWithTrace(stackName, name, trace)
 		partitions[name] = mapped
 	}
 	return partitions, nil
@@ -171,6 +175,10 @@ func normalizeResolvedMap(value any) (map[string]any, error) {
 }
 
 func resolvedProjectSources(cfg *Config, partition string) Sources {
+	return resolvedProjectSourcesWithTrace(cfg, partition, nil)
+}
+
+func resolvedProjectSourcesWithTrace(cfg *Config, partition string, trace *LoadTrace) Sources {
 	base := cfg.Project.Sources
 	deployOverlay := cfg.deploymentOverlay()
 	projectDeploy := Sources{}
@@ -181,27 +189,35 @@ func resolvedProjectSources(cfg *Config, partition string) Sources {
 	}
 	merged := mergeSources(base)
 	if hasSources(projectDeploy) && !projectDeploySealed {
+		recordProjectSourcesOverlayTrace(trace, "project deployment overlay", projectDeploy)
 		merged = mergeSources(merged, projectDeploy)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
 		if overlay.Project.Sealed || !hasSources(overlay.Project.Sources) {
 			continue
 		}
+		recordProjectSourcesOverlayTrace(trace, "project partition overlay", overlay.Project.Sources)
 		merged = mergeSources(merged, overlay.Project.Sources)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
 		if !overlay.Project.Sealed || !hasSources(overlay.Project.Sources) {
 			continue
 		}
+		recordProjectSourcesOverlayTrace(trace, "project partition overlay", overlay.Project.Sources)
 		merged = mergeSources(merged, overlay.Project.Sources)
 	}
 	if hasSources(projectDeploy) && projectDeploySealed {
+		recordProjectSourcesOverlayTrace(trace, "project deployment overlay", projectDeploy)
 		merged = mergeSources(merged, projectDeploy)
 	}
 	return merged
 }
 
 func resolvedStackSources(cfg *Config, stackName string, partition string) Sources {
+	return resolvedStackSourcesWithTrace(cfg, stackName, partition, nil)
+}
+
+func resolvedStackSourcesWithTrace(cfg *Config, stackName string, partition string, trace *LoadTrace) Sources {
 	stack, ok := cfg.Stacks[stackName]
 	if !ok {
 		return Sources{}
@@ -209,37 +225,45 @@ func resolvedStackSources(cfg *Config, stackName string, partition string) Sourc
 	merged := mergeSources(stack.Sources)
 	if overlay := cfg.deploymentOverlay(); overlay != nil {
 		if stackOverlay := overlayStack(overlay, stackName); stackOverlay != nil && !stackOverlay.Sealed && hasSources(stackOverlay.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, nil, "project deployment overlay", stackOverlay.Sources)
 			merged = mergeSources(merged, stackOverlay.Sources)
 		}
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
 		if stackOverlay := overlayStack(&overlay, stackName); stackOverlay != nil && !stackOverlay.Sealed && hasSources(stackOverlay.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, nil, "project partition overlay", stackOverlay.Sources)
 			merged = mergeSources(merged, stackOverlay.Sources)
 		}
 	}
 	if overlay := cfg.stackDeploymentOverlay(stackName); overlay != nil && !overlay.Sealed && hasSources(overlay.Sources) {
+		recordStackSourcesOverlayTrace(trace, stackName, nil, "stack deployment overlay", overlay.Sources)
 		merged = mergeSources(merged, overlay.Sources)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
 		if !overlay.Sealed && hasSources(overlay.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, nil, "stack partition overlay", overlay.Sources)
 			merged = mergeSources(merged, overlay.Sources)
 		}
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
 		if overlay.Sealed && hasSources(overlay.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, nil, "stack partition overlay", overlay.Sources)
 			merged = mergeSources(merged, overlay.Sources)
 		}
 	}
 	if overlay := cfg.stackDeploymentOverlay(stackName); overlay != nil && overlay.Sealed && hasSources(overlay.Sources) {
+		recordStackSourcesOverlayTrace(trace, stackName, nil, "stack deployment overlay", overlay.Sources)
 		merged = mergeSources(merged, overlay.Sources)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
 		if stackOverlay := overlayStack(&overlay, stackName); stackOverlay != nil && stackOverlay.Sealed && hasSources(stackOverlay.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, nil, "project partition overlay", stackOverlay.Sources)
 			merged = mergeSources(merged, stackOverlay.Sources)
 		}
 	}
 	if overlay := cfg.deploymentOverlay(); overlay != nil {
 		if stackOverlay := overlayStack(overlay, stackName); stackOverlay != nil && stackOverlay.Sealed && hasSources(stackOverlay.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, nil, "project deployment overlay", stackOverlay.Sources)
 			merged = mergeSources(merged, stackOverlay.Sources)
 		}
 	}
@@ -247,6 +271,10 @@ func resolvedStackSources(cfg *Config, stackName string, partition string) Sourc
 }
 
 func resolvedStackPartitionSources(cfg *Config, stackName string, partition string) Sources {
+	return resolvedStackPartitionSourcesWithTrace(cfg, stackName, partition, nil)
+}
+
+func resolvedStackPartitionSourcesWithTrace(cfg *Config, stackName string, partition string, trace *LoadTrace) Sources {
 	stack, ok := cfg.Stacks[stackName]
 	if !ok {
 		return Sources{}
@@ -259,45 +287,85 @@ func resolvedStackPartitionSources(cfg *Config, stackName string, partition stri
 	deployOverlay := cfg.deploymentOverlay()
 	if deployOverlay != nil {
 		if part := overlayStackPartition(deployOverlay, stackName, partition); part != nil && !part.Sealed && hasSources(part.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, []string{"partitions", partition}, "project deployment overlay", part.Sources)
 			merged = mergeSources(merged, part.Sources)
 		}
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
 		if part := overlayStackPartition(&overlay, stackName, partition); part != nil && !part.Sealed && hasSources(part.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, []string{"partitions", partition}, "project partition overlay", part.Sources)
 			merged = mergeSources(merged, part.Sources)
 		}
 	}
 	if overlay := cfg.stackDeploymentOverlay(stackName); overlay != nil {
 		if part, ok := overlay.Partitions[partition]; ok && !part.Sealed && hasSources(part.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, []string{"partitions", partition}, "stack deployment overlay", part.Sources)
 			merged = mergeSources(merged, part.Sources)
 		}
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
 		if part, ok := overlay.Partitions[partition]; ok && !part.Sealed && hasSources(part.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, []string{"partitions", partition}, "stack partition overlay", part.Sources)
 			merged = mergeSources(merged, part.Sources)
 		}
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
 		if part, ok := overlay.Partitions[partition]; ok && part.Sealed && hasSources(part.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, []string{"partitions", partition}, "stack partition overlay", part.Sources)
 			merged = mergeSources(merged, part.Sources)
 		}
 	}
 	if overlay := cfg.stackDeploymentOverlay(stackName); overlay != nil {
 		if part, ok := overlay.Partitions[partition]; ok && part.Sealed && hasSources(part.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, []string{"partitions", partition}, "stack deployment overlay", part.Sources)
 			merged = mergeSources(merged, part.Sources)
 		}
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
 		if part := overlayStackPartition(&overlay, stackName, partition); part != nil && part.Sealed && hasSources(part.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, []string{"partitions", partition}, "project partition overlay", part.Sources)
 			merged = mergeSources(merged, part.Sources)
 		}
 	}
 	if deployOverlay != nil {
 		if part := overlayStackPartition(deployOverlay, stackName, partition); part != nil && part.Sealed && hasSources(part.Sources) {
+			recordStackSourcesOverlayTrace(trace, stackName, []string{"partitions", partition}, "project deployment overlay", part.Sources)
 			merged = mergeSources(merged, part.Sources)
 		}
 	}
 	return merged
+}
+
+func recordProjectSourcesOverlayTrace(trace *LoadTrace, label string, sources Sources) {
+	recordSourcesOverlayTrace(trace, []string{"project"}, label, sources)
+}
+
+func recordStackSourcesOverlayTrace(trace *LoadTrace, stackName string, extraPrefix []string, label string, sources Sources) {
+	prefix := []string{"stacks", stackName}
+	prefix = append(prefix, extraPrefix...)
+	recordSourcesOverlayTrace(trace, prefix, label, sources)
+}
+
+func recordSourcesOverlayTrace(trace *LoadTrace, prefix []string, label string, sources Sources) {
+	if trace == nil || !hasSources(sources) {
+		return
+	}
+	path := append(append([]string(nil), prefix...), "sources")
+	if len(trace.FieldPath) < len(path)+1 {
+		return
+	}
+	for i := range path {
+		if trace.FieldPath[i] != path[i] {
+			return
+		}
+	}
+	mapped, err := structToMap(sources)
+	if err != nil {
+		return
+	}
+	if value, ok := lookupPathValue(mapped, trace.FieldPath[len(path):]); ok {
+		trace.recordOverlay(label, value)
+	}
 }
 
 func mergeSources(base Sources, overlays ...Sources) Sources {

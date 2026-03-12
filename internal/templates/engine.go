@@ -11,7 +11,7 @@ import (
 
 	"github.com/Masterminds/sprig/v3"
 	"github.com/cmmoran/swarmcp/internal/yamlutil"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 type Resolver interface {

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 func ResolveSource(source string, scope Scope, data any, engine *Engine, values any, baseDir string, opts config.LoadOptions) (string, error) {

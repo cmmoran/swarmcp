@@ -1,29 +1,109 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/cmmoran/swarmcp/internal/yamlutil"
 	"github.com/dlclark/regexp2"
+	"go.yaml.in/yaml/v4"
 )
 
 func normalizeTemplateScalars(input string) string {
-	lines := strings.Split(input, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+	current := input
+	for attempts := 0; attempts < 8; attempts++ {
+		var root yaml.Node
+		if err := yaml.Unmarshal([]byte(current), &root); err != nil {
+			// Keep a narrow compatibility path for non-standard bare template scalars
+			// that still fail initial YAML parsing (for example backtick-heavy values in
+			// real project configs). The normal path is node-based; this recovery path
+			// only rewrites candidate lines near the parser-reported failure window.
+			next, changed := normalizeTemplateScalarsTextFallback(current, err)
+			if !changed {
+				return current
+			}
+			current = next
 			continue
 		}
-		if prefix, value, suffix, ok := splitTemplateScalar(line); ok {
-			lines[i] = prefix + "'" + escapeSingleQuotes(value) + "'" + suffix
+		normalizeTemplateScalarNode(&root)
+		var buf bytes.Buffer
+		encoder := yaml.NewEncoder(&buf)
+		encoder.SetIndent(2)
+		if err := encoder.Encode(&root); err != nil {
+			_ = encoder.Close()
+			return current
 		}
+		if err := encoder.Close(); err != nil {
+			return current
+		}
+		return buf.String()
 	}
-	return strings.Join(lines, "\n")
+	return current
 }
 
-func splitTemplateScalar(line string) (string, string, string, bool) {
+func normalizeTemplateScalarsTextFallback(input string, parseErr error) (string, bool) {
+	lines := strings.Split(input, "\n")
+	start, limit := fallbackLineWindow(parseErr, len(lines))
+	changed := false
+	for i := start; i < limit; i++ {
+		rewritten, ok := rewriteTemplateScalarLine(lines[i])
+		if !ok || rewritten == lines[i] {
+			continue
+		}
+		lines[i] = rewritten
+		changed = true
+	}
+	return strings.Join(lines, "\n"), changed
+}
+
+func rewriteTemplateScalarLine(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return line, false
+	}
+	prefix, value, suffix, ok := splitTemplateScalarLine(line)
+	if !ok {
+		return line, false
+	}
+	comment := suffix
+	if comment != "" {
+		comment = " " + comment
+	}
+	return prefix + "'" + value + "'" + comment, true
+}
+
+var yamlLinePattern = regexp.MustCompile(`line ([0-9]+):`)
+
+func fallbackLineWindow(parseErr error, lineCount int) (int, int) {
+	const contextLines = 8
+	if parseErr == nil {
+		return 0, lineCount
+	}
+	matches := yamlLinePattern.FindStringSubmatch(parseErr.Error())
+	if len(matches) != 2 {
+		return 0, lineCount
+	}
+	lineNo, err := strconv.Atoi(matches[1])
+	if err != nil || lineNo <= 0 {
+		return 0, lineCount
+	}
+	start := lineNo - 1 - contextLines
+	if start < 0 {
+		start = 0
+	}
+	end := lineNo + contextLines
+	if end > lineCount {
+		end = lineCount
+	}
+	return start, end
+}
+
+func splitTemplateScalarLine(line string) (string, string, string, bool) {
 	if prefix, value, suffix, ok := splitMappingTemplate(line); ok {
 		return prefix, value, suffix, true
 	}
@@ -41,7 +121,7 @@ func splitMappingTemplate(line string) (string, string, string, bool) {
 	prefix := line[:idx+1]
 	rest := strings.TrimSpace(line[idx+1:])
 	value, suffix := splitInlineComment(rest)
-	if isBareTemplateScalar(value) {
+	if containsBalancedTemplateDelimiters(value) {
 		return prefix + " ", value, suffix, true
 	}
 	return "", "", "", false
@@ -56,7 +136,7 @@ func splitListTemplate(line string) (string, string, string, bool) {
 	prefix := line[:prefixLen+2]
 	rest := strings.TrimSpace(trimmed[2:])
 	value, suffix := splitInlineComment(rest)
-	if isBareTemplateScalar(value) {
+	if containsBalancedTemplateDelimiters(value) {
 		return prefix, value, suffix, true
 	}
 	return "", "", "", false
@@ -84,18 +164,91 @@ func splitInlineComment(value string) (string, string) {
 	return strings.TrimSpace(value), ""
 }
 
-func isBareTemplateScalar(value string) bool {
+func normalizeTemplateScalarNode(node *yaml.Node) {
+	if node == nil {
+		return
+	}
+	for _, child := range node.Content {
+		normalizeTemplateScalarNode(child)
+	}
+	if rewriteBareTemplateFlowScalar(node) {
+		return
+	}
+	if node.Kind == yaml.ScalarNode && node.Style == 0 && containsBalancedTemplateDelimiters(node.Value) {
+		node.Style = yaml.SingleQuotedStyle
+		node.Tag = "!!str"
+	}
+}
+
+func rewriteBareTemplateFlowScalar(node *yaml.Node) bool {
+	if node == nil || node.Kind != yaml.MappingNode || node.Style != yaml.FlowStyle {
+		return false
+	}
+	if len(node.Content) != 2 {
+		return false
+	}
+	inner, ok := bareTemplateFlowValue(node)
+	if !ok {
+		return false
+	}
+	node.Kind = yaml.ScalarNode
+	node.Style = yaml.SingleQuotedStyle
+	node.Tag = "!!str"
+	node.Value = "{{ " + inner + " }}"
+	node.Content = nil
+	return true
+}
+
+func bareTemplateFlowValue(node *yaml.Node) (string, bool) {
+	if node == nil || len(node.Content) != 2 {
+		return "", false
+	}
+	key := node.Content[0]
+	value := node.Content[1]
+	if value.Kind != yaml.ScalarNode || value.Tag != "!!null" || value.Value != "" {
+		return "", false
+	}
+	if key.Kind != yaml.MappingNode || key.Style != yaml.FlowStyle || len(key.Content) != 2 {
+		return "", false
+	}
+	innerKey := key.Content[0]
+	innerValue := key.Content[1]
+	if innerKey.Kind != yaml.ScalarNode || innerKey.Tag != "!!str" || strings.TrimSpace(innerKey.Value) == "" {
+		return "", false
+	}
+	if innerValue.Kind != yaml.ScalarNode || innerValue.Tag != "!!null" || innerValue.Value != "" {
+		return "", false
+	}
+	return strings.TrimSpace(innerKey.Value), true
+}
+
+func containsBalancedTemplateDelimiters(value string) bool {
 	if value == "" {
 		return false
 	}
-	if strings.HasPrefix(value, "'") || strings.HasPrefix(value, "\"") {
+	firstOpen := strings.Index(value, "{{")
+	lastClose := strings.LastIndex(value, "}}")
+	if firstOpen < 0 || lastClose < 0 || firstOpen > lastClose {
 		return false
 	}
-	return strings.HasPrefix(value, "{{") && strings.HasSuffix(value, "}}")
+	return strings.Count(value, "{{") == strings.Count(value, "}}")
 }
 
-func escapeSingleQuotes(value string) string {
-	return strings.ReplaceAll(value, "'", "''")
+func parseNormalizedYAMLDocument(data []byte) (map[string]any, error) {
+	normalized := normalizeTemplateScalars(string(data))
+	var parsed any
+	if err := yaml.Unmarshal([]byte(normalized), &parsed); err != nil {
+		return nil, err
+	}
+	value := yamlutil.NormalizeValue(parsed)
+	if value == nil {
+		return map[string]any{}, nil
+	}
+	mapped, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("root is not a mapping")
+	}
+	return mapped, nil
 }
 
 type LoadOptions struct {

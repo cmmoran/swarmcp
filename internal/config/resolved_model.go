@@ -17,10 +17,28 @@ type ResolvedModel struct {
 	Partition   string
 	Stack       string
 	StackFilter []string
+	Trace       *LoadTrace
 }
 
 func LoadResolvedModel(opts ResolvedModelOptions) (*ResolvedModel, error) {
-	cfg, err := LoadFilesWithReleaseOptions(opts.ConfigPaths, opts.ReleaseConfigPaths, opts.LoadOptions)
+	return loadResolvedModel(opts, nil)
+}
+
+func LoadResolvedModelTrace(opts ResolvedModelOptions, fieldPath []string) (*ResolvedModel, error) {
+	trace := &LoadTrace{FieldPath: append([]string(nil), fieldPath...)}
+	return loadResolvedModel(opts, trace)
+}
+
+func loadResolvedModel(opts ResolvedModelOptions, trace *LoadTrace) (*ResolvedModel, error) {
+	var (
+		cfg *Config
+		err error
+	)
+	if trace != nil {
+		cfg, trace, err = LoadFilesWithReleaseTrace(opts.ConfigPaths, opts.ReleaseConfigPaths, opts.LoadOptions, trace.FieldPath)
+	} else {
+		cfg, err = LoadFilesWithReleaseOptions(opts.ConfigPaths, opts.ReleaseConfigPaths, opts.LoadOptions)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +58,7 @@ func LoadResolvedModel(opts ResolvedModelOptions) (*ResolvedModel, error) {
 		}
 		stackFilter = []string{opts.Stack}
 	}
-	model, err := DebugResolvedMap(cfg, opts.Partition, stackFilter)
+	model, err := debugResolvedMapWithTrace(cfg, opts.Partition, stackFilter, trace)
 	if err != nil {
 		return nil, err
 	}
@@ -50,5 +68,6 @@ func LoadResolvedModel(opts ResolvedModelOptions) (*ResolvedModel, error) {
 		Partition:   opts.Partition,
 		Stack:       opts.Stack,
 		StackFilter: stackFilter,
+		Trace:       trace,
 	}, nil
 }

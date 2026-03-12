@@ -8,7 +8,7 @@ import (
 
 	"github.com/cmmoran/swarmcp/internal/yamlutil"
 	"github.com/dlclark/regexp2"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 type Overlays struct {
@@ -380,10 +380,15 @@ func overlayMatchFromValue(value any) (OverlayMatch, error) {
 }
 
 func (cfg *Config) ProjectConfigDefs(partition string) map[string]ConfigDef {
+	return cfg.projectConfigDefsWithTrace(partition, nil)
+}
+
+func (cfg *Config) projectConfigDefsWithTrace(partition string, trace *LoadTrace) map[string]ConfigDef {
 	deployDefs, deploySealed := overlayProjectConfigs(cfg.deploymentOverlay())
 	overlays := cfg.partitionOverlays(partition)
 	merged := mergeConfigDefs(cfg.Project.Configs)
 	if len(deployDefs) > 0 && !deploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"project"}, "project deployment overlay", deployDefs)
 		merged = mergeConfigDefs(merged, deployDefs)
 	}
 	for _, overlay := range overlays {
@@ -391,6 +396,7 @@ func (cfg *Config) ProjectConfigDefs(partition string) map[string]ConfigDef {
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"project"}, "project partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	for _, overlay := range overlays {
@@ -398,18 +404,25 @@ func (cfg *Config) ProjectConfigDefs(partition string) map[string]ConfigDef {
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"project"}, "project partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	if len(deployDefs) > 0 && deploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"project"}, "project deployment overlay", deployDefs)
 		merged = mergeConfigDefs(merged, deployDefs)
 	}
 	return merged
 }
 
 func (cfg *Config) ProjectSecretDefs(partition string) map[string]SecretDef {
+	return cfg.projectSecretDefsWithTrace(partition, nil)
+}
+
+func (cfg *Config) projectSecretDefsWithTrace(partition string, trace *LoadTrace) map[string]SecretDef {
 	deployDefs, deploySealed := overlayProjectSecrets(cfg.deploymentOverlay())
 	merged := mergeSecretDefs(cfg.Project.Secrets)
 	if len(deployDefs) > 0 && !deploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"project"}, "project deployment overlay", deployDefs)
 		merged = mergeSecretDefs(merged, deployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -417,6 +430,7 @@ func (cfg *Config) ProjectSecretDefs(partition string) map[string]SecretDef {
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"project"}, "project partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -424,20 +438,27 @@ func (cfg *Config) ProjectSecretDefs(partition string) map[string]SecretDef {
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"project"}, "project partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	if len(deployDefs) > 0 && deploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"project"}, "project deployment overlay", deployDefs)
 		merged = mergeSecretDefs(merged, deployDefs)
 	}
 	return applySecretDefDefaults(merged)
 }
 
 func (cfg *Config) StackConfigDefs(stackName string, partition string) map[string]ConfigDef {
+	return cfg.stackConfigDefsWithTrace(stackName, partition, nil)
+}
+
+func (cfg *Config) stackConfigDefsWithTrace(stackName string, partition string, trace *LoadTrace) map[string]ConfigDef {
 	base := cfg.stackConfigs(stackName)
 	deployDefs, deploySealed := overlayStackConfigs(cfg.deploymentOverlay(), stackName)
 	stackDeployDefs, stackDeploySealed := overlayStackConfigsFromStack(cfg.stackDeploymentOverlay(stackName))
 	merged := mergeConfigDefs(base)
 	if len(deployDefs) > 0 && !deploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName}, "project deployment overlay", deployDefs)
 		merged = mergeConfigDefs(merged, deployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -445,9 +466,11 @@ func (cfg *Config) StackConfigDefs(stackName string, partition string) map[strin
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName}, "project partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	if len(stackDeployDefs) > 0 && !stackDeploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName}, "stack deployment overlay", stackDeployDefs)
 		merged = mergeConfigDefs(merged, stackDeployDefs)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
@@ -455,6 +478,7 @@ func (cfg *Config) StackConfigDefs(stackName string, partition string) map[strin
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName}, "stack partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
@@ -462,9 +486,11 @@ func (cfg *Config) StackConfigDefs(stackName string, partition string) map[strin
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName}, "stack partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	if len(stackDeployDefs) > 0 && stackDeploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName}, "stack deployment overlay", stackDeployDefs)
 		merged = mergeConfigDefs(merged, stackDeployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -472,20 +498,27 @@ func (cfg *Config) StackConfigDefs(stackName string, partition string) map[strin
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName}, "project partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	if len(deployDefs) > 0 && deploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName}, "project deployment overlay", deployDefs)
 		merged = mergeConfigDefs(merged, deployDefs)
 	}
 	return merged
 }
 
 func (cfg *Config) StackSecretDefs(stackName string, partition string) map[string]SecretDef {
+	return cfg.stackSecretDefsWithTrace(stackName, partition, nil)
+}
+
+func (cfg *Config) stackSecretDefsWithTrace(stackName string, partition string, trace *LoadTrace) map[string]SecretDef {
 	base := cfg.stackSecrets(stackName)
 	deployDefs, deploySealed := overlayStackSecrets(cfg.deploymentOverlay(), stackName)
 	stackDeployDefs, stackDeploySealed := overlayStackSecretsFromStack(cfg.stackDeploymentOverlay(stackName))
 	merged := mergeSecretDefs(base)
 	if len(deployDefs) > 0 && !deploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName}, "project deployment overlay", deployDefs)
 		merged = mergeSecretDefs(merged, deployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -493,9 +526,11 @@ func (cfg *Config) StackSecretDefs(stackName string, partition string) map[strin
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName}, "project partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	if len(stackDeployDefs) > 0 && !stackDeploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName}, "stack deployment overlay", stackDeployDefs)
 		merged = mergeSecretDefs(merged, stackDeployDefs)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
@@ -503,6 +538,7 @@ func (cfg *Config) StackSecretDefs(stackName string, partition string) map[strin
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName}, "stack partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
@@ -510,9 +546,11 @@ func (cfg *Config) StackSecretDefs(stackName string, partition string) map[strin
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName}, "stack partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	if len(stackDeployDefs) > 0 && stackDeploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName}, "stack deployment overlay", stackDeployDefs)
 		merged = mergeSecretDefs(merged, stackDeployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -520,20 +558,27 @@ func (cfg *Config) StackSecretDefs(stackName string, partition string) map[strin
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName}, "project partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	if len(deployDefs) > 0 && deploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName}, "project deployment overlay", deployDefs)
 		merged = mergeSecretDefs(merged, deployDefs)
 	}
 	return applySecretDefDefaults(merged)
 }
 
 func (cfg *Config) StackPartitionConfigDefs(stackName string, partition string) map[string]ConfigDef {
+	return cfg.stackPartitionConfigDefsWithTrace(stackName, partition, nil)
+}
+
+func (cfg *Config) stackPartitionConfigDefsWithTrace(stackName string, partition string, trace *LoadTrace) map[string]ConfigDef {
 	base := cfg.stackPartitionConfigs(stackName, partition)
 	deployDefs, deploySealed := overlayStackPartitionConfigs(cfg.deploymentOverlay(), stackName, partition)
 	stackDeployDefs, stackDeploySealed := overlayStackPartitionConfigsFromStack(cfg.stackDeploymentOverlay(stackName), partition)
 	merged := mergeConfigDefs(base)
 	if len(deployDefs) > 0 && !deploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "project deployment overlay", deployDefs)
 		merged = mergeConfigDefs(merged, deployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -541,9 +586,11 @@ func (cfg *Config) StackPartitionConfigDefs(stackName string, partition string) 
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "project partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	if len(stackDeployDefs) > 0 && !stackDeploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "stack deployment overlay", stackDeployDefs)
 		merged = mergeConfigDefs(merged, stackDeployDefs)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
@@ -551,6 +598,7 @@ func (cfg *Config) StackPartitionConfigDefs(stackName string, partition string) 
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "stack partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
@@ -558,9 +606,11 @@ func (cfg *Config) StackPartitionConfigDefs(stackName string, partition string) 
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "stack partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	if len(stackDeployDefs) > 0 && stackDeploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "stack deployment overlay", stackDeployDefs)
 		merged = mergeConfigDefs(merged, stackDeployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -568,20 +618,27 @@ func (cfg *Config) StackPartitionConfigDefs(stackName string, partition string) 
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "project partition overlay", defs)
 		merged = mergeConfigDefs(merged, defs)
 	}
 	if len(deployDefs) > 0 && deploySealed {
+		recordConfigDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "project deployment overlay", deployDefs)
 		merged = mergeConfigDefs(merged, deployDefs)
 	}
 	return merged
 }
 
 func (cfg *Config) StackPartitionSecretDefs(stackName string, partition string) map[string]SecretDef {
+	return cfg.stackPartitionSecretDefsWithTrace(stackName, partition, nil)
+}
+
+func (cfg *Config) stackPartitionSecretDefsWithTrace(stackName string, partition string, trace *LoadTrace) map[string]SecretDef {
 	base := cfg.stackPartitionSecrets(stackName, partition)
 	deployDefs, deploySealed := overlayStackPartitionSecrets(cfg.deploymentOverlay(), stackName, partition)
 	stackDeployDefs, stackDeploySealed := overlayStackPartitionSecretsFromStack(cfg.stackDeploymentOverlay(stackName), partition)
 	merged := mergeSecretDefs(base)
 	if len(deployDefs) > 0 && !deploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "project deployment overlay", deployDefs)
 		merged = mergeSecretDefs(merged, deployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -589,9 +646,11 @@ func (cfg *Config) StackPartitionSecretDefs(stackName string, partition string) 
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "project partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	if len(stackDeployDefs) > 0 && !stackDeploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "stack deployment overlay", stackDeployDefs)
 		merged = mergeSecretDefs(merged, stackDeployDefs)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
@@ -599,6 +658,7 @@ func (cfg *Config) StackPartitionSecretDefs(stackName string, partition string) 
 		if len(defs) == 0 || sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "stack partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
@@ -606,9 +666,11 @@ func (cfg *Config) StackPartitionSecretDefs(stackName string, partition string) 
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "stack partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	if len(stackDeployDefs) > 0 && stackDeploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "stack deployment overlay", stackDeployDefs)
 		merged = mergeSecretDefs(merged, stackDeployDefs)
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
@@ -616,12 +678,65 @@ func (cfg *Config) StackPartitionSecretDefs(stackName string, partition string) 
 		if len(defs) == 0 || !sealed {
 			continue
 		}
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "project partition overlay", defs)
 		merged = mergeSecretDefs(merged, defs)
 	}
 	if len(deployDefs) > 0 && deploySealed {
+		recordSecretDefOverlayTrace(trace, []string{"stacks", stackName, "partitions", partition}, "project deployment overlay", deployDefs)
 		merged = mergeSecretDefs(merged, deployDefs)
 	}
 	return applySecretDefDefaults(merged)
+}
+
+func recordConfigDefOverlayTrace(trace *LoadTrace, prefix []string, label string, defs map[string]ConfigDef) {
+	recordDefinitionOverlayTrace(trace, prefix, "configs", label, len(defs), func(name string) (map[string]any, bool) {
+		def, ok := defs[name]
+		if !ok {
+			return nil, false
+		}
+		mapped, err := structToMap(def)
+		if err != nil {
+			return nil, false
+		}
+		return mapped, true
+	})
+}
+
+func recordSecretDefOverlayTrace(trace *LoadTrace, prefix []string, label string, defs map[string]SecretDef) {
+	recordDefinitionOverlayTrace(trace, prefix, "secrets", label, len(defs), func(name string) (map[string]any, bool) {
+		def, ok := defs[name]
+		if !ok {
+			return nil, false
+		}
+		mapped, err := structToMap(def)
+		if err != nil {
+			return nil, false
+		}
+		return mapped, true
+	})
+}
+
+func recordDefinitionOverlayTrace(trace *LoadTrace, prefix []string, kind string, label string, count int, lookup func(name string) (map[string]any, bool)) {
+	if trace == nil || count == 0 {
+		return
+	}
+	basePath := append(append([]string(nil), prefix...), kind)
+	if len(trace.FieldPath) < len(basePath)+2 {
+		return
+	}
+	for i := range basePath {
+		if trace.FieldPath[i] != basePath[i] {
+			return
+		}
+	}
+	name := trace.FieldPath[len(basePath)]
+	mapped, ok := lookup(name)
+	if !ok {
+		return
+	}
+	if value, ok := lookupPathValue(mapped, trace.FieldPath[len(basePath)+1:]); ok {
+		trace.recordOverlay(label, value)
+	}
 }
 
 func (cfg *Config) deploymentOverlay() *Overlay {
@@ -1092,74 +1207,109 @@ func (cfg *Config) stackServices(stackName string) map[string]Service {
 }
 
 func (cfg *Config) StackServices(stackName string, partition string) (map[string]Service, error) {
+	return cfg.stackServicesWithTrace(stackName, partition, nil)
+}
+
+func (cfg *Config) stackServicesWithTrace(stackName string, partition string, trace *LoadTrace) (map[string]Service, error) {
 	base := cfg.stackServices(stackName)
 	deployUnsealed, deploySealed := splitOverlayServices(cfg.deploymentOverlay(), stackName)
 	stackDeployUnsealed, stackDeploySealed := splitOverlayStackServices(cfg.stackDeploymentOverlay(stackName))
+	recordServiceOverlayTrace(trace, stackName, "project deployment overlay", deployUnsealed)
 	merged, err := mergeServices(base, deployUnsealed)
 	if err != nil {
 		return nil, err
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
 		unsealed, _ := splitOverlayServices(&overlay, stackName)
+		recordServiceOverlayTrace(trace, stackName, "project partition overlay", unsealed)
 		merged, err = mergeServices(merged, unsealed)
 		if err != nil {
 			return nil, err
 		}
 	}
+	recordServiceOverlayTrace(trace, stackName, "stack deployment overlay", stackDeployUnsealed)
 	merged, err = mergeServices(merged, stackDeployUnsealed)
 	if err != nil {
 		return nil, err
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
 		unsealed, _ := splitOverlayStackServices(&overlay)
+		recordServiceOverlayTrace(trace, stackName, "stack partition overlay", unsealed)
 		merged, err = mergeServices(merged, unsealed)
 		if err != nil {
 			return nil, err
 		}
 	}
-	merged, err = mergeServices(merged, cfg.serviceDeploymentOverlays(stackName, false))
+	serviceDeployUnsealed := cfg.serviceDeploymentOverlays(stackName, false)
+	recordServiceOverlayTrace(trace, stackName, "service deployment overlay", serviceDeployUnsealed)
+	merged, err = mergeServices(merged, serviceDeployUnsealed)
 	if err != nil {
 		return nil, err
 	}
 	for _, overlay := range cfg.servicePartitionOverlayMaps(stackName, partition, false) {
+		recordServiceOverlayTrace(trace, stackName, "service partition overlay", overlay)
 		merged, err = mergeServices(merged, overlay)
 		if err != nil {
 			return nil, err
 		}
 	}
 	for _, overlay := range cfg.servicePartitionOverlayMaps(stackName, partition, true) {
+		recordServiceOverlayTrace(trace, stackName, "service partition overlay", overlay)
 		merged, err = mergeServices(merged, overlay)
 		if err != nil {
 			return nil, err
 		}
 	}
-	merged, err = mergeServices(merged, cfg.serviceDeploymentOverlays(stackName, true))
+	serviceDeploySealed := cfg.serviceDeploymentOverlays(stackName, true)
+	recordServiceOverlayTrace(trace, stackName, "service deployment overlay", serviceDeploySealed)
+	merged, err = mergeServices(merged, serviceDeploySealed)
 	if err != nil {
 		return nil, err
 	}
 	for _, overlay := range cfg.stackPartitionOverlays(stackName, partition) {
 		_, sealed := splitOverlayStackServices(&overlay)
+		recordServiceOverlayTrace(trace, stackName, "stack partition overlay", sealed)
 		merged, err = mergeServices(merged, sealed)
 		if err != nil {
 			return nil, err
 		}
 	}
+	recordServiceOverlayTrace(trace, stackName, "stack deployment overlay", stackDeploySealed)
 	merged, err = mergeServices(merged, stackDeploySealed)
 	if err != nil {
 		return nil, err
 	}
 	for _, overlay := range cfg.partitionOverlays(partition) {
 		_, sealed := splitOverlayServices(&overlay, stackName)
+		recordServiceOverlayTrace(trace, stackName, "project partition overlay", sealed)
 		merged, err = mergeServices(merged, sealed)
 		if err != nil {
 			return nil, err
 		}
 	}
+	recordServiceOverlayTrace(trace, stackName, "project deployment overlay", deploySealed)
 	merged, err = mergeServices(merged, deploySealed)
 	if err != nil {
 		return nil, err
 	}
 	return merged, nil
+}
+
+func recordServiceOverlayTrace(trace *LoadTrace, stackName string, label string, overlays map[string]OverlayService) {
+	if trace == nil || len(trace.FieldPath) < 5 {
+		return
+	}
+	if trace.FieldPath[0] != "stacks" || trace.FieldPath[1] != stackName || trace.FieldPath[2] != "services" {
+		return
+	}
+	serviceName := trace.FieldPath[3]
+	overlay, ok := overlays[serviceName]
+	if !ok {
+		return
+	}
+	if value, ok := lookupPathValue(overlay.Fields, trace.FieldPath[4:]); ok {
+		trace.recordOverlay(label, value)
+	}
 }
 
 func (cfg *Config) stackPartitionConfigs(stackName string, partition string) map[string]ConfigDef {
