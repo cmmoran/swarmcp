@@ -79,7 +79,7 @@ func forEachRuntimeTarget(out io.Writer, targets *runtimeTargets, opts runtimeTa
 }
 
 func loadValidatedProjectContext(targets *runtimeTargets, deployment string, loadOpts runtimeTargetOptions) (*cmdutil.ProjectContext, error) {
-	projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
+	projectOpts := cmdutil.ProjectOptions{
 		ConfigPaths:        targets.configPaths,
 		ReleaseConfigPaths: targets.releaseConfigPaths,
 		ConfigPath:         targets.configPath,
@@ -89,11 +89,19 @@ func loadValidatedProjectContext(targets *runtimeTargets, deployment string, loa
 		Context:            opts.Context,
 		Offline:            opts.Offline,
 		Debug:              opts.Debug,
-	}, loadOpts.includeValues, loadOpts.includeSecrets)
+	}
+	cfg, configPath, err := cmdutil.LoadProjectConfig(projectOpts)
 	if err != nil {
 		return nil, err
 	}
-	cfg := projectCtx.Config
+	scope, err := cmdutil.ResolveProjectScope(cfg, projectOpts)
+	if err != nil {
+		return nil, err
+	}
+	projectCtx := cmdutil.NewProjectContext(cfg, scope, projectOpts)
+	if err := cmdutil.LoadProjectInputs(projectCtx, configPath, projectOpts, loadOpts.includeValues, loadOpts.includeSecrets); err != nil {
+		return nil, err
+	}
 	for _, partition := range targets.partitionFilters {
 		if !cmdutil.PartitionInProject(cfg, partition) {
 			return nil, fmt.Errorf("partition %q not found in project.partitions", partition)
