@@ -24,12 +24,10 @@ var secretsCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Report missing secrets required by templates",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPaths, err := effectiveProjectConfigPaths()
+		configPath, err := primaryConfigPath()
 		if err != nil {
 			return err
 		}
-		releaseConfigPaths := effectiveReleaseConfigPaths()
-		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
@@ -38,21 +36,30 @@ var secretsCheckCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		cfg, err := config.LoadFilesWithReleaseOptions(configPaths, releaseConfigPaths, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+		projectOpts := cmdutil.ProjectOptions{
+			ConfigPaths:        normalizeConfigPaths(opts.ConfigPaths),
+			ReleaseConfigPaths: normalizeConfigPaths(opts.ReleaseConfigs),
+			ConfigPath:         configPath,
+			Deployment:         deployment,
+			Context:            opts.Context,
+			Partition:          partitionFilter,
+			SecretsFile:        opts.SecretsFile,
+			ValuesFiles:        opts.ValuesFiles,
+			Offline:            opts.Offline,
+			Debug:              opts.Debug,
+		}
+		cfg, _, err := cmdutil.LoadProjectConfig(projectOpts)
 		if err != nil {
 			return err
 		}
-		config.SetBaseDir(cfg, configPath)
-		if deployment != "" {
-			cfg.Project.Deployment = deployment
-		}
-		if err := config.ValidateDeployment(cfg); err != nil {
+		scope, err := cmdutil.ResolveProjectScope(cfg, projectOpts)
+		if err != nil {
 			return err
 		}
-		if partitionFilter != "" && !cmdutil.PartitionInProject(cfg, partitionFilter) {
-			return fmt.Errorf("partition %q not found in project.partitions", partitionFilter)
+		projectCtx := cmdutil.NewProjectContext(cfg, scope, projectOpts)
+		if err := cmdutil.LoadProjectInputs(projectCtx, configPath, projectOpts, true, true); err != nil {
+			return err
 		}
-		cmdutil.ConfigureTemplateNetworkResolver(cmdutil.ResolveContext(cfg, opts.Context))
 
 		useEngine := cfg.Project.SecretsEngine != nil && opts.SecretsFile == ""
 		secretsFile := ""
@@ -61,23 +68,8 @@ var secretsCheckCmd = &cobra.Command{
 		} else if !useEngine {
 			secretsFile = cmdutil.InferSecretsFile(cfg, configPath, opts.SecretsFile)
 		}
-		store, err := cmdutil.LoadSecretsStore(secretsFile)
-		if err != nil {
-			return err
-		}
-		valuesFiles := cmdutil.InferValuesFiles(configPath, opts.ValuesFiles)
-		valuesScope := templates.Scope{
-			Project:        cfg.Project.Name,
-			Deployment:     cfg.Project.Deployment,
-			Partition:      partitionFilter,
-			NetworksShared: config.NetworksSharedString(cfg, partitionFilter),
-		}
-		values, err := cmdutil.LoadValuesStore(valuesFiles, valuesScope)
-		if err != nil {
-			return err
-		}
 		partitionFilters := normalizeSelectors(opts.Partitions)
-		summary, err := render.RenderProject(cfg, store, values, partitionFilters, nil, true, !opts.NoInfer)
+		summary, err := render.RenderProject(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilters, nil, true, !opts.NoInfer)
 		if err != nil {
 			return err
 		}
@@ -114,25 +106,24 @@ var secretsPutCmd = &cobra.Command{
 	Short: "Write a secret value to the secrets file or engine",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPaths, err := effectiveProjectConfigPaths()
+		configPath, err := primaryConfigPath()
 		if err != nil {
 			return err
 		}
-		releaseConfigPaths := effectiveReleaseConfigPaths()
-		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
 		}
-		cfg, err := config.LoadFilesWithReleaseOptions(configPaths, releaseConfigPaths, config.LoadOptions{Offline: opts.Offline, Debug: opts.Debug})
+		projectOpts := cmdutil.ProjectOptions{
+			ConfigPaths:        normalizeConfigPaths(opts.ConfigPaths),
+			ReleaseConfigPaths: normalizeConfigPaths(opts.ReleaseConfigs),
+			ConfigPath:         configPath,
+			Deployment:         deployment,
+			Offline:            opts.Offline,
+			Debug:              opts.Debug,
+		}
+		cfg, _, err := cmdutil.LoadProjectConfig(projectOpts)
 		if err != nil {
-			return err
-		}
-		config.SetBaseDir(cfg, configPath)
-		if deployment != "" {
-			cfg.Project.Deployment = deployment
-		}
-		if err := config.ValidateDeployment(cfg); err != nil {
 			return err
 		}
 		if secretsPutPartition != "" && !cmdutil.PartitionInProject(cfg, secretsPutPartition) {
