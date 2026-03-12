@@ -1,10 +1,83 @@
 version: "3"
 
 vars:
+  GIT_TAG:
+    sh: git describe --tags --exact-match 2>/dev/null || true
+  GIT_BRANCH:
+    sh: git rev-parse --abbrev-ref HEAD 2>/dev/null || true
+  GIT_SHA:
+    sh: git rev-parse --short=12 HEAD 2>/dev/null || true
+  GIT_DATE:
+    sh: git show -s --format=%cd --date=format:%Y%m%d%H%M%S 2>/dev/null || true
+  UNRELEASED_VERSION:
+    sh: |
+      if [ -n "{{.GIT_SHA}}" ] && [ -n "{{.GIT_DATE}}" ]; then
+        echo "v0.0.0-{{.GIT_DATE}}-{{.GIT_SHA}}"
+      else
+        date -u +%Y%m%d%H%M%S-dev
+      fi
+  VERSION:
+    sh: |
+      if [ -n "{{.GIT_TAG}}" ]; then
+        echo "{{.GIT_TAG}}"
+      elif [ -n "{{.GIT_BRANCH}}" ] && [ "{{.GIT_BRANCH}}" != "HEAD" ]; then
+        echo "{{.GIT_BRANCH}}"
+      else
+        echo "{{.UNRELEASED_VERSION}}"
+      fi
+  CI_IMAGE: '{{default (printf "chrismoran/swarmcp:%s" .VERSION) .CI_IMAGE}}'
   DOCS_IMAGE: '{{default "swarmcp-docs" .DOCS_IMAGE}}'
   DOCS_PORT: '{{default "8000" .DOCS_PORT}}'
 
 tasks:
+  # Default entrypoint: runs the full local build pipeline.
+  default:
+    desc: Run the default build pipeline (tests + binary build)
+    deps: [build]
+
+  # Alias for users accustomed to `make all`.
+  all:
+    desc: Alias for default build pipeline
+    deps: [build]
+
+  # Run all Go unit tests in the module.
+  test:
+    desc: Run all Go tests
+    cmds:
+      - go test ./...
+
+  # Build the swarmcp binary with VERSION injected into cmd.Version.
+  build:
+    desc: Build swarmcp binary with version metadata
+    deps: [test]
+    cmds:
+      - go build -ldflags "-X github.com/cmmoran/swarmcp/cmd.Version={{.VERSION}}" -o swarmcp .
+
+  # Print the computed version string used by build and ci-image.
+  version:
+    desc: Print the computed build version used by build/ci-image
+    cmds:
+      - echo "{{.VERSION}}"
+
+  # Install the built binary to the user's local bin directory.
+  install:
+    desc: Install swarmcp binary to $HOME/.local/bin
+    deps: [build]
+    cmds:
+      - install -m 0755 swarmcp "$HOME/.local/bin/swarmcp"
+
+  # Generate the Traefik ACME DNS providers reference file.
+  acme_dns_providers.yaml:
+    desc: Regenerate Traefik ACME DNS providers YAML
+    cmds:
+      - python3 contrib/traefik/acme_dns_providers.py contrib/traefik/acme_dns_providers.yaml
+
+  # Build the CI helper container image used by pipeline jobs.
+  ci-image:
+    desc: "Build+push the swarmcp CI runner image using Docker context default (default tag: chrismoran/swarmcp:{{.VERSION}}; override CI_IMAGE to change tag)"
+    cmds:
+      - docker --context default buildx build --push -f contrib/ci/swarmcp-runner/Dockerfile -t {{.CI_IMAGE}} --build-arg VERSION={{.VERSION}} .
+
   docs:image:
     desc: Build the local docs image
     cmds:
