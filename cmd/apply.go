@@ -226,6 +226,12 @@ var applyCmd = &cobra.Command{
 	},
 }
 
+func init() {
+	applyCmd.Flags().BoolVar(&opts.Serial, "serial", false, "Deploy stacks one at a time during apply")
+	applyCmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable stack deployment UI and emit buffered output per stack")
+	applyCmd.Flags().StringVar(&opts.Output, "output", "auto", "Deploy output mode for apply: auto|summary|stack|error-only (explicitly setting this implies --no-ui)")
+}
+
 func planStatePath(configPath string) (string, error) {
 	if strings.TrimSpace(configPath) == "" {
 		return "", fmt.Errorf("config path is required to write state")

@@ -28,37 +28,23 @@ type ExplainOptions struct {
 }
 
 func ExplainConfigPath(opts ExplainOptions, fieldPath string) (*ExplainResult, error) {
-	segments := splitExplainPath(fieldPath)
+	segments := splitFieldPath(fieldPath)
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("field path is required")
 	}
-	cfg, err := LoadFilesWithReleaseOptions(opts.ConfigPaths, opts.ReleaseConfigPaths, opts.LoadOptions)
+	resolvedModel, err := LoadResolvedModel(ResolvedModelOptions{
+		ConfigPaths:        opts.ConfigPaths,
+		ReleaseConfigPaths: opts.ReleaseConfigPaths,
+		Deployment:         opts.Deployment,
+		Partition:          opts.Partition,
+		Stack:              opts.Stack,
+		LoadOptions:        opts.LoadOptions,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if opts.Deployment != "" {
-		cfg.Project.Deployment = opts.Deployment
-	}
-	if err := ValidateDeployment(cfg); err != nil {
-		return nil, err
-	}
-	if opts.Partition != "" && !partitionExists(cfg, opts.Partition) {
-		return nil, fmt.Errorf("partition %q not found in project.partitions", opts.Partition)
-	}
-	if opts.Stack != "" {
-		if _, ok := cfg.Stacks[opts.Stack]; !ok {
-			return nil, fmt.Errorf("stack %q not found in stacks", opts.Stack)
-		}
-	}
-
-	stackFilters := []string(nil)
-	if opts.Stack != "" {
-		stackFilters = []string{opts.Stack}
-	}
-	resolved, err := DebugResolvedMap(cfg, opts.Partition, stackFilters)
-	if err != nil {
-		return nil, err
-	}
+	cfg := resolvedModel.Config
+	resolved := resolvedModel.Model
 	finalValue, ok, detail := lookupPathValueDetailed(resolved, segments)
 	if !ok {
 		if detail != "" {
@@ -416,57 +402,6 @@ func decodeSourceRefMap(mapped map[string]any) (SourceRef, error) {
 		return SourceRef{}, fmt.Errorf("source.path is required")
 	}
 	return ref, nil
-}
-
-func lookupPathValue(root map[string]any, path []string) (any, bool) {
-	value, ok, _ := lookupPathValueDetailed(root, path)
-	return value, ok
-}
-
-func lookupPathValueDetailed(root map[string]any, path []string) (any, bool, string) {
-	if root == nil {
-		return nil, false, "root is empty"
-	}
-	var current any = root
-	for i, segment := range path {
-		mapped, ok := current.(map[string]any)
-		if !ok {
-			prefix := strings.Join(path[:i], ".")
-			if prefix == "" {
-				prefix = "(root)"
-			}
-			return nil, false, fmt.Sprintf("cannot traverse %q through non-map value at %s", segment, prefix)
-		}
-		current, ok = mapped[segment]
-		if !ok {
-			return nil, false, ""
-		}
-	}
-	return current, true, ""
-}
-
-func lookupPathMap(root map[string]any, path []string) (map[string]any, bool) {
-	value, ok := lookupPathValue(root, path)
-	if !ok {
-		return nil, false
-	}
-	mapped, ok := value.(map[string]any)
-	return mapped, ok
-}
-
-func splitExplainPath(path string) []string {
-	if strings.TrimSpace(path) == "" {
-		return nil
-	}
-	var out []string
-	for _, part := range strings.Split(path, ".") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			return nil
-		}
-		out = append(out, part)
-	}
-	return out
 }
 
 func filterExplainLayers(layers []ExplainLayer, finalValue any) []ExplainLayer {

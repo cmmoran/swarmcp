@@ -57,13 +57,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&opts.DebugContent, "debug-content", false, "Print rendered config/secret content")
 	rootCmd.PersistentFlags().IntVar(&opts.DebugContentMax, "debug-content-max", 0, "Max bytes of rendered content to print (0 for unlimited)")
 	rootCmd.PersistentFlags().BoolVar(&opts.Debug, "debug", false, "Enable debug output")
-	rootCmd.PersistentFlags().BoolVar(&opts.DebugConfig, "debug-config", false, "Print the resolved config model for the selected target")
 	rootCmd.PersistentFlags().BoolVar(&opts.Prune, "prune", false, "Remove unused managed configs/secrets and prune removed services")
 	rootCmd.PersistentFlags().BoolVar(&opts.PruneServices, "prune-services", false, "Prune removed services without touching configs/secrets")
 	rootCmd.PersistentFlags().IntVar(&opts.Preserve, "preserve", 0, "Preserve the most recent unused configs/secrets when pruning (0 for none)")
-	rootCmd.PersistentFlags().BoolVar(&opts.Serial, "serial", false, "Deploy stacks one at a time during apply")
-	rootCmd.PersistentFlags().BoolVar(&opts.NoUI, "no-ui", false, "Disable stack deployment UI and emit buffered output per stack")
-	rootCmd.PersistentFlags().StringVar(&opts.Output, "output", "auto", "Deploy output mode for apply: auto|summary|stack|error-only (explicitly setting this implies --no-ui)")
 	rootCmd.PersistentFlags().BoolVar(&opts.Confirm, "confirm", false, "Enable confirmation prompts for prune operations")
 	rootCmd.PersistentFlags().BoolVar(&opts.Offline, "offline", false, "Disable remote fetches; use cached sources only")
 
@@ -75,6 +71,7 @@ func init() {
 	rootCmd.AddCommand(bootstrapCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(resolveCmd)
 }
 
 func shouldShowUsage(err error) bool {

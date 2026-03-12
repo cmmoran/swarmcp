@@ -10,13 +10,11 @@ import (
 
 	"github.com/cmmoran/swarmcp/internal/apply"
 	"github.com/cmmoran/swarmcp/internal/cmdutil"
-	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/cmmoran/swarmcp/internal/state"
 	"github.com/cmmoran/swarmcp/internal/swarm"
 	"github.com/cmmoran/swarmcp/internal/templates"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var planProgressEnabled = true
@@ -34,11 +32,6 @@ var planCmd = &cobra.Command{
 		deployments := deploymentTargets(opts.Deployments)
 		partitionFilters := normalizeSelectors(opts.Partitions)
 		stackFilters := normalizeSelectors(opts.Stacks)
-		if opts.DebugConfig {
-			if len(deployments) > 1 || len(partitionFilters) > 1 || len(stackFilters) > 1 {
-				return fmt.Errorf("--debug-config requires a single target; repeated --deployment, --partition, and --stack are not supported")
-			}
-		}
 		progress := newPlanProgressReporter(cmd.ErrOrStderr(), planProgressEnabled)
 		out := cmd.OutOrStdout()
 
@@ -79,20 +72,6 @@ var planCmd = &cobra.Command{
 			for _, stack := range stackFilters {
 				if !cmdutil.StackInProject(cfg, stack) {
 					return fmt.Errorf("stack %q not found in stacks", stack)
-				}
-			}
-			if opts.DebugConfig {
-				resolvedConfig, err := config.DebugResolvedMap(cfg, singleSelectorValue(partitionFilters), stackFilters)
-				if err != nil {
-					return err
-				}
-				encoded, err := yaml.Marshal(resolvedConfig)
-				if err != nil {
-					return err
-				}
-				_, _ = fmt.Fprintln(out, "debug config:")
-				for _, line := range strings.Split(strings.TrimRight(string(encoded), "\n"), "\n") {
-					_, _ = fmt.Fprintln(out, line)
 				}
 			}
 			nodesInScope := cmdutil.ResolveDeploymentNodes(cfg)

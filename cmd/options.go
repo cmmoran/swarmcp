@@ -26,5 +26,4 @@ type Options struct {
 	Offline         bool
 	PruneAutoLabels bool
 	DiffSources     bool
-	DebugConfig     bool
 }

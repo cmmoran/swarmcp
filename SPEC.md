@@ -22,6 +22,7 @@
 - [State and Cache](#state-and-cache)
 - [Execution Targeting (Deployment + Partition + Stack)](#execution-targeting-deployment--partition--stack)
 - [CLI (Cobra)](#cli-cobra)
+- [Resolve (Resolved Config Model)](#resolve-resolved-config-model)
 - [Explain (Config Provenance)](#explain-config-provenance)
 - [YAML Schema](#yaml-schema)
 - [Examples](#examples)
@@ -905,37 +906,9 @@ Notes:
 
 Debug output:
 - `plan --debug` prints derived physical names and labels for rendered configs/secrets.
-- `plan --debug-config` prints the resolved config model after repeated `--config` layering, import resolution, and scoped overlay application for the selected target.
 - `plan --debug-content` prints rendered config/secret content.
 - `plan --debug-content-max <bytes>` prints content with a max length (0 for unlimited).
 - `plan` prints required bind paths for services with volume mounts (and eligible nodes when deployment targets/nodes are configured).
-- `plan --debug-config` prints before the normal plan summary.
-- `plan --debug-config` defaults to YAML output.
-- `plan --debug-config` excludes rendered secret values, rendered config/secret payload content, Swarm state, and internal loader/runtime fields.
-- `plan --debug-config` is single-target introspection; repeated `--deployment`, `--partition`, or `--stack` selectors should be rejected when this flag is set.
-
-Acceptance criteria:
-- `plan --debug-config` prints the resolved config model for the active target before the normal plan summary.
-- Output reflects repeated `--config` layering, runtime deployment selection, import resolution, and scoped overlays.
-- Output excludes rendered payload content, secret values, Swarm state, and internal loader/runtime fields.
-- Multi-target selector invocations are rejected when `--debug-config` is set.
-
-Example:
-```bash
-swarmcp plan \
-  --config project.yaml \
-  --config releases/qa.yaml \
-  --deployment qa \
-  --partition dev \
-  --stack core \
-  --debug-config
-```
-
-Error cases:
-- Repeated `--deployment` with `--debug-config`: fail with a single-target-only error.
-- Repeated `--partition` with `--debug-config`: fail with a single-target-only error.
-- Repeated `--stack` with `--debug-config`: fail with a single-target-only error.
-- Unknown selected deployment/partition/stack: fail with the existing selector validation error before any debug-config output is printed.
 
 Values store:
 - `--values <path>` (repeatable) loads one or more YAML/JSON files and merges them.
@@ -979,41 +952,138 @@ Implementation checklist (`--stack` runtime targeting):
 - Add command-level scope tests per command for shared and partitioned stacks.
 - Add prune safety regression tests proving no cross-stack deletions during stack-scoped apply.
 
+## Resolve (Resolved Config Model)
+`resolve` prints the final resolved config model for the selected scope.
+
+Example:
+```bash
+swarmcp resolve \
+  --config project.yaml \
+  --release-config releases/prod-2026-03-10.yaml \
+  --deployment prod \
+  --partition blue \
+  --stack core
+```
+
+Purpose:
+- `resolve` is a config introspection command.
+- It answers what config model SwarmCP computed after layering and imports, what deployment/partition/stack scoped overlays contributed to the final result, and what subtree exists at a selected field path.
+- It does not query Swarm, does not compute a reconciliation plan, and does not print rendered config/secret payload bodies or secret values.
+
+Resolution pipeline:
+1. Load repeated `--config` files left to right.
+2. Apply repeated `--release-config` overlays.
+3. Apply runtime `--deployment` selection.
+4. Resolve stack and service imports.
+5. Apply deployment, partition, stack, and service overlays for the active scope.
+6. Print the resulting resolved config model or selected subtree.
+
+Output:
+- Default output format is YAML.
+- `--output json` prints JSON.
+- Output must be machine-readable and must not include banners, summaries, or status lines.
+- Output excludes rendered config/secret payload content, secret values, Swarm runtime state, and internal loader/runtime-only fields.
+
+Flags:
+- `--config <path>` repeatable
+- `--release-config <path>` repeatable
+- `--deployment <name>`
+- `--partition <name>`
+- `--stack <name>`
+- `--offline`
+- `--output yaml|json`
+- `--path <field-path>`
+
+Scope rules:
+- `--deployment` accepts at most one value.
+- `--partition` accepts at most one value.
+- `--stack` accepts at most one value.
+- If `--deployment` is omitted, `project.deployment` is used if set; otherwise deployment-specific overlays are not selected.
+- If `--partition` is omitted, `resolve` may print all partitions in scope.
+- If `--stack` is omitted, `resolve` may print all stacks in scope.
+- `resolve` is allowed to print a broad model when selectors are omitted.
+
+Path lookup:
+- `--path` is evaluated against the exact resolved model that `resolve` would otherwise print.
+- `resolve` does not perform additional implicit narrowing for path lookup.
+- If the selected path points to a scalar, print only that scalar value.
+- If the selected path points to a map/object or list, print only that subtree.
+- If the selected path does not exist in the resolved model, fail with a field-path-not-found error.
+- Field paths use dot notation and are rooted at the resolved model.
+
+Acceptance criteria:
+- `resolve` prints the resolved model after repeated `--config` layering, repeated `--release-config`, runtime deployment selection, import resolution, and scoped overlay application.
+- `resolve` does not query Swarm.
+- `resolve --output json` produces valid JSON with no extra text.
+- `resolve --path` prints only the selected subtree or scalar.
+- Repeated `--deployment`, `--partition`, and `--stack` values are rejected.
+
+Error cases:
+- Missing project config: fail with the existing config-path error.
+- Repeated `--deployment`: fail with a single-value selector error.
+- Repeated `--partition`: fail with a single-value selector error.
+- Repeated `--stack`: fail with a single-value selector error.
+- Unknown selected deployment/partition/stack: fail with the existing selector validation error.
+- Unknown field path passed via `--path`: fail with a field-path-not-found error.
+- Invalid `--output` value: fail with an output-format error.
+
 ## Explain (Config Provenance)
-`explain` is a config-model provenance command. It answers why a final resolved field has its current value for a single selected target.
+`explain` reports why a resolved field has its final value.
 
 Example:
 ```bash
 swarmcp explain \
   --config project.yaml \
-  --config releases/qa.yaml \
-  --deployment qa \
-  --partition dev \
+  --release-config releases/prod-2026-03-10.yaml \
+  --deployment prod \
+  --partition blue \
   --stack core \
   stacks.core.services.api.image
 ```
 
-Input model:
-- `explain` consumes the same resolved config model as `plan --debug-config`.
-- Repeated `--config` layering is applied first.
-- Runtime deployment selection is applied next.
-- Imports are resolved next.
-- Deployment/partition/stack/service overlays are then applied for the selected target.
+Purpose:
+- `explain` is a provenance command built on the same resolved config pipeline as `resolve`.
+- It answers what the final resolved value is at a field path, which layers contributed to that value, and which layer won after precedence was applied.
+- `explain` is intended to explain the resolved config model, not rendered artifact content or runtime behavior.
 
-Scope:
-- `explain` is single-target only.
-- Repeated `--deployment`, `--partition`, or `--stack` selectors should be rejected.
-- The requested field path is evaluated against the resolved model for the active target.
+Resolution pipeline:
+1. Load repeated `--config` files left to right.
+2. Apply repeated `--release-config` overlays.
+3. Apply runtime `--deployment` selection.
+4. Resolve stack and service imports.
+5. Apply deployment, partition, stack, and service overlays for the active scope.
+6. Evaluate the requested field path against the resulting resolved model.
+7. Print the final value, contributing layers, and winning layer.
+
+Flags:
+- `--config <path>` repeatable
+- `--release-config <path>` repeatable
+- `--deployment <name>`
+- `--partition <name>`
+- `--stack <name>`
+- `--offline`
+
+Scope rules:
+- `--deployment` accepts at most one value.
+- `--partition` accepts at most one value.
+- `--stack` accepts at most one value.
+- `explain` must operate on one effective target context for the requested field.
+- `explain` must not silently choose one of several valid target contexts.
+
+Narrowing behavior:
+- If the requested field is project-scoped and unaffected by partition or stack selection, omitted `--partition` or `--stack` values are allowed.
+- If omitted selectors would leave multiple effective partition-, stack-, or service-overlay contexts that could affect the requested field, `explain` must fail and require the user to narrow the target.
+- `swarmcp explain --config project.yaml project.name` may succeed without `--partition` or `--stack`.
+- `swarmcp explain --config project.yaml stacks.core.services.api.image` may require `--partition` and/or `--stack` if overlays or partition-specific structure could affect the result.
 
 Field-path syntax:
 - Paths are rooted at the resolved config model.
 - Dot notation is used for map/object traversal.
-- Initial v1 examples:
-  - `project.deployment`
-  - `project.sources.ref`
-  - `stacks.core.services.api.image`
-  - `stacks.core.services.api.env.LOG_LEVEL`
-- v1 should target schema keys and map keys directly; no wildcard or query syntax is required.
+
+Examples:
+- `project.name`
+- `stacks.core.services.api.image`
+- `stacks.core.partitions.dev.configs.app_yaml`
 
 Output contract:
 - Print the requested field path.
@@ -1024,7 +1094,10 @@ Output contract:
 Layer types to report in v1:
 - base config file
 - later repeated `--config` overlay files
+- repeated `--release-config` overlay files
 - imported stack/service source file
+- imported remote override documents
+- local import override blocks
 - project deployment overlay
 - project partition overlay
 - stack deployment overlay
@@ -1046,30 +1119,27 @@ winner:
 - config releases/qa.yaml
 ```
 
-Non-goals for v1:
-- no values/template provenance
-- no rendered config/secret payload provenance
-- no secrets-engine lookup provenance
-- no Swarm runtime/state provenance
-
-`explain` is intended to explain the resolved project model, not rendered artifact content or runtime behavior.
-
 Acceptance criteria:
-- `explain` resolves the same single-target config model as `plan --debug-config`.
+- `explain` resolves the same config model pipeline as `resolve`.
 - `explain` prints the requested path, final value, contributing layers, and winning layer.
 - Repeated `--config` files appear as distinct provenance layers when they affect the resolved field.
-- Multi-target selector invocations are rejected.
+- Repeated `--deployment`, `--partition`, or `--stack` values are rejected.
+- Ambiguous target contexts are rejected instead of being silently chosen.
 - Requests for paths outside the resolved model fail with a clear error.
 
 Error cases:
-- Repeated `--deployment`, `--partition`, or `--stack`: fail with a single-target-only error.
 - Missing explain path argument: fail with a required-argument error.
+- Repeated `--deployment`: fail with a single-value selector error.
+- Repeated `--partition`: fail with a single-value selector error.
+- Repeated `--stack`: fail with a single-value selector error.
+- Unknown selected deployment/partition/stack: fail with the existing selector validation error.
 - Unknown field path: fail with a field-not-found error naming the requested path.
 - Path resolves through a non-traversable scalar/list step: fail with a clear invalid-path error naming the blocked segment.
+- Omitted selectors leave multiple effective target contexts for the requested field: fail with an error that tells the user which selector to add.
 
 Implementation checklist:
 1) Resolution:
-- Reuse the same resolved-config pipeline as `plan --debug-config`.
+- Reuse the same resolved-config pipeline as `resolve`.
 2) Path lookup:
 - Implement dotted-path lookup against the resolved config model with map-key traversal only for v1.
 3) Provenance tracking:
