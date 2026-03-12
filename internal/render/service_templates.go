@@ -103,11 +103,22 @@ func RenderTemplateString(engine *templates.Engine, data TemplateData, name stri
 	if value == "" {
 		return "", nil
 	}
-	rendered, err := engine.Render("service."+name, value, data)
+	expanded := templates.ExpandTokens(value, templateScope(data))
+	rendered, err := engine.Render("service."+name, expanded, data)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	return rendered, nil
+}
+
+func templateScope(data TemplateData) templates.Scope {
+	return templates.Scope{
+		Project:    data.Project,
+		Deployment: data.Deployment,
+		Stack:      data.Stack,
+		Partition:  data.Partition,
+		Service:    data.Service,
+	}
 }
 
 func renderTemplateStrings(engine *templates.Engine, data TemplateData, name string, values []string) ([]string, error) {
@@ -115,16 +126,8 @@ func renderTemplateStrings(engine *templates.Engine, data TemplateData, name str
 		return nil, nil
 	}
 	rendered := make([]string, 0, len(values))
-	scope := templates.Scope{
-		Project:    data.Project,
-		Deployment: data.Deployment,
-		Stack:      data.Stack,
-		Partition:  data.Partition,
-		Service:    data.Service,
-	}
 	for i, value := range values {
-		expanded := templates.ExpandTokens(value, scope)
-		item, err := RenderTemplateString(engine, data, fmt.Sprintf("%s[%d]", name, i), expanded)
+		item, err := RenderTemplateString(engine, data, fmt.Sprintf("%s[%d]", name, i), value)
 		if err != nil {
 			return nil, err
 		}
@@ -141,13 +144,7 @@ func renderTemplateStringMap(engine *templates.Engine, data TemplateData, name s
 		return nil, nil
 	}
 	rendered := make(map[string]string, len(values))
-	scope := templates.Scope{
-		Project:    data.Project,
-		Deployment: data.Deployment,
-		Stack:      data.Stack,
-		Partition:  data.Partition,
-		Service:    data.Service,
-	}
+	scope := templateScope(data)
 	for key, value := range values {
 		expandedKey := templates.ExpandTokens(key, scope)
 		if strings.TrimSpace(expandedKey) == "" {
