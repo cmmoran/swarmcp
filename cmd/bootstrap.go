@@ -20,12 +20,10 @@ var bootstrapNetworksCmd = &cobra.Command{
 	Use:   "networks",
 	Short: "Create required overlay networks for the project",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPaths, err := effectiveProjectConfigPaths()
+		configPath, err := primaryConfigPath()
 		if err != nil {
 			return err
 		}
-		releaseConfigPaths := effectiveReleaseConfigPaths()
-		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
@@ -34,20 +32,25 @@ var bootstrapNetworksCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPaths:        configPaths,
-			ReleaseConfigPaths: releaseConfigPaths,
+		projectOpts := cmdutil.ProjectOptions{
+			ConfigPaths:        normalizeConfigPaths(opts.ConfigPaths),
+			ReleaseConfigPaths: normalizeConfigPaths(opts.ReleaseConfigs),
 			ConfigPath:         configPath,
 			Deployment:         deployment,
 			Context:            opts.Context,
 			Partition:          partition,
 			Offline:            opts.Offline,
 			Debug:              opts.Debug,
-		}, false, false)
+		}
+		cfg, _, err := cmdutil.LoadProjectConfig(projectOpts)
 		if err != nil {
 			return err
 		}
-		cfg := projectCtx.Config
+		scope, err := cmdutil.ResolveProjectScope(cfg, projectOpts)
+		if err != nil {
+			return err
+		}
+		projectCtx := cmdutil.NewProjectContext(cfg, scope, projectOpts)
 		partitionFilters := normalizeSelectors(opts.Partitions)
 		stackFilters := normalizeSelectors(opts.Stacks)
 
@@ -102,12 +105,10 @@ var bootstrapLabelsCmd = &cobra.Command{
 	Use:   "labels",
 	Short: "Ensure node labels match project config",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPaths, err := effectiveProjectConfigPaths()
+		configPath, err := primaryConfigPath()
 		if err != nil {
 			return err
 		}
-		releaseConfigPaths := effectiveReleaseConfigPaths()
-		configPath := configPaths[0]
 		deployment, err := singleSelector("deployment", opts.Deployments)
 		if err != nil {
 			return err
@@ -116,20 +117,25 @@ var bootstrapLabelsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-			ConfigPaths:        configPaths,
-			ReleaseConfigPaths: releaseConfigPaths,
+		projectOpts := cmdutil.ProjectOptions{
+			ConfigPaths:        normalizeConfigPaths(opts.ConfigPaths),
+			ReleaseConfigPaths: normalizeConfigPaths(opts.ReleaseConfigs),
 			ConfigPath:         configPath,
 			Deployment:         deployment,
 			Context:            opts.Context,
 			Partition:          partition,
 			Offline:            opts.Offline,
 			Debug:              opts.Debug,
-		}, false, false)
+		}
+		cfg, _, err := cmdutil.LoadProjectConfig(projectOpts)
 		if err != nil {
 			return err
 		}
-		cfg := projectCtx.Config
+		scope, err := cmdutil.ResolveProjectScope(cfg, projectOpts)
+		if err != nil {
+			return err
+		}
+		projectCtx := cmdutil.NewProjectContext(cfg, scope, projectOpts)
 
 		nodesInScope := cmdutil.ResolveDeploymentNodeSpecs(cfg)
 		var updated []string

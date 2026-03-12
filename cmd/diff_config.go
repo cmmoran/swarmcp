@@ -56,12 +56,10 @@ func newDiffConfigListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List config versions grouped by scope",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			configPaths, err := effectiveProjectConfigPaths()
+			configPath, err := primaryConfigPath()
 			if err != nil {
 				return err
 			}
-			releaseConfigPaths := effectiveReleaseConfigPaths()
-			configPath := configPaths[0]
 			if limit < 0 {
 				return fmt.Errorf("limit must be >= 0")
 			}
@@ -73,19 +71,25 @@ func newDiffConfigListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPaths:        configPaths,
-				ReleaseConfigPaths: releaseConfigPaths,
+			projectOpts := cmdutil.ProjectOptions{
+				ConfigPaths:        normalizeConfigPaths(opts.ConfigPaths),
+				ReleaseConfigPaths: normalizeConfigPaths(opts.ReleaseConfigs),
 				ConfigPath:         configPath,
 				Deployment:         deployment,
 				Context:            opts.Context,
 				Partition:          partition,
 				Offline:            opts.Offline,
 				Debug:              opts.Debug,
-			}, false, false)
+			}
+			cfg, _, err := cmdutil.LoadProjectConfig(projectOpts)
 			if err != nil {
 				return err
 			}
+			scope, err := cmdutil.ResolveProjectScope(cfg, projectOpts)
+			if err != nil {
+				return err
+			}
+			projectCtx := cmdutil.NewProjectContext(cfg, scope, projectOpts)
 			filter := diffConfigFilter{
 				Name:      strings.TrimSpace(name),
 				Stack:     normalizeLabel(stack),
@@ -96,7 +100,7 @@ func newDiffConfigListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			records, err := findConfigVersions(context.Background(), client, projectCtx.Config.Project.Name, filter)
+			records, err := findConfigVersions(context.Background(), client, cfg.Project.Name, filter)
 			if err != nil {
 				return err
 			}
@@ -142,12 +146,10 @@ func newDiffConfigCompareCmd() *cobra.Command {
 		Use:   "compare",
 		Short: "Compare two config versions with pretty diff",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			configPaths, err := effectiveProjectConfigPaths()
+			configPath, err := primaryConfigPath()
 			if err != nil {
 				return err
 			}
-			releaseConfigPaths := effectiveReleaseConfigPaths()
-			configPath := configPaths[0]
 			if strings.TrimSpace(name) == "" {
 				return fmt.Errorf("--name is required")
 			}
@@ -167,19 +169,25 @@ func newDiffConfigCompareCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			projectCtx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-				ConfigPaths:        configPaths,
-				ReleaseConfigPaths: releaseConfigPaths,
+			projectOpts := cmdutil.ProjectOptions{
+				ConfigPaths:        normalizeConfigPaths(opts.ConfigPaths),
+				ReleaseConfigPaths: normalizeConfigPaths(opts.ReleaseConfigs),
 				ConfigPath:         configPath,
 				Deployment:         deployment,
 				Context:            opts.Context,
 				Partition:          partition,
 				Offline:            opts.Offline,
 				Debug:              opts.Debug,
-			}, false, false)
+			}
+			cfg, _, err := cmdutil.LoadProjectConfig(projectOpts)
 			if err != nil {
 				return err
 			}
+			scope, err := cmdutil.ResolveProjectScope(cfg, projectOpts)
+			if err != nil {
+				return err
+			}
+			projectCtx := cmdutil.NewProjectContext(cfg, scope, projectOpts)
 			filter := diffConfigFilter{
 				Name:      strings.TrimSpace(name),
 				Stack:     normalizeLabel(stack),
@@ -190,7 +198,7 @@ func newDiffConfigCompareCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			records, err := findConfigVersions(context.Background(), client, projectCtx.Config.Project.Name, filter)
+			records, err := findConfigVersions(context.Background(), client, cfg.Project.Name, filter)
 			if err != nil {
 				return err
 			}

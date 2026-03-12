@@ -142,12 +142,10 @@ func init() {
 }
 
 func loadSourceEntries(cmd *cobra.Command) ([]sourceEntry, error) {
-	configPaths, err := effectiveProjectConfigPaths()
+	configPath, err := primaryConfigPath()
 	if err != nil {
 		return nil, err
 	}
-	releaseConfigPaths := effectiveReleaseConfigPaths()
-	configPath := configPaths[0]
 	deployment, err := singleSelector("deployment", opts.Deployments)
 	if err != nil {
 		return nil, err
@@ -156,22 +154,24 @@ func loadSourceEntries(cmd *cobra.Command) ([]sourceEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, err := cmdutil.LoadProjectContext(cmdutil.ProjectOptions{
-		ConfigPaths:        configPaths,
-		ReleaseConfigPaths: releaseConfigPaths,
+	projectOpts := cmdutil.ProjectOptions{
+		ConfigPaths:        normalizeConfigPaths(opts.ConfigPaths),
+		ReleaseConfigPaths: normalizeConfigPaths(opts.ReleaseConfigs),
 		ConfigPath:         configPath,
-		SecretsFile:        opts.SecretsFile,
-		ValuesFiles:        opts.ValuesFiles,
 		Deployment:         deployment,
 		Context:            opts.Context,
 		Partition:          partition,
 		Offline:            opts.Offline,
 		Debug:              opts.Debug,
-	}, false, false)
+	}
+	cfg, _, err := cmdutil.LoadProjectConfig(projectOpts)
 	if err != nil {
 		return nil, err
 	}
-	entries := gatherSourceEntries(ctx.Config)
+	if _, err := cmdutil.ResolveProjectScope(cfg, projectOpts); err != nil {
+		return nil, err
+	}
+	entries := gatherSourceEntries(cfg)
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Key < entries[j].Key
 	})
