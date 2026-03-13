@@ -443,13 +443,13 @@ func desiredConfigMounts(resolver *templates.ScopeResolver, engine *templates.En
 		if target == "" {
 			target = "/" + ref.Name
 		} else {
-			renderedTarget, err := render.RenderTemplateString(engine, data, fmt.Sprintf("configs.%s.target", ref.Name), target)
+			renderedTarget, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("configs.%s.target", ref.Name), target)
 			if err != nil {
 				return nil, fmt.Errorf("service %q config %q: %w", scope.Service, ref.Name, err)
 			}
 			target = templates.ExpandPathTokens(renderedTarget, scope)
 		}
-		modeValue, err := render.RenderTemplateString(engine, data, fmt.Sprintf("configs.%s.mode", ref.Name), firstNonEmpty(ref.Mode, def.Mode))
+		modeValue, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("configs.%s.mode", ref.Name), firstNonEmpty(ref.Mode, def.Mode))
 		if err != nil {
 			return nil, fmt.Errorf("service %q config %q: %w", scope.Service, ref.Name, err)
 		}
@@ -457,11 +457,11 @@ func desiredConfigMounts(resolver *templates.ScopeResolver, engine *templates.En
 		if err != nil {
 			return nil, fmt.Errorf("service %q config %q: %w", scope.Service, ref.Name, err)
 		}
-		uid, err := render.RenderTemplateString(engine, data, fmt.Sprintf("configs.%s.uid", ref.Name), firstNonEmpty(ref.UID, def.UID))
+		uid, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("configs.%s.uid", ref.Name), firstNonEmpty(ref.UID, def.UID))
 		if err != nil {
 			return nil, fmt.Errorf("service %q config %q: %w", scope.Service, ref.Name, err)
 		}
-		gid, err := render.RenderTemplateString(engine, data, fmt.Sprintf("configs.%s.gid", ref.Name), firstNonEmpty(ref.GID, def.GID))
+		gid, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("configs.%s.gid", ref.Name), firstNonEmpty(ref.GID, def.GID))
 		if err != nil {
 			return nil, fmt.Errorf("service %q config %q: %w", scope.Service, ref.Name, err)
 		}
@@ -500,13 +500,13 @@ func desiredSecretMounts(resolver *templates.ScopeResolver, engine *templates.En
 		if target == "" {
 			target = "/run/secrets/" + ref.Name
 		} else {
-			renderedTarget, err := render.RenderTemplateString(engine, data, fmt.Sprintf("secrets.%s.target", ref.Name), target)
+			renderedTarget, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("secrets.%s.target", ref.Name), target)
 			if err != nil {
 				return nil, fmt.Errorf("service %q secret %q: %w", scope.Service, ref.Name, err)
 			}
 			target = templates.ExpandPathTokens(renderedTarget, scope)
 		}
-		modeValue, err := render.RenderTemplateString(engine, data, fmt.Sprintf("secrets.%s.mode", ref.Name), firstNonEmpty(ref.Mode, def.Mode))
+		modeValue, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("secrets.%s.mode", ref.Name), firstNonEmpty(ref.Mode, def.Mode))
 		if err != nil {
 			return nil, fmt.Errorf("service %q secret %q: %w", scope.Service, ref.Name, err)
 		}
@@ -514,11 +514,11 @@ func desiredSecretMounts(resolver *templates.ScopeResolver, engine *templates.En
 		if err != nil {
 			return nil, fmt.Errorf("service %q secret %q: %w", scope.Service, ref.Name, err)
 		}
-		uid, err := render.RenderTemplateString(engine, data, fmt.Sprintf("secrets.%s.uid", ref.Name), firstNonEmpty(ref.UID, def.UID))
+		uid, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("secrets.%s.uid", ref.Name), firstNonEmpty(ref.UID, def.UID))
 		if err != nil {
 			return nil, fmt.Errorf("service %q secret %q: %w", scope.Service, ref.Name, err)
 		}
-		gid, err := render.RenderTemplateString(engine, data, fmt.Sprintf("secrets.%s.gid", ref.Name), firstNonEmpty(ref.GID, def.GID))
+		gid, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("secrets.%s.gid", ref.Name), firstNonEmpty(ref.GID, def.GID))
 		if err != nil {
 			return nil, fmt.Errorf("service %q secret %q: %w", scope.Service, ref.Name, err)
 		}
@@ -565,7 +565,7 @@ func desiredVolumeMounts(cfg *config.Config, engine *templates.Engine, data rend
 	basePath := strings.TrimSpace(cfg.Project.Defaults.Volumes.BasePath)
 	if basePath != "" {
 		var err error
-		basePath, err = render.RenderTemplateString(engine, data, "volume.base_path", basePath)
+		basePath, err = render.RenderTemplateString(engine, scope, data, "volume.base_path", basePath)
 		if err != nil {
 			return nil, err
 		}
@@ -577,7 +577,7 @@ func desiredVolumeMounts(cfg *config.Config, engine *templates.Engine, data rend
 			if basePath == "" {
 				return nil, fmt.Errorf("service %q volume %q: project.defaults.volumes.base_path is required", serviceName, ref.Name)
 			}
-			target, err := render.RenderTemplateString(engine, data, fmt.Sprintf("volumes.%s.target", ref.Name), firstNonEmpty(ref.Target, volumeDef.Target))
+			target, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("volumes.%s.target", ref.Name), firstNonEmpty(ref.Target, volumeDef.Target))
 			if err != nil {
 				return nil, err
 			}
@@ -585,11 +585,11 @@ func desiredVolumeMounts(cfg *config.Config, engine *templates.Engine, data rend
 				return nil, fmt.Errorf("service %q volume %q: target is required", serviceName, ref.Name)
 			}
 			target = templates.ExpandPathTokens(target, scope)
-			defSubpath, err := render.RenderTemplateString(engine, data, fmt.Sprintf("volumes.%s.subpath", ref.Name), volumeDef.Subpath)
+			defSubpath, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("volumes.%s.subpath", ref.Name), volumeDef.Subpath)
 			if err != nil {
 				return nil, err
 			}
-			refSubpath, err := render.RenderTemplateString(engine, data, fmt.Sprintf("volumes.%s.subpath", ref.Name), ref.Subpath)
+			refSubpath, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("volumes.%s.subpath", ref.Name), ref.Subpath)
 			if err != nil {
 				return nil, err
 			}
@@ -607,7 +607,7 @@ func desiredVolumeMounts(cfg *config.Config, engine *templates.Engine, data rend
 				if basePath == "" {
 					return nil, fmt.Errorf("service %q volume %q: project.defaults.volumes.base_path is required", serviceName, ref.Standard)
 				}
-				target, err := render.RenderTemplateString(engine, data, "volumes.standard.target", firstNonEmpty(ref.Target, serviceTarget))
+				target, err := render.RenderTemplateString(engine, scope, data, "volumes.standard.target", firstNonEmpty(ref.Target, serviceTarget))
 				if err != nil {
 					return nil, err
 				}
@@ -615,7 +615,7 @@ func desiredVolumeMounts(cfg *config.Config, engine *templates.Engine, data rend
 					return nil, fmt.Errorf("service %q volume %q: target is required", serviceName, ref.Standard)
 				}
 				target = templates.ExpandPathTokens(target, scope)
-				subpath, err := render.RenderTemplateString(engine, data, "volumes.standard.subpath", ref.Subpath)
+				subpath, err := render.RenderTemplateString(engine, scope, data, "volumes.standard.subpath", ref.Subpath)
 				if err != nil {
 					return nil, err
 				}
@@ -632,11 +632,11 @@ func desiredVolumeMounts(cfg *config.Config, engine *templates.Engine, data rend
 			if !ok {
 				return nil, fmt.Errorf("service %q volume %q: standard mount not found", serviceName, ref.Standard)
 			}
-			standardSource, err := render.RenderTemplateString(engine, data, fmt.Sprintf("volumes.standard.%s.source", ref.Standard), standard.Source)
+			standardSource, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("volumes.standard.%s.source", ref.Standard), standard.Source)
 			if err != nil {
 				return nil, err
 			}
-			standardTarget, err := render.RenderTemplateString(engine, data, fmt.Sprintf("volumes.standard.%s.target", ref.Standard), standard.Target)
+			standardTarget, err := render.RenderTemplateString(engine, scope, data, fmt.Sprintf("volumes.standard.%s.target", ref.Standard), standard.Target)
 			if err != nil {
 				return nil, err
 			}
@@ -648,11 +648,11 @@ func desiredVolumeMounts(cfg *config.Config, engine *templates.Engine, data rend
 			})
 			continue
 		}
-		source, err := render.RenderTemplateString(engine, data, "volumes.bind.source", ref.Source)
+		source, err := render.RenderTemplateString(engine, scope, data, "volumes.bind.source", ref.Source)
 		if err != nil {
 			return nil, err
 		}
-		target, err := render.RenderTemplateString(engine, data, "volumes.bind.target", ref.Target)
+		target, err := render.RenderTemplateString(engine, scope, data, "volumes.bind.target", ref.Target)
 		if err != nil {
 			return nil, err
 		}

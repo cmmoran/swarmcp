@@ -10,6 +10,12 @@ import (
 
 func TestRenderTemplateStringMapExpandsEnvKeys(t *testing.T) {
 	engine := templates.New(NoopResolver{})
+	scope := templates.Scope{
+		Project:   "primary",
+		Stack:     "core",
+		Partition: "dev",
+		Service:   "api",
+	}
 	data := TemplateData{
 		Project:   "primary",
 		Stack:     "core",
@@ -19,7 +25,7 @@ func TestRenderTemplateStringMapExpandsEnvKeys(t *testing.T) {
 	env := map[string]string{
 		"CONFIG_{partition}": "value",
 	}
-	rendered, err := renderTemplateStringMap(engine, data, "env", env)
+	rendered, err := renderTemplateStringMap(engine, scope, data, "env", env)
 	if err != nil {
 		t.Fatalf("render env: %v", err)
 	}
@@ -30,6 +36,12 @@ func TestRenderTemplateStringMapExpandsEnvKeys(t *testing.T) {
 
 func TestRenderTemplateStringsExpandsConstraints(t *testing.T) {
 	engine := templates.New(NoopResolver{})
+	scope := templates.Scope{
+		Project:   "primary",
+		Stack:     "core",
+		Partition: "dev",
+		Service:   "api",
+	}
 	data := TemplateData{
 		Project:   "primary",
 		Stack:     "core",
@@ -37,7 +49,7 @@ func TestRenderTemplateStringsExpandsConstraints(t *testing.T) {
 		Service:   "api",
 	}
 	in := []string{"node.labels.env=={partition}"}
-	rendered, err := renderTemplateStrings(engine, data, "placement.constraints", in)
+	rendered, err := renderTemplateStrings(engine, scope, data, "placement.constraints", in)
 	if err != nil {
 		t.Fatalf("render constraints: %v", err)
 	}
@@ -48,13 +60,19 @@ func TestRenderTemplateStringsExpandsConstraints(t *testing.T) {
 
 func TestRenderTemplateStringExpandsScopeTokens(t *testing.T) {
 	engine := templates.New(NoopResolver{})
+	scope := templates.Scope{
+		Project:   "primary",
+		Stack:     "core",
+		Partition: "dev",
+		Service:   "api",
+	}
 	data := TemplateData{
 		Project:   "primary",
 		Stack:     "core",
 		Partition: "dev",
 		Service:   "api",
 	}
-	rendered, err := RenderTemplateString(engine, data, "image", "repo/{service}:{partition}")
+	rendered, err := RenderTemplateString(engine, scope, data, "image", "repo/{service}:{partition}")
 	if err != nil {
 		t.Fatalf("RenderTemplateString: %v", err)
 	}
@@ -65,6 +83,12 @@ func TestRenderTemplateStringExpandsScopeTokens(t *testing.T) {
 
 func TestRenderTemplatePoliciesAndRefs(t *testing.T) {
 	engine := templates.New(NoopResolver{})
+	scope := templates.Scope{
+		Project:   "primary",
+		Stack:     "core",
+		Partition: "dev",
+		Service:   "api",
+	}
 	data := TemplateData{
 		Project:   "primary",
 		Stack:     "core",
@@ -75,7 +99,7 @@ func TestRenderTemplatePoliciesAndRefs(t *testing.T) {
 	condition := "{service}-failure"
 	delay := "{partition}-delay"
 	window := "{project}-window"
-	restart, err := renderTemplateRestartPolicy(engine, data, &config.RestartPolicy{
+	restart, err := renderTemplateRestartPolicy(engine, scope, data, &config.RestartPolicy{
 		Condition: &condition,
 		Delay:     &delay,
 		Window:    &window,
@@ -89,7 +113,7 @@ func TestRenderTemplatePoliciesAndRefs(t *testing.T) {
 
 	order := "{stack}-first"
 	monitor := "{service}-monitor"
-	update, err := renderTemplateUpdatePolicy(engine, data, &config.UpdatePolicy{
+	update, err := renderTemplateUpdatePolicy(engine, scope, data, &config.UpdatePolicy{
 		Order:   &order,
 		Monitor: &monitor,
 	}, "update_config")
@@ -100,7 +124,7 @@ func TestRenderTemplatePoliciesAndRefs(t *testing.T) {
 		t.Fatalf("unexpected update policy: %#v", update)
 	}
 
-	configRefs, err := renderTemplateConfigRefs(engine, data, []config.ConfigRef{{
+	configRefs, err := renderTemplateConfigRefs(engine, scope, data, []config.ConfigRef{{
 		Name:   "app",
 		Target: "/etc/{service}.yaml",
 		UID:    "{partition}",
@@ -114,7 +138,7 @@ func TestRenderTemplatePoliciesAndRefs(t *testing.T) {
 		t.Fatalf("unexpected config refs: %#v", configRefs)
 	}
 
-	secretRefs, err := renderTemplateSecretRefs(engine, data, []config.SecretRef{{
+	secretRefs, err := renderTemplateSecretRefs(engine, scope, data, []config.SecretRef{{
 		Name:   "token",
 		Target: "/run/secrets/{service}",
 		UID:    "{partition}",
@@ -128,7 +152,7 @@ func TestRenderTemplatePoliciesAndRefs(t *testing.T) {
 		t.Fatalf("unexpected secret refs: %#v", secretRefs)
 	}
 
-	volumeRefs, err := renderTemplateVolumeRefs(engine, data, []config.VolumeRef{{
+	volumeRefs, err := renderTemplateVolumeRefs(engine, scope, data, []config.VolumeRef{{
 		Standard: "{service}-persist",
 		Source:   "{project}_{stack}",
 		Target:   "/data/{partition}",
@@ -142,7 +166,7 @@ func TestRenderTemplatePoliciesAndRefs(t *testing.T) {
 		t.Fatalf("unexpected volume refs: %#v", volumeRefs)
 	}
 
-	ports, err := renderTemplatePorts(engine, data, []config.Port{{
+	ports, err := renderTemplatePorts(engine, scope, data, []config.Port{{
 		Target:   8080,
 		Protocol: "{service}",
 		Mode:     "{partition}",
@@ -157,6 +181,13 @@ func TestRenderTemplatePoliciesAndRefs(t *testing.T) {
 
 func TestRenderServiceTemplates(t *testing.T) {
 	engine := templates.New(NoopResolver{})
+	scope := templates.Scope{
+		Project:          "primary",
+		Stack:            "core",
+		Partition:        "dev",
+		Service:          "api",
+		NetworkEphemeral: "primary_dev_core_svc_api",
+	}
 	data := TemplateData{
 		Project:   "primary",
 		Stack:     "core",
@@ -173,7 +204,7 @@ func TestRenderServiceTemplates(t *testing.T) {
 		DependsOn: []string{"db", ""},
 		Placement: config.Placement{Constraints: []string{"node.labels.env=={partition}"}},
 		Networks:  []string{"{project}_{stack}"},
-		Env:       map[string]string{"APP_{partition}": "{service}"},
+		Env:       map[string]string{"APP_{partition}": "{service}", "EPHEMERAL": "{network_ephemeral}"},
 		Ports:     []config.Port{{Target: 8080, Protocol: "{service}", Mode: "{partition}"}},
 		Configs:   []config.ConfigRef{{Name: "cfg", Target: "/etc/{service}.yaml"}},
 		Secrets:   []config.SecretRef{{Name: "sec", Target: "/run/secrets/{service}"}},
@@ -183,7 +214,7 @@ func TestRenderServiceTemplates(t *testing.T) {
 		},
 	}
 
-	rendered, err := RenderServiceTemplates(engine, data, service)
+	rendered, err := RenderServiceTemplates(engine, scope, data, service)
 	if err != nil {
 		t.Fatalf("RenderServiceTemplates: %v", err)
 	}
@@ -195,6 +226,9 @@ func TestRenderServiceTemplates(t *testing.T) {
 	}
 	if rendered.Env["APP_dev"] != "api" {
 		t.Fatalf("unexpected rendered env: %#v", rendered.Env)
+	}
+	if rendered.Env["EPHEMERAL"] != "primary_dev_core_svc_api" {
+		t.Fatalf("unexpected rendered ephemeral env: %#v", rendered.Env)
 	}
 	if rendered.Configs[0].Target != "/etc/api.yaml" || rendered.Secrets[0].Target != "/run/secrets/api" || rendered.Volumes[0].Target != "/data/dev" {
 		t.Fatalf("unexpected rendered refs: configs=%#v secrets=%#v volumes=%#v", rendered.Configs, rendered.Secrets, rendered.Volumes)

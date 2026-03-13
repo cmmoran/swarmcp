@@ -51,8 +51,8 @@ func PlanBindPaths(cfg *config.Config, values any, partitionFilters []string, st
 					NetworkEphemeral: networkEphemeral,
 				}
 				// Bind path planning should not fail on missing refs in templates.
-				_, engine, templateData := render.NewServiceTemplateEngine(cfg, scope, values, true, nil)
-				renderedService, err := render.RenderServiceTemplates(engine, templateData, service)
+				_, engine, templateScope, templateData := render.NewServiceTemplateEngine(cfg, scope, values, true, nil)
+				renderedService, err := render.RenderServiceTemplates(engine, templateScope, templateData, service)
 				if err != nil {
 					return nil, err
 				}

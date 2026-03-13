@@ -32,7 +32,7 @@ func TestDesiredVolumeMountsServiceScoped(t *testing.T) {
 	}
 
 	scope := templates.Scope{Project: cfg.Project.Name, Stack: "core", Service: "ingress"}
-	_, engine, data := render.NewServiceTemplateEngine(cfg, scope, nil, false, nil)
+	_, engine, _, data := render.NewServiceTemplateEngine(cfg, scope, nil, false, nil)
 	mounts, err := desiredVolumeMounts(cfg, engine, data, "core", stack, "", "ingress", service)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -75,7 +75,7 @@ func TestDesiredVolumeMountsStackScoped(t *testing.T) {
 	}
 
 	scope := templates.Scope{Project: cfg.Project.Name, Stack: "core", Service: "api"}
-	_, engine, data := render.NewServiceTemplateEngine(cfg, scope, nil, false, nil)
+	_, engine, _, data := render.NewServiceTemplateEngine(cfg, scope, nil, false, nil)
 	mounts, err := desiredVolumeMounts(cfg, engine, data, "core", stack, "", "api", service)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -114,7 +114,7 @@ func TestDesiredVolumeMountsServiceStandard(t *testing.T) {
 	}
 
 	scope := templates.Scope{Project: cfg.Project.Name, Stack: "core", Service: "postgres"}
-	_, engine, data := render.NewServiceTemplateEngine(cfg, scope, nil, false, nil)
+	_, engine, _, data := render.NewServiceTemplateEngine(cfg, scope, nil, false, nil)
 	mounts, err := desiredVolumeMounts(cfg, engine, data, "core", stack, "", "postgres", service)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -153,7 +153,7 @@ func TestDesiredVolumeMountsServiceStandardOverrides(t *testing.T) {
 	}
 
 	scope := templates.Scope{Project: cfg.Project.Name, Stack: "core", Service: "postgres"}
-	_, engine, data := render.NewServiceTemplateEngine(cfg, scope, nil, false, nil)
+	_, engine, _, data := render.NewServiceTemplateEngine(cfg, scope, nil, false, nil)
 	mounts, err := desiredVolumeMounts(cfg, engine, data, "core", stack, "", "postgres", service)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

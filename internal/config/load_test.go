@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v4"
 )
 
 func TestValidateLogicalNameTooLong(t *testing.T) {
@@ -246,5 +248,59 @@ func TestNormalizeTemplateScalarsFallbackHandlesEmbeddedTemplateWithBackticks(t 
 	want := "source: 'prefix-{{ runtime_value `{project}_{stack}` }}'\n"
 	if got != want {
 		t.Fatalf("unexpected normalized fallback embedded scalar:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsHandlesManyBareTemplateScalars(t *testing.T) {
+	input := `mode: shared
+services:
+  portainer:
+    image: {{ config_value "portainer_image" }}
+    labels:
+      traefik.http.routers.portainer.rule: {{ printf "Host(` + "`" + `m.%s` + "`" + `)" (config_value "internal_domain") }}
+      traefik.swarm.network: {{ runtime_value "{networks_shared}" }}
+  ingress:
+    image: {{ config_value "traefik_image" }}
+    env:
+      AWS_HOSTED_ZONE_ID: {{ config_value "aws_hosted_zone_id" }}
+      AWS_REGION: {{ config_value "aws_region" }}
+      AWS_SHARED_CREDENTIALS_FILE: {{ secret_ref "aws_shared_credentials" }}
+      VAULT_LOCK_ID: {{ escape_template "{{ .Service.Name }}.{{ .Task.Slot }}" }}
+    configs:
+      - name: traefik_yml
+        source: templates/stacks/core/services/ingress/configs/traefik.yml.tmpl
+      - name: dynamic_yml
+        source: templates/stacks/core/services/ingress/configs/dynamic.yml.tmpl
+    secrets:
+      - name: aws_shared_credentials
+        source: templates/stacks/core/services/ingress/secrets/aws_shared_credentials.tmpl
+`
+	normalized := normalizeTemplateScalars(input)
+	var parsed any
+	if err := yaml.Unmarshal([]byte(normalized), &parsed); err != nil {
+		t.Fatalf("expected normalized YAML to parse, got: %v\nnormalized:\n%s", err, normalized)
+	}
+}
+
+func TestRewriteTemplateScalarLineSkipsAlreadyQuotedTemplateScalar(t *testing.T) {
+	input := `source: '{{ config_value "app" }}'`
+	got, changed := rewriteTemplateScalarLine(input)
+	if changed {
+		t.Fatalf("expected already-quoted template scalar to remain unchanged, got %q", got)
+	}
+	if got != input {
+		t.Fatalf("unexpected rewritten line: want %q got %q", input, got)
+	}
+}
+
+func TestNormalizeTemplateScalarsParsesSynergyDevopsCoreStack(t *testing.T) {
+	data, err := os.ReadFile("/home/user/code/sentinel/synergy-devops/deploy/traefik-portainer/core.stack.yaml.tmpl")
+	if err != nil {
+		t.Skipf("read downstream core stack: %v", err)
+	}
+	normalized := normalizeTemplateScalars(string(data))
+	var parsed any
+	if err := yaml.Unmarshal([]byte(normalized), &parsed); err != nil {
+		t.Fatalf("expected normalized downstream core stack to parse, got: %v\nnormalized:\n%s", err, normalized)
 	}
 }

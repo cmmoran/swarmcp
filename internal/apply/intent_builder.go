@@ -47,9 +47,9 @@ func buildServiceIntent(cfg *config.Config, stackName string, stack config.Stack
 			}
 		}
 	}
-	resolver, engine, data := render.NewServiceTemplateEngine(cfg, scope, values, infer, trace)
+	resolver, engine, scope, data := render.NewServiceTemplateEngine(cfg, scope, values, infer, trace)
 
-	renderedService, err := render.RenderServiceTemplates(engine, data, service)
+	renderedService, err := render.RenderServiceTemplates(engine, scope, data, service)
 	if err != nil {
 		return serviceIntentBuild{}, err
 	}

@@ -16,7 +16,8 @@ import (
 
 func normalizeTemplateScalars(input string) string {
 	current := input
-	for attempts := 0; attempts < 8; attempts++ {
+	maxAttempts := maxTemplateNormalizationAttempts(input)
+	for attempts := 0; attempts < maxAttempts; attempts++ {
 		var root yaml.Node
 		if err := yaml.Unmarshal([]byte(current), &root); err != nil {
 			// Keep a narrow compatibility path for non-standard bare template scalars
@@ -44,6 +45,17 @@ func normalizeTemplateScalars(input string) string {
 		return buf.String()
 	}
 	return current
+}
+
+func maxTemplateNormalizationAttempts(input string) int {
+	attempts := strings.Count(input, "{{") + 4
+	if attempts < 8 {
+		return 8
+	}
+	if attempts > 128 {
+		return 128
+	}
+	return attempts
 }
 
 func normalizeTemplateScalarsTextFallback(input string, parseErr error) (string, bool) {
@@ -121,7 +133,7 @@ func splitMappingTemplate(line string) (string, string, string, bool) {
 	prefix := line[:idx+1]
 	rest := strings.TrimSpace(line[idx+1:])
 	value, suffix := splitInlineComment(rest)
-	if containsBalancedTemplateDelimiters(value) {
+	if !isQuotedScalar(value) && containsBalancedTemplateDelimiters(value) {
 		return prefix + " ", value, suffix, true
 	}
 	return "", "", "", false
@@ -136,10 +148,19 @@ func splitListTemplate(line string) (string, string, string, bool) {
 	prefix := line[:prefixLen+2]
 	rest := strings.TrimSpace(trimmed[2:])
 	value, suffix := splitInlineComment(rest)
-	if containsBalancedTemplateDelimiters(value) {
+	if !isQuotedScalar(value) && containsBalancedTemplateDelimiters(value) {
 		return prefix, value, suffix, true
 	}
 	return "", "", "", false
+}
+
+func isQuotedScalar(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 {
+		return false
+	}
+	return (strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) ||
+		(strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\""))
 }
 
 func splitInlineComment(value string) (string, string) {

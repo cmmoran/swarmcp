@@ -1,6 +1,23 @@
 version: "3"
 
 vars:
+  RELEASE_BRANCH:
+    sh: |
+      set -euo pipefail
+      ref="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+      if [ -n "${ref}" ]; then
+        printf '%s' "${ref##origin/}"
+      else
+        git branch --show-current
+      fi
+  REPOSITORY_URL:
+    sh: |
+      set -euo pipefail
+      bare="$PWD/.task/semantic-release-remote.git"
+      rm -rf "${bare}"
+      git clone --bare . "${bare}" >/dev/null 2>&1
+      printf 'file:///workspace/.task/semantic-release-remote.git'
+  SEMREL_IMAGE: docker.io/voxpupuli/semantic-release:latest
   GIT_TAG:
     sh: git describe --tags --exact-match 2>/dev/null || true
   GIT_BRANCH:
@@ -9,6 +26,13 @@ vars:
     sh: git rev-parse --short=12 HEAD 2>/dev/null || true
   GIT_DATE:
     sh: git show -s --format=%cd --date=format:%Y%m%d%H%M%S 2>/dev/null || true
+  GIT_DIRTY:
+    sh: |
+      if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        echo true
+      else
+        echo false
+      fi
   UNRELEASED_VERSION:
     sh: |
       if [ -n "{{.GIT_SHA}}" ] && [ -n "{{.GIT_DATE}}" ]; then
@@ -16,7 +40,24 @@ vars:
       else
         date -u +%Y%m%d%H%M%S-dev
       fi
-  VERSION:
+  NEXT_PATCH_VERSION:
+    sh: |
+      set -euo pipefail
+      tag="{{.GIT_TAG}}"
+      if [ -z "${tag}" ]; then
+        printf '%s' "{{.UNRELEASED_VERSION}}"
+        exit 0
+      fi
+      base="${tag#v}"
+      major="$(printf '%s' "${base}" | cut -d. -f1)"
+      minor="$(printf '%s' "${base}" | cut -d. -f2)"
+      patch="$(printf '%s' "${base}" | cut -d. -f3 | sed 's/[^0-9].*$//')"
+      if [ -z "${major}" ] || [ -z "${minor}" ] || [ -z "${patch}" ]; then
+        printf '%s' "{{.UNRELEASED_VERSION}}"
+        exit 0
+      fi
+      printf 'v%s.%s.%s' "${major}" "${minor}" "$((patch + 1))"
+  OLDVERSION:
     sh: |
       if [ -n "{{.GIT_TAG}}" ]; then
         echo "{{.GIT_TAG}}"
@@ -25,9 +66,46 @@ vars:
       else
         echo "{{.UNRELEASED_VERSION}}"
       fi
+  VERSION:
+    sh: |
+      set -euo pipefail
+      mkdir -p .task
+      cfg=".task/semantic-release.dryrun.json"
+      cat > "${cfg}" <<'EOF'
+      {
+        "branches": ["{{.RELEASE_BRANCH}}"],
+        "repositoryUrl": "{{.REPOSITORY_URL}}",
+        "plugins": ["@semantic-release/commit-analyzer"]
+      }
+      EOF
+      out="$(
+        docker --context default run --rm \
+          --user "$(id -u):$(id -g)" \
+          -e CI=false \
+          -v "$PWD:/workspace" \
+          -v "$PWD/.task:/workspace/.task" \
+          -v "$PWD/${cfg}:/workspace/.releaserc.json:ro" \
+          -w /workspace \
+          {{.SEMREL_IMAGE}} \
+          --dry-run --ci false 2>&1 || true
+      )"
+      version="$(printf '%s\n' "${out}" | sed -n 's/.*[Nn]ext release version is \([0-9][0-9A-Za-z.\-]*\).*/\1/p' | tail -n1)"
+      if [ -z "${version}" ]; then
+        if [ -n "{{.GIT_TAG}}" ]; then
+          printf '%s' "{{.GIT_TAG}}"
+          exit 0
+        fi
+        printf '%s\n' "${out}" >&2
+        echo "could not determine next semantic-release version from dry-run output" >&2
+        exit 1
+      fi
+      printf '%s' "${version}"
+
   CI_IMAGE: '{{default (printf "chrismoran/swarmcp:%s" .VERSION) .CI_IMAGE}}'
+  RUNNER_IMAGE: '{{default (printf "swarmcp-runner:%s" .VERSION) .RUNNER_IMAGE}}'
   DOCS_IMAGE: '{{default "swarmcp-docs" .DOCS_IMAGE}}'
   DOCS_PORT: '{{default "8000" .DOCS_PORT}}'
+  RUNNER_CMD: '{{default "swarmcp version" .RUNNER_CMD}}'
 
 tasks:
   # Default entrypoint: runs the full local build pipeline.
@@ -55,9 +133,18 @@ tasks:
 
   # Print the computed version string used by build and ci-image.
   version:
-    desc: Print the computed build version used by build/ci-image
+    desc: Print the computed build version used by build/ci-image, with prerelease preview for dirty worktrees
     cmds:
-      - echo "{{.VERSION}}"
+      - |
+        if [ "{{.GIT_DIRTY}}" = "true" ]; then
+          if [ -n "{{.GIT_TAG}}" ] && [ "{{.VERSION}}" = "{{.GIT_TAG}}" ]; then
+            echo "{{.NEXT_PATCH_VERSION}}-pre"
+          else
+            echo "{{.VERSION}}-pre"
+          fi
+        else
+          echo "{{.VERSION}}"
+        fi
 
   # Install the built binary to the user's local bin directory.
   install:
@@ -77,6 +164,63 @@ tasks:
     desc: "Build+push the swarmcp CI runner image using Docker context default (default tag: chrismoran/swarmcp:{{.VERSION}}; override CI_IMAGE to change tag)"
     cmds:
       - docker --context default buildx build --push -f contrib/ci/swarmcp-runner/Dockerfile -t {{.CI_IMAGE}} --build-arg VERSION={{.VERSION}} .
+
+  runner:image:
+    desc: Build the local swarmcp runner image
+    cmds:
+      - docker build --network host -f contrib/ci/swarmcp-runner/Dockerfile -t {{.RUNNER_IMAGE}} --build-arg VERSION={{.VERSION}} .
+
+  runner:exec:
+    desc: Run a swarmcp command inside the local runner container (override RUNNER_CMD)
+    deps:
+      - runner:image
+    cmds:
+      - |
+        bash -euc '
+          args=(
+            --rm
+            -v "$PWD:/workspace"
+            -w /workspace
+          )
+
+          if [ -t 0 ] && [ -t 1 ]; then
+            args+=(-it)
+          fi
+
+          if [ -S /var/run/docker.sock ]; then
+            args+=(
+              -v /var/run/docker.sock:/var/run/docker.sock
+            )
+            if [ -z "${DOCKER_HOST:-}" ]; then
+              args+=(-e DOCKER_HOST=unix:///var/run/docker.sock)
+            fi
+          fi
+
+          docker_config="${DOCKER_CONFIG:-$HOME/.docker}"
+          if [ -d "$docker_config" ]; then
+            args+=(
+              -v "$docker_config:/root/.docker:ro"
+              -e DOCKER_CONFIG=/root/.docker
+            )
+          fi
+
+          if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "${SSH_AUTH_SOCK}" ]; then
+            args+=(
+              -v "${SSH_AUTH_SOCK}:/ssh-agent"
+              -e SSH_AUTH_SOCK=/ssh-agent
+            )
+          fi
+
+          if [ -f "$HOME/.ssh/known_hosts" ]; then
+            args+=(-v "$HOME/.ssh/known_hosts:/root/.ssh/known_hosts:ro")
+          fi
+
+          if [ -f "$HOME/.gitconfig" ]; then
+            args+=(-v "$HOME/.gitconfig:/root/.gitconfig:ro")
+          fi
+
+          docker run "${args[@]}" {{.RUNNER_IMAGE}} sh -lc "{{.RUNNER_CMD}}"
+        '
 
   docs:image:
     desc: Build the local docs image

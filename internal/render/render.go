@@ -537,8 +537,8 @@ func inferServiceRefs(cfg *config.Config, resolver secrets.Resolver, values any,
 			}
 		}
 	}
-	_, engine, data := NewServiceTemplateEngine(cfg, scope, values, true, trace)
-	renderedService, err := RenderServiceTemplates(engine, data, service)
+	_, engine, templateScope, data := NewServiceTemplateEngine(cfg, scope, values, true, trace)
+	renderedService, err := RenderServiceTemplates(engine, templateScope, data, service)
 	if err != nil {
 		return config.Service{}, err
 	}
