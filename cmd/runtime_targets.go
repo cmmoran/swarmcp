@@ -68,7 +68,7 @@ func forEachRuntimeTarget(out io.Writer, targets *runtimeTargets, opts runtimeTa
 			releaseConfigPaths: targets.releaseConfigPaths,
 			configPath:         targets.configPath,
 			deployment:         deployment,
-			partitionFilters:   targets.partitionFilters,
+			partitionFilters:   cmdutil.FilterDeploymentPartitions(projectCtx.Config, targets.partitionFilters),
 			stackFilters:       targets.stackFilters,
 			projectCtx:         projectCtx,
 		}); err != nil {
@@ -105,6 +105,9 @@ func loadValidatedProjectContext(targets *runtimeTargets, deployment string, loa
 	for _, partition := range targets.partitionFilters {
 		if !cmdutil.PartitionInProject(cfg, partition) {
 			return nil, fmt.Errorf("partition %q not found in project.partitions", partition)
+		}
+		if !cmdutil.PartitionAllowedForDeployment(cfg, partition) {
+			return nil, fmt.Errorf("partition %q is not allowed for deployment %q", partition, cfg.Project.Deployment)
 		}
 	}
 	for _, stack := range targets.stackFilters {

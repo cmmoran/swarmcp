@@ -36,12 +36,41 @@
 
 ## Concepts and Naming
 - **Project**: top-level grouping; declares partitions and shared/partitioned stacks.
-- **Partition**: environment-like duplication (e.g., `dev`, `qa`, `uat`).
+- **Deployment**: runtime target selection for deployment overlays, context selection, and node targeting. Deployment is not part of stack instance naming.
+- **Partition**: environment-like duplication axis for partitioned stacks (e.g., `dev`, `qa`, `uat`).
 - **Reserved partition name**: `_` (used as the shared-stack placeholder).
 - **Stack modes**:
   - **shared**: one per project. Name: `<project>_<stack>`.
   - **partitioned**: one per partition. Name: `<project>_<partition>_<stack>`.
 - **Reserved stack**: `core`.
+- **Stack**: logical topology key under `stacks:`. `--stack` selects these logical keys; it does not add a new naming axis.
+
+Target-axis model:
+- SwarmCP has three targeting axes: deployment, partition, and stack.
+- `deployment` selects an execution target. It changes overlay selection, context resolution, values scope, and node targeting, but it does not create additional stack instances in Swarm naming.
+- `partition` selects stack instances only for stacks with `mode: partitioned`.
+- `stack` selects logical stack definitions under `stacks:`.
+- The effective runtime workset is the intersection of selected deployments, selected stacks, and selected partition instances for partitioned stacks.
+- Shared stacks are partition-agnostic. A partition selector narrows partitioned stacks only; it must not create per-partition variants of shared stacks.
+- Deployments may optionally restrict which partitions are valid for that deployment via `project.deployment_targets.<name>.partitions`.
+- If a deployment target does not declare `partitions`, all `project.partitions` remain eligible for that deployment.
+
+Project-context model:
+- `ProjectContext` is a single effective target context, not a multi-target execution plan.
+- A project context carries:
+  - one loaded config after `--config` and `--release-config` layering
+  - one effective deployment selection
+  - zero or one effective partition selector
+  - zero or one effective stack selector
+  - one resolved Swarm context name
+  - one values scope used to load values and templates
+- Runtime commands may iterate many effective targets, but they do so by creating multiple single-target project contexts rather than by storing repeated selector sets inside one project context.
+- Repeated selector sets belong to runtime-target orchestration, not to `ProjectContext` itself.
+
+Design consequence:
+- Deployment is a runtime axis, not an identity axis. Two deployments may target different contexts or node sets while still referring to the same logical and physical shared stack names.
+- Partition is both a selection axis and, for partitioned stacks, an identity axis because it changes stack instance naming.
+- Stack is a logical selection axis only.
 
 ## Recommended Project Model
 SwarmCP should be documented around three artifacts with distinct intent:
@@ -180,7 +209,7 @@ Per-section policy:
   - Replace-only: `roles`, `volumes`
 - `project.deployment_targets.<name>`:
   - Merge: `include.labels`, `exclude.labels`, `overrides`
-  - Replace-only: `include.names`, `exclude.names`
+  - Replace-only: `partitions`, `include.names`, `exclude.names`
 - `project.deployment_targets.<name>.overrides.<node>`:
   - Merge: `labels`, `platform`
   - Replace-only: `roles`, `volumes`
@@ -781,23 +810,62 @@ Managed diff/status scope (current):
 Runtime commands support selector-based scope narrowing. Effective scope is the intersection of all provided selectors.
 
 Selectors:
-- `--deployment <name>`: selects deployment overlay/context.
+- `--deployment <name>`: selects a deployment execution target. This chooses deployment overlays, values scope, context resolution, and node targeting.
 - `--partition <name>`: limits partitioned stack instances to one partition.
 - `--stack <name>`: limits runtime scope to one logical stack key under `stacks:`.
 
 Validation and resolution:
 - `--stack` must reference an existing logical stack key; unknown stack is an error.
 - `--partition` must be in `project.partitions`; unknown partition is an error.
+- If both deployment and partition are selected and the deployment target declares `partitions`, the selected partition must be a member of that allowlist; otherwise the command fails.
+- For runtime commands with multiple partitions selected under one deployment, the effective partition set is the intersection of:
+  - the user-selected partitions, if any
+  - the deployment target's declared `partitions`, if any
+  - `project.partitions`
 - For partitioned stacks:
   - no `--partition`: all project partitions in scope.
   - with `--partition`: only that partition in scope.
-- For shared stacks, partition selector does not create per-partition instances.
+- For shared stacks, partition selector does not create per-partition instances and does not change the resolved shared-stack service/config/secret model.
+
+Selector cardinality by command family:
+- Runtime commands (`plan`, `diff`, `status`, `apply`) may accept multiple `--deployment`, `--partition`, and `--stack` values.
+- For runtime commands, repeated selector flags act as set filters after de-duplication.
+- Runtime evaluation order is:
+1. Iterate each selected deployment as an independent execution target.
+2. Within that deployment, compute the eligible partition set for that deployment.
+3. Within that deployment, select matching logical stacks.
+4. For each selected stack:
+   - if `mode: shared`, evaluate exactly one shared instance with `partition=""`
+   - if `mode: partitioned`, evaluate the selected eligible partitions for that deployment
+- Introspection and single-target commands (`resolve`, `explain`, `validate`, `sources`, `bootstrap`, `secrets put`) accept at most one effective deployment, partition, and stack selector unless the command explicitly documents broader behavior.
+- Commands that require one effective target must fail on repeated selector values instead of silently choosing one.
+
+Project context versus runtime target:
+- Commands built around a single resolved view use one project context directly.
+- Runtime commands use a higher-level runtime-target loop that constructs one project context per effective deployment, then applies partition and stack filters inside that deployment run.
+- The spec should treat this split as intentional:
+  - `ProjectContext` answers "what is the current effective config + context?"
+  - runtime targeting answers "which effective contexts and stack instances should this command execute against?"
 
 Command semantics:
 - `plan`: render/report only targeted stack instances and only their related configs/secrets/mounts/networks/bind paths.
 - `diff`: compute and report drift only for targeted stack instances/resources.
 - `status`: report only targeted stack instances/resources and their service health.
 - `apply`: reconcile only targeted stack instances/resources.
+
+Shared-stack partition rule:
+- Partition overlays, partition-scoped stack config/secret defs, and partition-specific service overlays are defined against a partition context.
+- Those partition-scoped mechanisms apply to partitioned stack instances only.
+- `resolve` and `explain` should not present a partition-specialized variant of a shared stack just because `--partition` was provided.
+- If future behavior intentionally allows partition-conditioned shared stacks, that must be specified as a new feature because it changes the current stack identity model.
+
+Deployment-partition compatibility:
+- `project.partitions` declares the global partition vocabulary for the project.
+- `project.deployment_targets.<name>.partitions` optionally declares which of those partitions are valid when that deployment is active.
+- This compatibility rule is normative for command validation, values scope selection, and runtime targeting.
+- A deployment must not name a partition that is absent from `project.partitions`.
+- If `project.deployments` lists a deployment name and `project.deployment_targets.<name>` exists, the allowlist in that deployment target is the source of truth for deployment-partition compatibility.
+- If a project uses deployments but omits `project.deployment_targets.<name>.partitions`, the deployment is treated as compatible with all project partitions for backward compatibility.
 
 Prune behavior with stack targeting:
 - `--prune-services`: may remove services only within targeted stack instances (`docker stack deploy --prune` limited to targeted deploys).
@@ -1056,6 +1124,7 @@ project:
     <deployment>: <string> # docker context name or endpoint
   deployment_targets:
     <name>:
+      partitions: [<string>] # optional allowlist; values must exist in project.partitions
       include:
         names: [<string>]
         labels:

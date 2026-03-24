@@ -32,3 +32,28 @@ func TestSelectDeploymentNodesByName(t *testing.T) {
 		t.Fatalf("expected inclusion-sa selected")
 	}
 }
+
+func TestFilterDeploymentPartitionsUsesDeploymentAllowlist(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.Project{
+			Partitions: []string{"dev", "qa", "prod"},
+			Deployment: "prod",
+			Targets: config.DeploymentTargets{
+				"prod": {
+					Partitions: []string{"qa", "prod"},
+				},
+			},
+		},
+	}
+
+	got := FilterDeploymentPartitions(cfg, []string{"dev", "qa", "prod"})
+	want := []string{"qa", "prod"}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected partition count: got=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected partitions: got=%v want=%v", got, want)
+		}
+	}
+}

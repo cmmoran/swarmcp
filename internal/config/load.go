@@ -643,6 +643,15 @@ func validateDeploymentTargets(cfg *Config) error {
 		if len(cfg.Project.Deployments) > 0 && !deploymentInProject(cfg, name) {
 			errs = append(errs, fmt.Sprintf("deployment target %q not found in project.deployments", name))
 		}
+		for _, partition := range target.Partitions {
+			if err := validateLogicalName("deployment target "+name+" partition "+partition, partition); err != nil {
+				errs = append(errs, err.Error())
+				continue
+			}
+			if !partitionInProject(cfg, partition) {
+				errs = append(errs, fmt.Sprintf("deployment target %q partition %q not found in project.partitions", name, partition))
+			}
+		}
 		errs = append(errs, validateNodeSelector("deployment target "+name+".include", target.Include)...)
 		errs = append(errs, validateNodeSelector("deployment target "+name+".exclude", target.Exclude)...)
 		for nodeName, override := range target.Overrides {
@@ -662,6 +671,18 @@ func validateDeploymentTargets(cfg *Config) error {
 		return fmt.Errorf("%s", joinErrors(errs))
 	}
 	return nil
+}
+
+func partitionInProject(cfg *Config, name string) bool {
+	if cfg == nil || name == "" {
+		return false
+	}
+	for _, partition := range cfg.Project.Partitions {
+		if partition == name {
+			return true
+		}
+	}
+	return false
 }
 
 func validateNodeSpec(scope string, node NodeSpec) error {
@@ -1237,13 +1258,4 @@ func validateOverlayService(scope string, stackName string, serviceName string, 
 		return fmt.Errorf("%s", joinErrors(errs))
 	}
 	return nil
-}
-
-func partitionInProject(cfg *Config, name string) bool {
-	for _, partition := range cfg.Project.Partitions {
-		if partition == name {
-			return true
-		}
-	}
-	return false
 }

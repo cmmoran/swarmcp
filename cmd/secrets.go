@@ -68,7 +68,7 @@ var secretsCheckCmd = &cobra.Command{
 		} else if !useEngine {
 			secretsFile = cmdutil.InferSecretsFile(cfg, configPath, opts.SecretsFile)
 		}
-		partitionFilters := normalizeSelectors(opts.Partitions)
+		partitionFilters := cmdutil.FilterDeploymentPartitions(cfg, normalizeSelectors(opts.Partitions))
 		summary, err := render.RenderProject(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilters, nil, true, !opts.NoInfer)
 		if err != nil {
 			return err
@@ -128,6 +128,9 @@ var secretsPutCmd = &cobra.Command{
 		}
 		if secretsPutPartition != "" && !cmdutil.PartitionInProject(cfg, secretsPutPartition) {
 			return fmt.Errorf("partition %q not found in project.partitions", secretsPutPartition)
+		}
+		if secretsPutPartition != "" && !cmdutil.PartitionAllowedForDeployment(cfg, secretsPutPartition) {
+			return fmt.Errorf("partition %q is not allowed for deployment %q", secretsPutPartition, cfg.Project.Deployment)
 		}
 		if secretsPutService != "" && secretsPutStack == "" {
 			return fmt.Errorf("service requires --stack")

@@ -166,6 +166,24 @@ func TestResolveProjectScopeBuildsValuesScope(t *testing.T) {
 	}
 }
 
+func TestResolveProjectScopeRejectsPartitionNotAllowedForDeployment(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "project.yaml")
+	writeFile(t, configPath, "project:\n  name: demo\n  deployment: prod\n  partitions:\n    - dev\n    - qa\n  deployment_targets:\n    prod:\n      partitions:\n        - qa\n")
+
+	cfg, _, err := LoadProjectConfig(ProjectOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	_, err = ResolveProjectScope(cfg, ProjectOptions{Partition: "dev"})
+	if err == nil {
+		t.Fatalf("expected deployment-partition compatibility error")
+	}
+	if !strings.Contains(err.Error(), `partition "dev" is not allowed for deployment "prod"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadProjectInputsLoadsSelectedInputs(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "project.yaml")

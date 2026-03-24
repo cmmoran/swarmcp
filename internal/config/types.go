@@ -61,9 +61,10 @@ type Node struct {
 type DeploymentTargets map[string]DeploymentTarget
 
 type DeploymentTarget struct {
-	Include   NodeSelector        `yaml:"include"`
-	Exclude   NodeSelector        `yaml:"exclude"`
-	Overrides map[string]NodeSpec `yaml:"overrides"`
+	Partitions []string            `yaml:"partitions"`
+	Include    NodeSelector        `yaml:"include"`
+	Exclude    NodeSelector        `yaml:"exclude"`
+	Overrides  map[string]NodeSpec `yaml:"overrides"`
 }
 
 type NodeSelector struct {

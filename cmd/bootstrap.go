@@ -51,7 +51,7 @@ var bootstrapNetworksCmd = &cobra.Command{
 			return err
 		}
 		projectCtx := cmdutil.NewProjectContext(cfg, scope, projectOpts)
-		partitionFilters := normalizeSelectors(opts.Partitions)
+		partitionFilters := cmdutil.FilterDeploymentPartitions(cfg, normalizeSelectors(opts.Partitions))
 		stackFilters := normalizeSelectors(opts.Stacks)
 
 		client, err := projectCtx.SwarmClient()

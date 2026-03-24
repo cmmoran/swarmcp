@@ -68,6 +68,24 @@ func TestValidateContextMissingFromAllowedList(t *testing.T) {
 	}
 }
 
+func TestValidateDeploymentTargetPartitionMissingFromProject(t *testing.T) {
+	cfg := &Config{
+		Project: Project{
+			Name:       "primary",
+			Partitions: []string{"dev"},
+			Targets: DeploymentTargets{
+				"prod": {
+					Partitions: []string{"qa"},
+				},
+			},
+		},
+	}
+
+	if err := Validate(cfg); err == nil {
+		t.Fatalf("expected validation error for deployment target partition not in project.partitions")
+	}
+}
+
 func TestValidatePartitionOverlayMissingPartition(t *testing.T) {
 	cfg := &Config{
 		Project: Project{

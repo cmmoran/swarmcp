@@ -82,6 +82,9 @@ func ResolveProjectScope(cfg *config.Config, opts ProjectOptions) (*ProjectScope
 	if partition != "" && !PartitionInProject(cfg, partition) {
 		return nil, fmt.Errorf("partition %q not found in project.partitions", partition)
 	}
+	if partition != "" && !PartitionAllowedForDeployment(cfg, partition) {
+		return nil, fmt.Errorf("partition %q is not allowed for deployment %q", partition, cfg.Project.Deployment)
+	}
 	stack := opts.Stack
 	if stack != "" && !StackInProject(cfg, stack) {
 		return nil, fmt.Errorf("stack %q not found in stacks", stack)
