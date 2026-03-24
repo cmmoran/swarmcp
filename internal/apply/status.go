@@ -31,6 +31,7 @@ type ServiceState struct {
 }
 
 type ServiceIntentSnapshot struct {
+	Image   string
 	Labels  map[string]string
 	Env     []string
 	Command []string
@@ -410,6 +411,7 @@ func intentDetails(current, desired serviceIntent, diffs []string) []IntentDetai
 
 func intentSnapshot(intent serviceIntent) *ServiceIntentSnapshot {
 	return &ServiceIntentSnapshot{
+		Image:   intent.Image,
 		Labels:  cloneLabels(intent.Labels),
 		Env:     cloneStrings(intent.Env),
 		Command: cloneStrings(intent.Command),

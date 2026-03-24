@@ -252,6 +252,9 @@ func printServiceContentDiffs(out io.Writer, states []apply.ServiceState) {
 		for _, diff := range state.IntentDiffs {
 			diffSet[diff] = struct{}{}
 		}
+		if _, ok := diffSet["image"]; ok {
+			printValueDiff(out, "image", state.IntentCurrent.Image, state.IntentDesired.Image)
+		}
 		if _, ok := diffSet["labels"]; ok {
 			printValueDiff(out, "labels", state.IntentCurrent.Labels, state.IntentDesired.Labels)
 		}
