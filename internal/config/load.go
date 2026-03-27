@@ -469,6 +469,9 @@ func validateStack(cfg *Config, name string, stack Stack, standards map[string]S
 	if stack.Mode != "" && stack.Mode != "shared" && stack.Mode != "partitioned" {
 		errs = append(errs, fmt.Sprintf("stack %q: invalid mode %q", name, stack.Mode))
 	}
+	if err := validateStackIncludedIn("stack "+name+".included_in", stack.IncludedIn, cfg); err != nil {
+		errs = append(errs, err.Error())
+	}
 	errs = append(errs, validateRestartPolicy("stack "+name+".restart_policy", stack.RestartPolicy)...)
 	errs = append(errs, validateUpdatePolicy("stack "+name+".update_config", stack.UpdateConfig)...)
 	errs = append(errs, validateUpdatePolicy("stack "+name+".rollback_config", stack.RollbackConfig)...)
@@ -508,6 +511,9 @@ func validateStack(cfg *Config, name string, stack Stack, standards map[string]S
 	}
 	for serviceName, service := range stack.Services {
 		if err := validateService(name, serviceName, service, stack.Services, standards); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if err := validateServiceIncludedIn("stack "+name+".services."+serviceName+".included_in", service.IncludedIn, cfg); err != nil {
 			errs = append(errs, err.Error())
 		}
 		if err := validateServiceConfigs("stack "+name+".services."+serviceName+".configs", service.Configs); err != nil {
@@ -1044,6 +1050,9 @@ func validateOverlayProject(scope string, project OverlayProject) error {
 
 func validateOverlayStack(scope string, stackName string, stack OverlayStack, cfg *Config) error {
 	var errs []string
+	if err := validateStackIncludedIn(scope+".included_in", stack.IncludedIn, cfg); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if err := validateConfigDefs(scope+".configs", stack.Configs.Defs); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -1080,6 +1089,9 @@ func validateOverlayStack(scope string, stackName string, stack OverlayStack, cf
 	for serviceName := range stack.Services {
 		merged := mergedServices[serviceName]
 		if err := validateService(stackName, serviceName, merged, mergedServices, standards); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if err := validateServiceIncludedIn(scope+".services."+serviceName+".included_in", merged.IncludedIn, cfg); err != nil {
 			errs = append(errs, err.Error())
 		}
 		if err := validateServiceConfigs(scope+".services."+serviceName+".configs", merged.Configs); err != nil {
@@ -1197,7 +1209,7 @@ func validateServiceOverlays(cfg *Config, stackName string, serviceName string, 
 		if err := validateLogicalName(scope+".deployments."+name, name); err != nil {
 			errs = append(errs, err.Error())
 		}
-		if err := validateOverlayService(scope+".deployments."+name, stackName, serviceName, service, services, overlay, standards, serviceStandard); err != nil {
+		if err := validateOverlayService(cfg, scope+".deployments."+name, stackName, serviceName, service, services, overlay, standards, serviceStandard); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
@@ -1215,7 +1227,7 @@ func validateServiceOverlays(cfg *Config, stackName string, serviceName string, 
 			}
 		}
 		errs = append(errs, validatePartitionMatch(overlayScope, rule.Match.Partition, partitions)...)
-		if err := validateOverlayService(overlayScope, stackName, serviceName, service, services, rule.Service, standards, serviceStandard); err != nil {
+		if err := validateOverlayService(cfg, overlayScope, stackName, serviceName, service, services, rule.Service, standards, serviceStandard); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
@@ -1225,7 +1237,7 @@ func validateServiceOverlays(cfg *Config, stackName string, serviceName string, 
 	return nil
 }
 
-func validateOverlayService(scope string, stackName string, serviceName string, base Service, services map[string]Service, overlay OverlayService, standards map[string]StandardMount, serviceStandard string) error {
+func validateOverlayService(cfg *Config, scope string, stackName string, serviceName string, base Service, services map[string]Service, overlay OverlayService, standards map[string]StandardMount, serviceStandard string) error {
 	var errs []string
 	if _, ok := overlay.Fields["source"]; ok {
 		errs = append(errs, fmt.Sprintf("%s: overlays do not support source", scope))
@@ -1243,6 +1255,9 @@ func validateOverlayService(scope string, stackName string, serviceName string, 
 	}
 	mergedServices[serviceName] = merged
 	if err := validateService(stackName, serviceName, merged, mergedServices, standards); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := validateServiceIncludedIn(scope+".included_in", merged.IncludedIn, cfg); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if err := validateServiceConfigs(scope+".configs", merged.Configs); err != nil {

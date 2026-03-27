@@ -57,6 +57,48 @@ stacks:
 	}
 }
 
+func TestLoadFilesWithOptionsReplacesServiceIncludedIn(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	overlayPath := filepath.Join(dir, "overlay.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+stacks:
+  core:
+    services:
+      api:
+        image: ghcr.io/acme/api:main
+        included_in:
+          - deployments: [dev]
+          - partitions: [blue]
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(overlayPath, []byte(`
+stacks:
+  core:
+    services:
+      api:
+        included_in:
+          - deployments: [prod]
+`), 0o644); err != nil {
+		t.Fatalf("write overlay: %v", err)
+	}
+
+	cfg, err := LoadFilesWithOptions([]string{basePath, overlayPath}, LoadOptions{})
+	if err != nil {
+		t.Fatalf("load configs: %v", err)
+	}
+	rules := cfg.Stacks["core"].Services["api"].IncludedIn
+	if len(rules) != 1 {
+		t.Fatalf("expected included_in replace, got %#v", rules)
+	}
+	if got := strings.Join(rules[0].Deployments, ","); got != "prod" {
+		t.Fatalf("expected overlay included_in, got %#v", rules)
+	}
+}
+
 func TestLoadFilesWithOptionsRejectsLaterImportOverrides(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "project.yaml")

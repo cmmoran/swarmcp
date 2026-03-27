@@ -16,6 +16,7 @@ func debugResolvedMapWithTrace(cfg *Config, partition string, stackFilters []str
 	if cfg == nil {
 		return nil, fmt.Errorf("config is nil")
 	}
+	allowedPartitions := resolvedModelPartitions(cfg, partition)
 	projectMap, err := structToMap(cfg.Project)
 	if err != nil {
 		return nil, err
@@ -25,9 +26,11 @@ func debugResolvedMapWithTrace(cfg *Config, partition string, stackFilters []str
 	projectMap["secrets"] = cfg.projectSecretDefsWithTrace(partition, trace)
 	if partition != "" {
 		projectMap["partitions"] = []string{partition}
+	} else if len(allowedPartitions) > 0 {
+		projectMap["partitions"] = allowedPartitions
 	}
 
-	stackNames := selectedStackNames(cfg, stackFilters)
+	stackNames := selectedStackNames(cfg, partition, stackFilters)
 	stacksMap := make(map[string]any, len(stackNames))
 	for _, stackName := range stackNames {
 		stack, ok := cfg.Stacks[stackName]
@@ -63,7 +66,7 @@ func debugResolvedMapWithTrace(cfg *Config, partition string, stackFilters []str
 		}
 		stackMap["services"] = serviceMap
 
-		partitionsMap, err := debugResolvedPartitions(cfg, stackName, stack, partition, trace)
+		partitionsMap, err := debugResolvedPartitions(cfg, stackName, stack, partition, allowedPartitions, trace)
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +85,7 @@ func debugResolvedMapWithTrace(cfg *Config, partition string, stackFilters []str
 	})
 }
 
-func debugResolvedPartitions(cfg *Config, stackName string, stack Stack, partition string, trace *LoadTrace) (map[string]any, error) {
+func debugResolvedPartitions(cfg *Config, stackName string, stack Stack, partition string, allowedPartitions []string, trace *LoadTrace) (map[string]any, error) {
 	if partition != "" {
 		part, ok := stack.Partitions[partition]
 		if !ok {
@@ -99,6 +102,9 @@ func debugResolvedPartitions(cfg *Config, stackName string, stack Stack, partiti
 	}
 
 	names := cfg.StackPartitionNames(stackName)
+	if len(allowedPartitions) > 0 {
+		names = filterResolvedPartitionNames(names, allowedPartitions)
+	}
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -120,18 +126,71 @@ func debugResolvedPartitions(cfg *Config, stackName string, stack Stack, partiti
 	return partitions, nil
 }
 
-func selectedStackNames(cfg *Config, filters []string) []string {
+func resolvedModelPartitions(cfg *Config, selected string) []string {
+	if selected != "" {
+		return []string{selected}
+	}
+	partitions := append([]string(nil), cfg.Project.Partitions...)
+	if cfg.Project.Deployment == "" {
+		return partitions
+	}
+	target, ok := cfg.Project.Targets[cfg.Project.Deployment]
+	if !ok || len(target.Partitions) == 0 {
+		return partitions
+	}
+	return append([]string(nil), target.Partitions...)
+}
+
+func filterResolvedPartitionNames(names []string, allowed []string) []string {
+	if len(names) == 0 || len(allowed) == 0 {
+		return names
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = struct{}{}
+	}
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := allowedSet[name]; ok {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered
+}
+
+func selectedStackNames(cfg *Config, partition string, filters []string) []string {
 	if len(filters) > 0 {
-		out := append([]string(nil), filters...)
+		out := make([]string, 0, len(filters))
+		for _, name := range filters {
+			if stackVisibleInResolvedModel(cfg, name, partition) {
+				out = append(out, name)
+			}
+		}
 		sort.Strings(out)
 		return out
 	}
 	out := make([]string, 0, len(cfg.Stacks))
 	for name := range cfg.Stacks {
-		out = append(out, name)
+		if stackVisibleInResolvedModel(cfg, name, partition) {
+			out = append(out, name)
+		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+func stackVisibleInResolvedModel(cfg *Config, stackName string, partition string) bool {
+	stack, ok := cfg.Stacks[stackName]
+	if !ok {
+		return false
+	}
+	if partition != "" {
+		if stack.Mode != "partitioned" {
+			return cfg.StackIncludedInTarget(stackName, "")
+		}
+		return cfg.StackIncludedInTarget(stackName, partition)
+	}
+	return cfg.StackSelectedForRuntime(stackName, nil)
 }
 
 func structToMap(value any) (map[string]any, error) {

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/config"
-	"github.com/cmmoran/swarmcp/internal/sliceutil"
 )
 
 type volumeRequirement struct {
@@ -133,9 +132,12 @@ func collectVolumeRequirements(cfg *config.Config, partitionFilters []string, st
 		if len(stackFilters) > 0 && !StackInFilters(stackFilters, stackName) {
 			continue
 		}
+		if !cfg.StackSelectedForRuntime(stackName, partitionFilters) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
+			partitions = cfg.StackRuntimePartitions(stackName, partitionFilters)
 		}
 		for _, partition := range partitions {
 			services, err := cfg.StackServices(stackName, partition)
@@ -186,9 +188,12 @@ func hasVolumeRequirements(cfg *config.Config, partitionFilters []string, stackF
 		if len(stackFilters) > 0 && !StackInFilters(stackFilters, stackName) {
 			continue
 		}
+		if !cfg.StackSelectedForRuntime(stackName, partitionFilters) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
+			partitions = cfg.StackRuntimePartitions(stackName, partitionFilters)
 		}
 		for _, partition := range partitions {
 			services, err := cfg.StackServices(stackName, partition)

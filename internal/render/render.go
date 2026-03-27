@@ -9,7 +9,6 @@ import (
 
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/secrets"
-	"github.com/cmmoran/swarmcp/internal/sliceutil"
 	"github.com/cmmoran/swarmcp/internal/templates"
 )
 
@@ -93,9 +92,12 @@ func RenderProject(cfg *config.Config, store *secrets.Store, values any, partiti
 		if len(stackFilters) > 0 && !containsFilter(stackFilters, stackName) {
 			continue
 		}
+		if !cfg.StackSelectedForRuntime(stackName, partitionFilters) {
+			continue
+		}
 		data.Stack = stackName
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions := sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
+			partitions := cfg.StackRuntimePartitions(stackName, partitionFilters)
 			for _, partitionName := range partitions {
 				data.Partition = partitionName
 				scope := withNetworkScope(cfg, templates.Scope{Project: cfg.Project.Name, Deployment: cfg.Project.Deployment, Stack: stackName, Partition: partitionName})
@@ -111,7 +113,7 @@ func RenderProject(cfg *config.Config, store *secrets.Store, values any, partiti
 			}
 		}
 
-		stackPartitions := sliceutil.FilterPartitions(cfg.StackPartitionNames(stackName), partitionFilters)
+		stackPartitions := filterPartitionNamesForRuntime(cfg, stackName, partitionFilters)
 		for _, partitionName := range stackPartitions {
 			data.Partition = partitionName
 			scope := withNetworkScope(cfg, templates.Scope{Project: cfg.Project.Name, Deployment: cfg.Project.Deployment, Stack: stackName, Partition: partitionName})
@@ -133,6 +135,38 @@ func RenderProject(cfg *config.Config, store *secrets.Store, values any, partiti
 		summary.MissingSecrets = reporter.Missing()
 	}
 	return summary, nil
+}
+
+func filterPartitionNamesForRuntime(cfg *config.Config, stackName string, partitionFilters []string) []string {
+	partitions := cfg.StackPartitionNames(stackName)
+	if len(partitions) == 0 {
+		return nil
+	}
+	if len(partitionFilters) > 0 {
+		partitions = configFilterPartitions(partitions, partitionFilters)
+	}
+	if len(partitions) == 0 {
+		return nil
+	}
+	available := cfg.StackAvailablePartitions(stackName)
+	if len(available) == 0 {
+		return nil
+	}
+	return configFilterPartitions(partitions, available)
+}
+
+func configFilterPartitions(candidates []string, allowed []string) []string {
+	set := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		set[name] = struct{}{}
+	}
+	out := make([]string, 0, len(candidates))
+	for _, name := range candidates {
+		if _, ok := set[name]; ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope string, scopeID templates.Scope, configs map[string]config.ConfigDef, secrets map[string]config.SecretDef, data TemplateData, summary *Summary, infer bool) error {
@@ -277,7 +311,7 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 func renderServiceDefs(cfg *config.Config, resolver secrets.Resolver, values any, stackName string, stack config.Stack, projectName string, deployment string, summary *Summary, partitionFilters []string, infer bool) error {
 	partitions := []string{""}
 	if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-		partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
+		partitions = cfg.StackRuntimePartitions(stackName, partitionFilters)
 	}
 
 	for _, partitionName := range partitions {
@@ -569,7 +603,7 @@ func inferServiceRefs(cfg *config.Config, resolver secrets.Resolver, values any,
 func collectServiceMounts(cfg *config.Config, stackName string, stack config.Stack, projectName string, deployment string, resolver secrets.Resolver, values any, summary *Summary, partitionFilters []string, infer bool) error {
 	partitions := []string{""}
 	if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-		partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
+		partitions = cfg.StackRuntimePartitions(stackName, partitionFilters)
 	}
 
 	for _, partitionName := range partitions {

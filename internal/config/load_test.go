@@ -109,6 +109,94 @@ func TestValidatePartitionOverlayMissingPartition(t *testing.T) {
 	}
 }
 
+func TestValidateServiceIncludedInRejectsUnknownTargetsAndEmptyRule(t *testing.T) {
+	cfg := &Config{
+		Project: Project{
+			Name:        "primary",
+			Deployments: []string{"prod"},
+			Partitions:  []string{"blue"},
+		},
+		Stacks: map[string]Stack{
+			"core": {
+				Services: map[string]Service{
+					"api": {
+						Image: "ghcr.io/acme/api:latest",
+						IncludedIn: []ServiceInclusionRule{
+							{},
+							{
+								Deployments: []string{"qa"},
+								Partitions:  []string{"green"},
+								Stacks:      []string{"missing"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "at least one of deployments, partitions, or stacks is required") {
+		t.Fatalf("expected empty rule error, got %v", err)
+	}
+	if !strings.Contains(message, `deployment "qa" not found in project.deployments`) {
+		t.Fatalf("expected deployment error, got %v", err)
+	}
+	if !strings.Contains(message, `partition "green" not found in project.partitions`) {
+		t.Fatalf("expected partition error, got %v", err)
+	}
+	if !strings.Contains(message, `stack "missing" not found in stacks`) {
+		t.Fatalf("expected stack error, got %v", err)
+	}
+}
+
+func TestValidateStackIncludedInRejectsUnknownTargetsAndEmptyRule(t *testing.T) {
+	cfg := &Config{
+		Project: Project{
+			Name:        "primary",
+			Deployments: []string{"prod"},
+			Partitions:  []string{"blue"},
+		},
+		Stacks: map[string]Stack{
+			"core": {
+				IncludedIn: []InclusionRule{
+					{},
+					{
+						Deployments: []string{"qa"},
+						Partitions:  []string{"green"},
+						Stacks:      []string{"missing"},
+					},
+				},
+				Services: map[string]Service{
+					"api": {Image: "ghcr.io/acme/api:latest"},
+				},
+			},
+		},
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "at least one of deployments, partitions, or stacks is required") {
+		t.Fatalf("expected empty rule error, got %v", err)
+	}
+	if !strings.Contains(message, `deployment "qa" not found in project.deployments`) {
+		t.Fatalf("expected deployment error, got %v", err)
+	}
+	if !strings.Contains(message, `partition "green" not found in project.partitions`) {
+		t.Fatalf("expected partition error, got %v", err)
+	}
+	if !strings.Contains(message, `stack "missing" not found in stacks`) {
+		t.Fatalf("expected stack error, got %v", err)
+	}
+}
+
 func TestValidateSecretsEngineMissingAddr(t *testing.T) {
 	cfg := &Config{
 		Project: Project{

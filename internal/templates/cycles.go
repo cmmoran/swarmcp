@@ -18,11 +18,14 @@ func DetectCycles(cfg *config.Config, infer bool) ([]string, error) {
 	}
 
 	for stackName, stack := range cfg.Stacks {
+		if !cfg.StackSelectedForRuntime(stackName, nil) {
+			continue
+		}
 		if err := addScopeEdges(cfg, graph, scopeKey{level: "stack", stack: stackName}, infer, &warnings); err != nil {
 			return warnings, fmt.Errorf("template cycle check: %w", err)
 		}
 		if stack.Mode == "partitioned" {
-			for _, partitionName := range cfg.Project.Partitions {
+			for _, partitionName := range cfg.StackRuntimePartitions(stackName, nil) {
 				scope := scopeKey{level: "partition", stack: stackName, partition: partitionName}
 				if err := addTemplateEdges(cfg, graph, scope, cfg.StackConfigDefs(stackName, partitionName), cfg.StackSecretDefs(stackName, partitionName), infer, &warnings); err != nil {
 					return warnings, fmt.Errorf("template cycle check: %w", err)
@@ -31,7 +34,7 @@ func DetectCycles(cfg *config.Config, infer bool) ([]string, error) {
 		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" {
-			partitions = cfg.Project.Partitions
+			partitions = cfg.StackRuntimePartitions(stackName, nil)
 		}
 		for _, partitionName := range partitions {
 			services, err := cfg.StackServices(stackName, partitionName)
@@ -48,7 +51,10 @@ func DetectCycles(cfg *config.Config, infer bool) ([]string, error) {
 				}
 			}
 		}
-		for _, partitionName := range cfg.StackPartitionNames(stackName) {
+		for _, partitionName := range cfg.StackAvailablePartitions(stackName) {
+			if partitionName == "" {
+				continue
+			}
 			if err := addScopeEdges(cfg, graph, scopeKey{level: "partition", stack: stackName, partition: partitionName}, infer, &warnings); err != nil {
 				return warnings, fmt.Errorf("template cycle check: %w", err)
 			}

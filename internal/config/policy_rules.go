@@ -44,6 +44,7 @@ var layeredPolicyRules = []layeredPolicyRule{
 	{pattern: []string{"project", "deployment_targets", "*", "overrides", "*", "volumes"}, action: layeredPolicyReplace},
 	{pattern: []string{"stacks", "*", "source"}, action: layeredPolicyReplace},
 	{pattern: []string{"stacks", "*", "mode"}, action: layeredPolicyReplace},
+	{pattern: []string{"stacks", "*", "included_in"}, action: layeredPolicyReplace},
 	{pattern: []string{"stacks", "*", "restart_policy"}, action: layeredPolicyReplace},
 	{pattern: []string{"stacks", "*", "update_config"}, action: layeredPolicyReplace},
 	{pattern: []string{"stacks", "*", "rollback_config"}, action: layeredPolicyReplace},
@@ -69,6 +70,7 @@ var layeredPolicyRules = []layeredPolicyRule{
 	{pattern: []string{"stacks", "*", "services", "*", "configs"}, action: layeredPolicyReplace},
 	{pattern: []string{"stacks", "*", "services", "*", "secrets"}, action: layeredPolicyReplace},
 	{pattern: []string{"stacks", "*", "services", "*", "volumes"}, action: layeredPolicyReplace},
+	{pattern: []string{"stacks", "*", "services", "*", "included_in"}, action: layeredPolicyReplace},
 }
 
 type releaseValueKind int

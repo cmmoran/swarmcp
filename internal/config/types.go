@@ -88,6 +88,7 @@ type Stack struct {
 	Source         *SourceRef                `yaml:"source"`
 	Overrides      map[string]any            `yaml:"overrides"`
 	Mode           string                    `yaml:"mode"`
+	IncludedIn     []InclusionRule           `yaml:"included_in"`
 	RestartPolicy  *RestartPolicy            `yaml:"restart_policy"`
 	UpdateConfig   *UpdatePolicy             `yaml:"update_config"`
 	RollbackConfig *UpdatePolicy             `yaml:"rollback_config"`
@@ -117,6 +118,7 @@ type Service struct {
 	Command          []string                 `yaml:"command"`
 	Args             []string                 `yaml:"args"`
 	Workdir          string                   `yaml:"workdir"`
+	IncludedIn       []InclusionRule          `yaml:"included_in"`
 	Env              map[string]string        `yaml:"env"`
 	Ports            []Port                   `yaml:"ports"`
 	Mode             string                   `yaml:"mode"`
@@ -138,6 +140,14 @@ type Service struct {
 	Sources          Sources                  `yaml:"sources"`
 	BaseDir          string                   `yaml:"-"`
 }
+
+type InclusionRule struct {
+	Deployments []string `yaml:"deployments"`
+	Partitions  []string `yaml:"partitions"`
+	Stacks      []string `yaml:"stacks"`
+}
+
+type ServiceInclusionRule = InclusionRule
 
 type ServiceNetworkEphemeral struct {
 	Internal   *bool `yaml:"internal"`

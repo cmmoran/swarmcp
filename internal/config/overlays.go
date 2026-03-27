@@ -299,6 +299,7 @@ type OverlayProject struct {
 
 type OverlayStack struct {
 	Sealed     bool                        `yaml:"sealed"`
+	IncludedIn []InclusionRule             `yaml:"included_in"`
 	Sources    Sources                     `yaml:"sources"`
 	Configs    ConfigDefsOrRefs            `yaml:"configs"`
 	Secrets    SecretDefsOrRefs            `yaml:"secrets"`
@@ -1211,6 +1212,17 @@ func (cfg *Config) StackServices(stackName string, partition string) (map[string
 }
 
 func (cfg *Config) stackServicesWithTrace(stackName string, partition string, trace *LoadTrace) (map[string]Service, error) {
+	stackCfg, ok := cfg.Stacks[stackName]
+	if !ok {
+		return nil, nil
+	}
+	effectivePartition := partition
+	if stackCfg.Mode != "partitioned" {
+		effectivePartition = ""
+	}
+	if !cfg.StackIncludedInTarget(stackName, effectivePartition) {
+		return map[string]Service{}, nil
+	}
 	base := cfg.stackServices(stackName)
 	deployUnsealed, deploySealed := splitOverlayServices(cfg.deploymentOverlay(), stackName)
 	stackDeployUnsealed, stackDeploySealed := splitOverlayStackServices(cfg.stackDeploymentOverlay(stackName))
@@ -1292,7 +1304,11 @@ func (cfg *Config) stackServicesWithTrace(stackName string, partition string, tr
 	if err != nil {
 		return nil, err
 	}
-	return merged, nil
+	filtered := filterServicesForTarget(merged, stackCfg.Mode, cfg.Project.Deployment, effectivePartition, stackName)
+	if err := validateRuntimeServiceDependencies(stackName, partition, filtered); err != nil {
+		return nil, err
+	}
+	return filtered, nil
 }
 
 func recordServiceOverlayTrace(trace *LoadTrace, stackName string, label string, overlays map[string]OverlayService) {

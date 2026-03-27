@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/cmmoran/swarmcp/internal/config"
-	"github.com/cmmoran/swarmcp/internal/sliceutil"
 	"github.com/docker/docker/api/types/mount"
 	"go.yaml.in/yaml/v4"
 )
@@ -138,9 +137,12 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 		if len(stackFilters) > 0 && !selectorContains(stackFilters, stackName) {
 			continue
 		}
+		if !cfg.StackSelectedForRuntime(stackName, partitionFilters) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
+			partitions = cfg.StackRuntimePartitions(stackName, partitionFilters)
 		}
 		for _, partitionName := range partitions {
 			services, err := cfg.StackServices(stackName, partitionName)

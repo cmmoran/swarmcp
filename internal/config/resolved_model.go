@@ -51,6 +51,9 @@ func loadResolvedModel(opts ResolvedModelOptions, trace *LoadTrace) (*ResolvedMo
 	if opts.Partition != "" && !partitionExists(cfg, opts.Partition) {
 		return nil, fmt.Errorf("partition %q not found in project.partitions", opts.Partition)
 	}
+	if opts.Partition != "" && !partitionAllowedForDeployment(cfg, opts.Partition) {
+		return nil, fmt.Errorf("partition %q is not allowed for deployment %q", opts.Partition, cfg.Project.Deployment)
+	}
 	stackFilter := []string(nil)
 	if opts.Stack != "" {
 		if _, ok := cfg.Stacks[opts.Stack]; !ok {
@@ -70,4 +73,27 @@ func loadResolvedModel(opts ResolvedModelOptions, trace *LoadTrace) (*ResolvedMo
 		StackFilter: stackFilter,
 		Trace:       trace,
 	}, nil
+}
+
+func partitionAllowedForDeployment(cfg *Config, partition string) bool {
+	if partition == "" {
+		return true
+	}
+	if !partitionExists(cfg, partition) {
+		return false
+	}
+	deployment := cfg.Project.Deployment
+	if deployment == "" {
+		return true
+	}
+	target, ok := cfg.Project.Targets[deployment]
+	if !ok || len(target.Partitions) == 0 {
+		return true
+	}
+	for _, candidate := range target.Partitions {
+		if candidate == partition {
+			return true
+		}
+	}
+	return false
 }

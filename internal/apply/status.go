@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/config"
-	"github.com/cmmoran/swarmcp/internal/sliceutil"
 	"github.com/cmmoran/swarmcp/internal/swarm"
 	"github.com/docker/docker/api/types/mount"
 	dockerapi "github.com/docker/docker/api/types/swarm"
@@ -525,9 +524,12 @@ func expectedServices(cfg *config.Config, partitionFilters []string, stackFilter
 		if len(stackFilters) > 0 && !selectorContains(stackFilters, stackName) {
 			continue
 		}
+		if !cfg.StackSelectedForRuntime(stackName, partitionFilters) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
+			partitions = cfg.StackRuntimePartitions(stackName, partitionFilters)
 		}
 		for _, partitionName := range partitions {
 			stackServices, err := cfg.StackServices(stackName, partitionName)

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -182,5 +183,107 @@ stacks:
 	}
 	if resolved.Trace.OverlayLayers[0].Value != overlayConfigPath {
 		t.Fatalf("unexpected overlay value: %#v", resolved.Trace.OverlayLayers[0])
+	}
+}
+
+func TestLoadResolvedModelRejectsPartitionNotAllowedForDeployment(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "project.yaml")
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployment: nonprod
+  partitions:
+    - dev
+    - qa
+    - prod
+  deployment_targets:
+    nonprod:
+      partitions:
+        - dev
+        - qa
+    prod:
+      partitions:
+        - prod
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	_, err := LoadResolvedModel(ResolvedModelOptions{
+		ConfigPaths: []string{projectPath},
+		Deployment:  "nonprod",
+		Partition:   "prod",
+		LoadOptions: LoadOptions{},
+	})
+	if err == nil {
+		t.Fatalf("expected deployment-partition compatibility error")
+	}
+	if !strings.Contains(err.Error(), `partition "prod" is not allowed for deployment "nonprod"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadResolvedModelFiltersPartitionsByDeploymentWhenSelectorOmitted(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "project.yaml")
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployment: nonprod
+  partitions:
+    - dev
+    - qa
+    - prod
+  deployment_targets:
+    nonprod:
+      partitions:
+        - dev
+        - qa
+stacks:
+  participant:
+    mode: partitioned
+    partitions:
+      dev: {}
+      qa: {}
+      prod: {}
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	resolved, err := LoadResolvedModel(ResolvedModelOptions{
+		ConfigPaths: []string{projectPath},
+		Deployment:  "nonprod",
+		LoadOptions: LoadOptions{},
+	})
+	if err != nil {
+		t.Fatalf("load resolved model: %v", err)
+	}
+
+	project, ok := resolved.Model["project"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected project map, got %#v", resolved.Model["project"])
+	}
+	partitions, ok := project["partitions"].([]any)
+	if !ok {
+		t.Fatalf("expected narrowed project partitions, got %#v", project["partitions"])
+	}
+	if len(partitions) != 2 || partitions[0] != "dev" || partitions[1] != "qa" {
+		t.Fatalf("expected only allowed partitions, got %#v", partitions)
+	}
+
+	stacks, ok := resolved.Model["stacks"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected stacks map, got %#v", resolved.Model["stacks"])
+	}
+	participant := stacks["participant"].(map[string]any)
+	stackPartitions := participant["partitions"].(map[string]any)
+	if _, ok := stackPartitions["prod"]; ok {
+		t.Fatalf("expected prod partition to be filtered out, got %#v", stackPartitions)
+	}
+	if _, ok := stackPartitions["dev"]; !ok {
+		t.Fatalf("expected dev partition to remain, got %#v", stackPartitions)
+	}
+	if _, ok := stackPartitions["qa"]; !ok {
+		t.Fatalf("expected qa partition to remain, got %#v", stackPartitions)
 	}
 }

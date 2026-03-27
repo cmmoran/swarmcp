@@ -55,9 +55,12 @@ func buildServiceChanges(cfg *config.Config, desired DesiredState, values any, s
 		if len(stackFilters) > 0 && !selectorContains(stackFilters, stackName) {
 			continue
 		}
+		if !cfg.StackSelectedForRuntime(stackName, partitionFilters) {
+			continue
+		}
 		partitions := []string{""}
 		if stack.Mode == "partitioned" && len(cfg.Project.Partitions) > 0 {
-			partitions = sliceutil.FilterPartitions(cfg.Project.Partitions, partitionFilters)
+			partitions = cfg.StackRuntimePartitions(stackName, partitionFilters)
 		}
 
 		for _, partitionName := range partitions {

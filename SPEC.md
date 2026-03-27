@@ -52,6 +52,13 @@ Target-axis model:
 - `stack` selects logical stack definitions under `stacks:`.
 - The effective runtime workset is the intersection of selected deployments, selected stacks, and selected partition instances for partitioned stacks.
 - Shared stacks are partition-agnostic. A partition selector narrows partitioned stacks only; it must not create per-partition variants of shared stacks.
+- Inclusion rules must preserve this model:
+  - stack-level `included_in` may decide whether a logical stack participates in a runtime target
+  - service-level `included_in` may only further narrow membership inside an already-included stack
+  - service-level inclusion must not widen a stack beyond the stack's own inclusion scope
+- Inclusion should be documented deployment-first:
+  - `deployments` is the primary and most common `included_in` dimension
+  - `partitions` is an advanced narrowing dimension for cases that truly need partition-specific presence
 - Deployments may optionally restrict which partitions are valid for that deployment via `project.deployment_targets.<name>.partitions`.
 - If a deployment target does not declare `partitions`, all `project.partitions` remain eligible for that deployment.
 
@@ -107,6 +114,7 @@ Disallowed in release overlays:
 - `project.deployment_targets`
 - adding or removing stacks
 - adding or removing services
+- `stacks.<name>.services.<svc>.included_in`
 - broad structural network, volume, or import rewrites
 
 If a release overlay uses immutable refs and image digests, it already serves as a practical lock artifact. SwarmCP does not need a separate lockfile product to achieve basic reproducibility.
@@ -222,7 +230,7 @@ Per-section policy:
   - Replace-only: `restart_policy`, `update_config`, `rollback_config`
 - `stacks.<name>.services.<name>`:
   - Merge: `env`, `labels`, `placement`, `sources`, `overlays`
-  - Replace-only: `source`, `image`, `command`, `args`, `workdir`, `ports`, `mode`, `replicas`, `restart_policy`, `update_config`, `rollback_config`, `healthcheck`, `depends_on`, `egress`, `networks`, `network_ephemeral`, `configs`, `secrets`, `volumes`
+  - Replace-only: `source`, `image`, `command`, `args`, `workdir`, `ports`, `mode`, `replicas`, `restart_policy`, `update_config`, `rollback_config`, `healthcheck`, `depends_on`, `egress`, `networks`, `network_ephemeral`, `configs`, `secrets`, `volumes`, `included_in`
   - Invalid in later config files: `overrides`
 
 Import constraints under layering:
@@ -538,6 +546,21 @@ Overlay scope (draft):
 - Service template overlays are service-scoped maps (no `services:` nesting); service partition overlays may be a map (exact match) or a list with `match.partition`.
 - `sealed: true` may be set on project/stack/service overlay blocks; sealed fields override non-sealed values even if they are narrower in scope.
 
+`included_in` placement rule:
+- `included_in` is allowed on stacks and services anywhere stack/service definitions or stack/service overlays already accept stack/service fields, except release overlays.
+- Allowed authoring locations include:
+  - base stack definitions in `project.yaml` or any other normal config file at `stacks.<stack>.included_in`
+  - base service definitions in `project.yaml` or any other normal config file at `stacks.<stack>.services.<service>.included_in`
+  - normal repeated `--config` layered overlays for stacks at the same stack path above
+  - normal repeated `--config` layered overlays at the same path above
+  - project deployment/partition overlays at `overlays.*.stacks.<stack>.included_in`
+  - project deployment/partition overlays at `overlays.*.stacks.<stack>.services.<service>.included_in`
+  - stack deployment/partition overlays at `stacks.<stack>.overlays.*.included_in`
+  - stack deployment/partition overlays at `stacks.<stack>.overlays.*.services.<service>.included_in`
+  - service-scoped deployment/partition overlays at `stacks.<stack>.services.<service>.overlays.*.included_in`
+- `included_in` is not allowed in files passed via `--release-config`.
+- This distinction is normative: `included_in` changes runtime stack/service membership and topology, so it belongs to project/config overlays, not release overlays.
+
 Overlay use case:
 - "Values as configs": define base value configs, then override `source` per overlay.
   Templates can call `config_value` to resolve the active value.
@@ -659,6 +682,8 @@ The `swarmcp.io/hash` label is the source of truth for config/secret content com
 ## Service Intent (Milestone 2)
 Services declare intent, not the full Swarm service spec.
 
+Stacks may also declare runtime inclusion intent with `stacks.<stack>.included_in`. Stack inclusion is evaluated before any service-level inclusion.
+
 Required:
 - `image`
 
@@ -668,12 +693,85 @@ Optional:
 - `ports` (`target`, `published`, `protocol`, `mode`)
 - `mode` (`replicated` or `global`) and `replicas`
 - `healthcheck`, `depends_on`, `egress`
+- `included_in` (runtime inclusion rules by deployment/partition/stack)
 - `restart_policy` (`condition`, `delay`, `max_attempts`, `window`)
 - `update_config` (`parallelism`, `delay`, `failure_action`, `monitor`, `max_failure_ratio`, `order`)
 - `rollback_config` (`parallelism`, `delay`, `failure_action`, `monitor`, `max_failure_ratio`, `order`)
 - `labels` (merged with managed labels; `swarmcp.io/*` reserved)
 - `placement.constraints` (Swarm placement constraint expressions)
 - `configs`, `secrets`, `sources`
+
+Service inclusion rules:
+- `included_in` is a service-level runtime selector matrix. It controls whether a service exists in the effective runtime model for a given `(deployment, partition, stack)` target.
+- The default mental model is deployment membership: "this service exists in these deployments."
+- In most projects, `deployments` should be the only `included_in` dimension used.
+- `partitions` is optional and should be treated as an advanced narrowing feature, mainly for partitioned stacks that truly need partition-specific service presence.
+- Service inclusion is always evaluated after stack inclusion. The effective rule is:
+  - stack is included for the target, and
+  - service is included for the target.
+- A service-level rule may further narrow the stack's scope, but it must not widen it. If the stack is excluded, every service in that stack is excluded regardless of service-level `included_in`.
+- `included_in` may be authored in base config at `stacks.<stack>.services.<service>.included_in`.
+- `included_in` may also be authored in normal repeated `--config` overlays, using the same path above. In config layering it is replace-only, not deep-merged.
+- `included_in` may also be authored in service override overlays:
+  - `overlays.deployments.<deployment>.stacks.<stack>.services.<service>.included_in`
+  - `overlays.partitions[*].stacks.<stack>.services.<service>.included_in`
+  - `stacks.<stack>.overlays.deployments.<deployment>.services.<service>.included_in`
+  - `stacks.<stack>.overlays.partitions[*].services.<service>.included_in`
+  - `stacks.<stack>.services.<service>.overlays.deployments.<deployment>.included_in`
+  - `stacks.<stack>.services.<service>.overlays.partitions[*].included_in`
+- `included_in` must not be allowed in files passed via `--release-config`. Release overlays may not change service existence/topology.
+- If `included_in` is omitted, the service is included everywhere.
+- If `included_in` is present, the service is included only when at least one rule matches the active runtime target.
+- Within one rule, all specified dimensions must match.
+- Across rules, matching is OR.
+- An omitted dimension inside a rule is a wildcard for that rule.
+- On services inside `mode: shared` stacks, `deployments` remains the preferred dimension. Using `partitions` on shared-stack services is not part of the primary design goal and should generally be avoided unless future behavior is specified more explicitly.
+
+Example:
+```yaml
+stacks:
+  participant:
+    services:
+      api:
+        image: ghcr.io/acme/api:latest
+        included_in:
+          - deployments: [dev]
+          - deployments: [prod]
+            partitions: [blue, green]
+          - deployments: [ops]
+            stacks: [participant]
+```
+
+Stack inclusion rules:
+- `included_in` is also valid on `stacks.<stack>`. It controls whether that logical stack participates in the effective runtime model for a given `(deployment, partition, stack)` target.
+- The default mental model is deployment membership: "this stack exists in these deployments."
+- If stack-level `included_in` is omitted, the stack is included everywhere.
+- If stack-level `included_in` is present, the stack is included only when at least one rule matches the active runtime target.
+- Stack-level `included_in` uses the same rule shape as service-level `included_in`.
+- For `mode: partitioned` stacks, `partitions` may be used when you truly need to narrow which partition instances of the stack exist for a given deployment.
+- For `mode: shared` stacks, `deployments` is the intended dimension. Using `partitions` on shared-stack inclusion rules is outside the primary design goal and should generally be avoided unless future behavior is specified more explicitly.
+
+Example:
+```yaml
+stacks:
+  primary-ext:
+    mode: shared
+    included_in:
+      - deployments: [prod, nonprod]
+    services:
+      grafana:
+        image: grafana/grafana:latest
+        included_in:
+          - deployments: [prod, nonprod]
+      loki:
+        image: grafana/loki:latest
+        included_in:
+          - deployments: [prod, nonprod]
+      drone:
+        image: drone/drone:latest
+        included_in:
+          - deployments: [nonprod]
+```
 
 Restart policy inheritance:
 - `project.restart_policy` provides the default.
@@ -852,6 +950,17 @@ Command semantics:
 - `diff`: compute and report drift only for targeted stack instances/resources.
 - `status`: report only targeted stack instances/resources and their service health.
 - `apply`: reconcile only targeted stack instances/resources.
+
+Stack and service inclusion targeting:
+- After deployment, partition, and stack selectors are resolved, each selected stack is filtered by its effective stack-level `included_in` rules for that runtime target.
+- A stack excluded by stack-level `included_in` is treated as absent from that target's resolved runtime model.
+- Only after a stack is included are its services filtered by their effective service-level `included_in` rules for that runtime target.
+- A service excluded by `included_in` is treated as absent from that target's resolved runtime model.
+- Service inclusion cannot cause an excluded stack to exist for a target.
+- Excluded services are not rendered, deployed, diffed, status-checked, or considered for service-scoped bind/config/secret/volume planning for that target.
+- `included_in` does not create new deployments or logical stacks.
+- The primary use of `included_in` is deployment-based inclusion and exclusion.
+- For partitioned stacks, `included_in.partitions` may optionally narrow which existing partition instances are in scope when that level of control is actually needed.
 
 Shared-stack partition rule:
 - Partition overlays, partition-scoped stack config/secret defs, and partition-specific service overlays are defined against a partition context.
@@ -1230,6 +1339,10 @@ overlays:
       stacks:
         <stack>:
           sealed: <bool>
+          included_in:
+            - deployments: [<deployment>]
+              partitions: [<partition>]
+              stacks: [<stack>]
           sources:
             url: <string>
             ref: <string>
@@ -1239,6 +1352,10 @@ overlays:
               # overrides only; no source/overrides in overlays
               sealed: <bool>
               image: <string>
+              included_in:
+                - deployments: [<deployment>]
+                  partitions: [<partition>]
+                  stacks: [<stack>]
               env:
                 <key>: <value>
               labels:
@@ -1313,6 +1430,10 @@ overlays:
       stacks:
         <stack>:
           sealed: <bool>
+          included_in:
+            - deployments: [<deployment>]
+              partitions: [<partition>]
+              stacks: [<stack>]
           sources:
             url: <string>
             ref: <string>
@@ -1322,6 +1443,10 @@ overlays:
               # overrides only; no source/overrides in overlays
               sealed: <bool>
               image: <string>
+              included_in:
+                - deployments: [<deployment>]
+                  partitions: [<partition>]
+                  stacks: [<stack>]
               env:
                 <key>: <value>
               labels:
@@ -1377,6 +1502,10 @@ stacks:
       overrides_path: <string>
     overrides: { ... } # stack fields (when source is set)
     mode: shared|partitioned
+    included_in:
+      - deployments: [<deployment>] # optional
+        partitions: [<partition>] # optional; invalid for mode: shared
+        stacks: [<stack>] # optional
     volumes:
       <name>:
         subpath: <string> # optional; appended after stack segment
@@ -1404,6 +1533,10 @@ stacks:
     overlays:
       <name>:
         sealed: <bool>
+        included_in:
+          - deployments: [<deployment>]
+            partitions: [<partition>] # optional; invalid for mode: shared
+            stacks: [<stack>]
         sources:
           url: <string>
           ref: <string>
@@ -1413,6 +1546,10 @@ stacks:
             # overrides only; no source/overrides in overlays
             sealed: <bool>
             image: <string>
+            included_in:
+              - deployments: [<deployment>]
+                partitions: [<partition>]
+                stacks: [<stack>]
             env:
               <key>: <value>
             labels:
@@ -1485,6 +1622,10 @@ stacks:
         command: [<string>]
         args: [<string>]
         workdir: <path>
+        included_in:
+          - deployments: [<deployment>] # optional
+            partitions: [<partition>] # optional
+            stacks: [<stack>] # optional
         env:
           <key>: <value>
         ports:
@@ -1539,6 +1680,10 @@ stacks:
               sealed: <bool>
               # overrides only; no source/overrides in overlays
               image: <string>
+              included_in:
+                - deployments: [<deployment>]
+                  partitions: [<partition>]
+                  stacks: [<stack>]
               env:
                 <key>: <value>
               labels:
@@ -1552,6 +1697,10 @@ stacks:
               sealed: <bool>
               # overrides only; no source/overrides in overlays
               image: <string>
+              included_in:
+                - deployments: [<deployment>]
+                  partitions: [<partition>]
+                  stacks: [<stack>]
               env:
                 <key>: <value>
               labels:
@@ -1568,6 +1717,19 @@ stacks:
 If the source is a template, it is rendered first, then the fragment is resolved.
 Non-scalar fragment values render as compact JSON (valid YAML) to keep inline usage simple.
 The `values#/path` prefix resolves fragments from the merged values store (see CLI flags).
+
+`included_in` schema notes:
+- Each entry is a rule object.
+- At least one of `deployments`, `partitions`, or `stacks` must be present in each rule.
+- In normal use, rules should usually specify `deployments` and omit the other dimensions.
+- Omitted dimensions are wildcards.
+- Referenced deployment names must exist in `project.deployments` when that list is declared.
+- Referenced partition names must exist in `project.partitions`.
+- Referenced stack names must exist in `stacks`.
+- `included_in` is allowed in normal config files and stack/service override overlays, but it is not allowed in release overlays.
+- Stack-level `included_in` is evaluated before service-level `included_in`.
+- Service-level `included_in` may only narrow membership within an already included stack; it must not widen stack inclusion.
+- `partitions` should be considered an advanced narrowing field, primarily for partitioned stacks. It is not the primary design goal of `included_in`.
 
 Note: secret sources are files like config sources. Secrets engine lookups occur inside templates via functions like `secret_value` or `secret_ref`.
 If a secret definition omits `source`, it defaults to `inline: {{ secret_value "<name>" }}`. Service-level secrets without a source use this default only when no definition exists in higher scopes.
