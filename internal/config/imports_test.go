@@ -166,6 +166,164 @@ stacks:
 	}
 }
 
+func TestResolveImportsPreservesStackIncludedInFromWrapper(t *testing.T) {
+	dir := t.TempDir()
+	stackPath := filepath.Join(dir, "stack.yaml")
+	projectPath := filepath.Join(dir, "project.yaml")
+
+	if err := os.WriteFile(stackPath, []byte(`
+mode: shared
+included_in:
+  - deployments: [dev]
+services:
+  api:
+    image: api:1
+`), 0o644); err != nil {
+		t.Fatalf("write stack: %v", err)
+	}
+
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployments: [nonprod, prod]
+stacks:
+  app:
+    source:
+      path: stack.yaml
+    included_in:
+      - deployments: [nonprod]
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(projectPath, LoadOptions{})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	rules := cfg.Stacks["app"].IncludedIn
+	if len(rules) != 1 || len(rules[0].Deployments) != 1 || rules[0].Deployments[0] != "nonprod" {
+		t.Fatalf("expected wrapper included_in to win, got %#v", rules)
+	}
+}
+
+func TestResolveImportsPreservesImportedStackIncludedInWhenWrapperUnset(t *testing.T) {
+	dir := t.TempDir()
+	stackPath := filepath.Join(dir, "stack.yaml")
+	projectPath := filepath.Join(dir, "project.yaml")
+
+	if err := os.WriteFile(stackPath, []byte(`
+mode: shared
+included_in:
+  - deployments: [nonprod]
+services:
+  api:
+    image: api:1
+`), 0o644); err != nil {
+		t.Fatalf("write stack: %v", err)
+	}
+
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployments: [nonprod, prod]
+stacks:
+  app:
+    source:
+      path: stack.yaml
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(projectPath, LoadOptions{})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	rules := cfg.Stacks["app"].IncludedIn
+	if len(rules) != 1 || len(rules[0].Deployments) != 1 || rules[0].Deployments[0] != "nonprod" {
+		t.Fatalf("expected imported included_in to be preserved, got %#v", rules)
+	}
+}
+
+func TestResolveImportsPreservesServiceIncludedInFromWrapper(t *testing.T) {
+	dir := t.TempDir()
+	servicePath := filepath.Join(dir, "service.yaml")
+	projectPath := filepath.Join(dir, "project.yaml")
+
+	if err := os.WriteFile(servicePath, []byte(`
+image: worker:1
+included_in:
+  - deployments: [prod]
+`), 0o644); err != nil {
+		t.Fatalf("write service: %v", err)
+	}
+
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployments: [nonprod, prod]
+stacks:
+  app:
+    services:
+      worker:
+        source:
+          path: service.yaml
+        included_in:
+          - deployments: [nonprod]
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(projectPath, LoadOptions{})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	rules := cfg.Stacks["app"].Services["worker"].IncludedIn
+	if len(rules) != 1 || len(rules[0].Deployments) != 1 || rules[0].Deployments[0] != "nonprod" {
+		t.Fatalf("expected wrapper included_in to win, got %#v", rules)
+	}
+}
+
+func TestResolveImportsPreservesImportedServiceIncludedInWhenWrapperUnset(t *testing.T) {
+	dir := t.TempDir()
+	servicePath := filepath.Join(dir, "service.yaml")
+	projectPath := filepath.Join(dir, "project.yaml")
+
+	if err := os.WriteFile(servicePath, []byte(`
+image: worker:1
+included_in:
+  - deployments: [nonprod]
+`), 0o644); err != nil {
+		t.Fatalf("write service: %v", err)
+	}
+
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployments: [nonprod, prod]
+stacks:
+  app:
+    services:
+      worker:
+        source:
+          path: service.yaml
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(projectPath, LoadOptions{})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	rules := cfg.Stacks["app"].Services["worker"].IncludedIn
+	if len(rules) != 1 || len(rules[0].Deployments) != 1 || rules[0].Deployments[0] != "nonprod" {
+		t.Fatalf("expected imported included_in to be preserved, got %#v", rules)
+	}
+}
+
 func TestResolveImportsListMerge(t *testing.T) {
 	dir := t.TempDir()
 	stackPath := filepath.Join(dir, "stack.yaml")

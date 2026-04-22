@@ -37,6 +37,7 @@ func resolveImportsWithTrace(cfg *Config, opts LoadOptions, trace *LoadTrace) er
 		if err != nil {
 			return fmt.Errorf("stack %q: %w", stackName, err)
 		}
+		stackDef = applyStackImportMetadata(stackDef, stack)
 		stackDef.BaseDir = baseDir
 		cfg.Stacks[stackName] = applyStackBaseDirs(stackDef)
 	}
@@ -115,6 +116,7 @@ func resolveServiceImports(stackName string, stack *Stack, opts LoadOptions, tra
 		if err != nil {
 			return fmt.Errorf("stack %q service %q: %w", stackName, serviceName, err)
 		}
+		serviceDef = applyServiceImportMetadata(serviceDef, service)
 		serviceDef.BaseDir = baseDir
 		stack.Services[serviceName] = serviceDef
 	}
@@ -311,6 +313,20 @@ func applyStackBaseDirs(stack Stack) Stack {
 		}
 	}
 	return stack
+}
+
+func applyStackImportMetadata(imported Stack, wrapper Stack) Stack {
+	if len(wrapper.IncludedIn) > 0 {
+		imported.IncludedIn = copyInclusionRules(wrapper.IncludedIn)
+	}
+	return imported
+}
+
+func applyServiceImportMetadata(imported Service, wrapper Service) Service {
+	if len(wrapper.IncludedIn) > 0 {
+		imported.IncludedIn = copyInclusionRules(wrapper.IncludedIn)
+	}
+	return imported
 }
 
 func hasStackLocalFields(stack Stack) bool {

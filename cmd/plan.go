@@ -49,6 +49,8 @@ var planCmd = &cobra.Command{
 				return err
 			}
 			cfg := projectCtx.Config
+			partitionFilters := cmdutil.FilterDeploymentPartitions(cfg, targets.partitionFilters)
+			stackFilters := targets.stackFilters
 			nodesInScope := cmdutil.ResolveDeploymentNodes(cfg)
 
 			debugContentEnabled := opts.DebugContent
@@ -65,10 +67,10 @@ var planCmd = &cobra.Command{
 				return err
 			}
 			warnings = filterInferredRefWarnings(warnings)
-			warnings = append(warnings, cmdutil.VolumePlacementWarnings(cfg, targets.partitionFilters, targets.stackFilters, opts.Debug)...)
+			warnings = append(warnings, cmdutil.VolumePlacementWarnings(cfg, partitionFilters, stackFilters, opts.Debug)...)
 
 			done = progress.start("render desired configs/secrets")
-			summary, err := render.RenderProject(cfg, projectCtx.Secrets, projectCtx.Values, targets.partitionFilters, targets.stackFilters, opts.AllowMissing, !opts.NoInfer)
+			summary, err := render.RenderProject(cfg, projectCtx.Secrets, projectCtx.Values, partitionFilters, stackFilters, opts.AllowMissing, !opts.NoInfer)
 			done(err)
 			if err != nil {
 				return err
@@ -109,19 +111,19 @@ var planCmd = &cobra.Command{
 			}
 
 			done = progress.start("compute desired plan")
-			desired := apply.DesiredStateFromSummary(cfg, summary, targets.partitionFilters, targets.stackFilters)
+			desired := apply.DesiredStateFromSummary(cfg, summary, partitionFilters, stackFilters)
 			statePath, err := planStatePath(targets.configPath)
 			done(err)
 			if err != nil {
 				return err
 			}
 			partitionState := ""
-			if len(targets.partitionFilters) == 1 {
-				partitionState = targets.partitionFilters[0]
+			if len(partitionFilters) == 1 {
+				partitionState = partitionFilters[0]
 			}
 			stackState := ""
-			if len(targets.stackFilters) == 1 {
-				stackState = targets.stackFilters[0]
+			if len(stackFilters) == 1 {
+				stackState = stackFilters[0]
 			}
 			planSnapshot := state.State{
 				Version:     state.CurrentVersion,
@@ -200,7 +202,7 @@ var planCmd = &cobra.Command{
 				printGroupedRenderedItems(out, summary.Mounts, splitMountItem)
 			}
 			done = progress.start("plan bind paths")
-			bindPaths, err := apply.PlanBindPaths(cfg, projectCtx.Values, targets.partitionFilters, targets.stackFilters)
+			bindPaths, err := apply.PlanBindPaths(cfg, projectCtx.Values, partitionFilters, stackFilters)
 			done(err)
 			if err != nil {
 				return err
@@ -224,7 +226,7 @@ var planCmd = &cobra.Command{
 			}
 			if debugDefsEnabled {
 				done = progress.start("build stack compose output")
-				stackDeploys, err := apply.BuildStackDeploys(cfg, desired, projectCtx.Values, targets.partitionFilters, targets.stackFilters, nil, nil, nil, !opts.NoInfer)
+				stackDeploys, err := apply.BuildStackDeploys(cfg, desired, projectCtx.Values, partitionFilters, stackFilters, nil, nil, nil, !opts.NoInfer)
 				done(err)
 				if err != nil {
 					return err
