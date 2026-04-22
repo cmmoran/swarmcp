@@ -216,6 +216,41 @@ func TestValidateSecretsEngineMissingAddr(t *testing.T) {
 	}
 }
 
+func TestValidateOverlayProjectSecretsEngineMissingAddr(t *testing.T) {
+	cfg := &Config{
+		Project: Project{
+			Name:       "demo",
+			Deployment: "prod",
+			Deployments: []string{
+				"prod",
+			},
+		},
+		Overlays: Overlays{
+			Deployments: map[string]Overlay{
+				"prod": {
+					Project: OverlayProject{
+						SecretsEngine: &SecretsEngine{
+							Provider: "vault",
+							Vault: &VaultKV{
+								Mount:        "kv",
+								PathTemplate: "{project}/{partition}/{stack}/{service}",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatalf("expected validation error for overlay secrets_engine.addr")
+	}
+	if !strings.Contains(err.Error(), "overlays.deployments.prod.project.secrets_engine.secrets_engine.addr is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestStackSecretsList(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "swarmcp.yaml")

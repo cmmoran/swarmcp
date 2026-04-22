@@ -31,8 +31,8 @@ type providerWriter interface {
 }
 
 type manager struct {
+	cfg          *config.Config
 	store        *Store
-	provider     provider
 	allowMissing bool
 	missing      map[string]struct{}
 }
@@ -41,44 +41,42 @@ var ErrSecretNotFound = errors.New("secret not found")
 
 var ErrSecretWriteUnsupported = errors.New("secret write unsupported")
 
+var providerFactory = newProvider
+
 func NewResolver(cfg *config.Config, store *Store, allowMissing bool) (Resolver, error) {
-	var provider provider
-	if cfg.Project.SecretsEngine != nil {
-		engine, err := newProvider(cfg.Project.SecretsEngine)
-		if err != nil {
-			return nil, err
-		}
-		provider = engine
-	}
 	return &manager{
+		cfg:          cfg,
 		store:        store,
-		provider:     provider,
 		allowMissing: allowMissing,
 		missing:      make(map[string]struct{}),
 	}, nil
 }
 
 func NewWriter(cfg *config.Config) (Writer, error) {
-	if cfg.Project.SecretsEngine == nil {
-		return nil, ErrSecretWriteUnsupported
-	}
-	engine, err := newProvider(cfg.Project.SecretsEngine)
-	if err != nil {
-		return nil, err
-	}
-	writer, ok := engine.(providerWriter)
-	if !ok {
-		return nil, ErrSecretWriteUnsupported
-	}
-	return &writerWrapper{writer: writer}, nil
+	return &writerWrapper{cfg: cfg}, nil
 }
 
 type writerWrapper struct {
-	writer providerWriter
+	cfg *config.Config
 }
 
 func (w *writerWrapper) Put(scope templates.Scope, name string, value string) error {
-	return w.writer.Put(context.Background(), scope, name, value)
+	if w.cfg == nil {
+		return ErrSecretWriteUnsupported
+	}
+	engineCfg := w.cfg.ProjectSecretsEngine(scope.Partition)
+	if engineCfg == nil {
+		return ErrSecretWriteUnsupported
+	}
+	engine, err := providerFactory(engineCfg)
+	if err != nil {
+		return err
+	}
+	writer, ok := engine.(providerWriter)
+	if !ok {
+		return ErrSecretWriteUnsupported
+	}
+	return writer.Put(context.Background(), scope, name, value)
 }
 
 func (m *manager) Value(scope templates.Scope, name string) (string, error) {
@@ -87,14 +85,25 @@ func (m *manager) Value(scope templates.Scope, name string) (string, error) {
 			return value, nil
 		}
 	}
-	if m.provider == nil {
+	var resolved provider
+	if m.cfg != nil {
+		engineCfg := m.cfg.ProjectSecretsEngine(scope.Partition)
+		if engineCfg != nil {
+			engine, err := providerFactory(engineCfg)
+			if err != nil {
+				return "", err
+			}
+			resolved = engine
+		}
+	}
+	if resolved == nil {
 		if m.allowMissing {
 			m.recordMissing(scope, name)
 			return placeholder(scope, name), nil
 		}
 		return "", fmt.Errorf("%w: %s", ErrSecretNotFound, name)
 	}
-	value, err := m.provider.Resolve(context.Background(), scope, name)
+	value, err := resolved.Resolve(context.Background(), scope, name)
 	if err != nil {
 		if errors.Is(err, ErrSecretNotFound) && m.allowMissing {
 			m.recordMissing(scope, name)

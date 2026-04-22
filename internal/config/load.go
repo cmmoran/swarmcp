@@ -1042,6 +1042,15 @@ func validateOverlayProject(scope string, project OverlayProject) error {
 	if err := validateSecretDefs(scope+".secrets", project.Secrets); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := validateSecretsEngine(project.SecretsEngine); err != nil {
+		for _, item := range strings.Split(err.Error(), "\n- ") {
+			item = strings.TrimSpace(strings.TrimPrefix(item, "- "))
+			if item == "" {
+				continue
+			}
+			errs = append(errs, fmt.Sprintf("%s.%s", scope+".secrets_engine", item))
+		}
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", joinErrors(errs))
 	}

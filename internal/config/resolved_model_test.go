@@ -49,6 +49,7 @@ stacks:
 	}
 }
 
+
 func TestLoadResolvedModelTraceIncludesOverlayLayers(t *testing.T) {
 	dir := t.TempDir()
 	projectPath := filepath.Join(dir, "project.yaml")
@@ -220,6 +221,134 @@ project:
 	}
 	if !strings.Contains(err.Error(), `partition "prod" is not allowed for deployment "nonprod"`) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadResolvedModelResolvesProjectSecretsEngineFromDeploymentAndPartitionOverlays(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "project.yaml")
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployment: prod
+  partitions: [prod]
+  secrets_engine:
+    provider: vault
+    addr: https://vault-base.example.com
+    auth:
+      method: approle
+    vault:
+      mount: kv_base
+      path_template: "{project}/{partition}/{stack}/{service}"
+overlays:
+  deployments:
+    prod:
+      project:
+        secrets_engine:
+          provider: vault
+          addr: https://vault-deploy.example.com
+          auth:
+            method: approle
+          vault:
+            mount: kv_deploy
+            path_template: "{project}/{partition}/{stack}/{service}"
+  partitions:
+    prod:
+      project:
+        secrets_engine:
+          provider: vault
+          addr: https://vault-partition.example.com
+          auth:
+            method: approle
+          vault:
+            mount: kv_partition
+            path_template: "{project}/{partition}/{stack}/{service}"
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	resolved, err := LoadResolvedModel(ResolvedModelOptions{
+		ConfigPaths: []string{projectPath},
+		Deployment:  "prod",
+		Partition:   "prod",
+		LoadOptions: LoadOptions{},
+	})
+	if err != nil {
+		t.Fatalf("load resolved model: %v", err)
+	}
+
+	addr, err := LookupResolvedPath(resolved.Model, "project.secrets_engine.addr")
+	if err != nil {
+		t.Fatalf("lookup resolved path: %v", err)
+	}
+	if got, ok := addr.(string); !ok || got != "https://vault-partition.example.com" {
+		t.Fatalf("unexpected secrets_engine.addr: %#v", addr)
+	}
+}
+
+func TestLoadResolvedModelTraceIncludesSecretsEngineOverlayLayers(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "project.yaml")
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployment: prod
+  partitions: [prod]
+  secrets_engine:
+    provider: vault
+    addr: https://vault-base.example.com
+    auth:
+      method: approle
+    vault:
+      mount: kv_base
+      path_template: "{project}/{partition}/{stack}/{service}"
+overlays:
+  deployments:
+    prod:
+      project:
+        secrets_engine:
+          provider: vault
+          addr: https://vault-deploy.example.com
+          auth:
+            method: approle
+          vault:
+            mount: kv_deploy
+            path_template: "{project}/{partition}/{stack}/{service}"
+  partitions:
+    prod:
+      project:
+        secrets_engine:
+          provider: vault
+          addr: https://vault-partition.example.com
+          auth:
+            method: approle
+          vault:
+            mount: kv_partition
+            path_template: "{project}/{partition}/{stack}/{service}"
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	resolved, err := LoadResolvedModelTrace(ResolvedModelOptions{
+		ConfigPaths: []string{projectPath},
+		Deployment:  "prod",
+		Partition:   "prod",
+		LoadOptions: LoadOptions{},
+	}, []string{"project", "secrets_engine", "addr"})
+	if err != nil {
+		t.Fatalf("load resolved model trace: %v", err)
+	}
+	if resolved.Trace == nil {
+		t.Fatalf("expected trace")
+	}
+	if len(resolved.Trace.OverlayLayers) != 2 {
+		t.Fatalf("expected 2 overlay layers, got %#v", resolved.Trace.OverlayLayers)
+	}
+	if resolved.Trace.OverlayLayers[0].Label != "project deployment overlay" || resolved.Trace.OverlayLayers[0].Value != "https://vault-deploy.example.com" {
+		t.Fatalf("unexpected first overlay layer: %#v", resolved.Trace.OverlayLayers[0])
+	}
+	if resolved.Trace.OverlayLayers[1].Label != "project partition overlay" || resolved.Trace.OverlayLayers[1].Value != "https://vault-partition.example.com" {
+		t.Fatalf("unexpected second overlay layer: %#v", resolved.Trace.OverlayLayers[1])
 	}
 }
 

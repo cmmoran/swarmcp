@@ -61,7 +61,7 @@ var secretsCheckCmd = &cobra.Command{
 			return err
 		}
 
-		useEngine := cfg.Project.SecretsEngine != nil && opts.SecretsFile == ""
+		useEngine := cfg.ProjectSecretsEngine(partitionFilter) != nil && opts.SecretsFile == ""
 		secretsFile := ""
 		if opts.SecretsFile != "" {
 			secretsFile = opts.SecretsFile
@@ -75,7 +75,7 @@ var secretsCheckCmd = &cobra.Command{
 		}
 
 		out := cmd.OutOrStdout()
-		printSecretsCheckSources(out, secretsFile, cfg, useEngine)
+		printSecretsCheckSources(out, secretsFile, cfg, useEngine, partitionFilter)
 		if len(summary.MissingSecrets) == 0 {
 			_, _ = fmt.Fprintln(out, "secrets check OK\nmissing secrets: 0")
 			return nil
@@ -187,7 +187,7 @@ var secretsPutCmd = &cobra.Command{
 			return nil
 		}
 
-		if cfg.Project.SecretsEngine != nil {
+		if cfg.ProjectSecretsEngine(secretsPutPartition) != nil {
 			writer, err := secrets.NewWriter(cfg)
 			if err != nil {
 				if errors.Is(err, secrets.ErrSecretWriteUnsupported) {
@@ -238,13 +238,15 @@ func init() {
 	secretsCmd.AddCommand(secretsPutCmd)
 }
 
-func printSecretsCheckSources(out io.Writer, secretsFile string, cfg *config.Config, useEngine bool) {
+func printSecretsCheckSources(out io.Writer, secretsFile string, cfg *config.Config, useEngine bool, partition string) {
 	var parts []string
 	if secretsFile != "" {
 		parts = append(parts, fmt.Sprintf("secrets file=%s", secretsFile))
 	}
-	if useEngine && cfg.Project.SecretsEngine != nil && cfg.Project.SecretsEngine.Provider != "" {
-		parts = append(parts, fmt.Sprintf("secrets engine=%s", cfg.Project.SecretsEngine.Provider))
+	if useEngine {
+		if engine := cfg.ProjectSecretsEngine(partition); engine != nil && engine.Provider != "" {
+			parts = append(parts, fmt.Sprintf("secrets engine=%s", engine.Provider))
+		}
 	}
 	if len(parts) == 0 {
 		_, _ = fmt.Fprintln(out, "secrets sources: none")

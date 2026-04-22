@@ -220,6 +220,70 @@ func TestFilterExplainLayersMatchesStructuredValuesByNormalizedContent(t *testin
 	}
 }
 
+func TestExplainConfigPathIncludesSecretsEngineOverlayLayers(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "project.yaml")
+	if err := os.WriteFile(projectPath, []byte(`
+project:
+  name: demo
+  deployment: prod
+  partitions: [prod]
+  secrets_engine:
+    provider: vault
+    addr: https://vault-base.example.com
+    auth:
+      method: approle
+    vault:
+      mount: kv_base
+      path_template: "{project}/{partition}/{stack}/{service}"
+overlays:
+  deployments:
+    prod:
+      project:
+        secrets_engine:
+          provider: vault
+          addr: https://vault-deploy.example.com
+          auth:
+            method: approle
+          vault:
+            mount: kv_deploy
+            path_template: "{project}/{partition}/{stack}/{service}"
+  partitions:
+    prod:
+      project:
+        secrets_engine:
+          provider: vault
+          addr: https://vault-partition.example.com
+          auth:
+            method: approle
+          vault:
+            mount: kv_partition
+            path_template: "{project}/{partition}/{stack}/{service}"
+`), 0o644); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+
+	result, err := ExplainConfigPath(ExplainOptions{
+		ConfigPaths: []string{projectPath},
+		Deployment:  "prod",
+		Partition:   "prod",
+		LoadOptions: LoadOptions{},
+	}, "project.secrets_engine.addr")
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	if got := result.Winner; got != "project partition overlay" {
+		t.Fatalf("expected project partition overlay winner, got %q", got)
+	}
+	if len(result.Layers) < 3 {
+		t.Fatalf("expected layered result, got %#v", result.Layers)
+	}
+	labels := []string{result.Layers[1].Label, result.Layers[2].Label}
+	if labels[0] != "project deployment overlay" || labels[1] != "project partition overlay" {
+		t.Fatalf("unexpected labels: %#v", labels)
+	}
+}
+
 func TestDebugResolvedMapAppliesOverlaySources(t *testing.T) {
 	cfg := &Config{
 		Project: Project{

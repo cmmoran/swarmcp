@@ -474,6 +474,7 @@ Template functions (draft):
 - `config_value "<name>"`
 - `config_value_index "<name>" <index>`
 - `config_value_get "<name>" "<key>"`
+- `config_path "<path>"`
 - `config_ref "<name>"`
 - `config_refs "<glob-pattern>"`
 - `secret_refs "<glob-pattern>"`
@@ -489,6 +490,7 @@ Template functions (draft):
 `config_refs` and `secret_refs` return deterministic sorted lists of resolved mount paths and return an empty list when there are no matches.
 Invalid glob patterns are errors.
 `config_value_index` and `config_value_get` help extract list and map values from config templates.
+`config_path` resolves a top-level config/value name, then traverses nested maps/lists using explicit path syntax. Dot-separated segments and bracket segments are both supported and may be mixed. Numeric segments index into lists. For example, `config_path "runtime.urls.agency"`, `config_path "runtime[urls][agency]"`, and `config_path "runtime.urls[agency]"` all resolve `runtime -> urls -> agency`, while `config_path "runtime.trusted_issuers.0"`, `config_path "runtime[trusted_issuers][0]"`, and `config_path "runtime.trusted_issuers[0]"` all return the first list element.
 `runtime_value` expands `{project}`, `{deployment}`, `{stack}`, `{partition}`, `{service}`, `{networks_shared}`, and `{network_ephemeral}` tokens in the provided string.
 `runtime_value "standard_volumes"` returns service standard volume mounts (host:target) filtered by standard and/or category.
 `_format` defaults to `csv` and outputs a comma-separated list of `host:target` pairs.
@@ -537,9 +539,16 @@ Overlay precedence (default):
 - unsealed overlay order is project deployment, project partition (rule order), stack deployment, stack partition (rule order), service deployment, service partition (rule order).
 - sealed overlays apply last within their scope; deployment and partition order are preserved.
 - if multiple sealed values conflict, the broadest scope wins (project > stack > service).
+- `project.secrets_engine` is a singular replace-only object when supplied via overlays:
+  - base `project.secrets_engine` applies first
+  - `overlays.deployments.<deployment>.project.secrets_engine` replaces the whole object when present
+  - matching `overlays.partitions.*.project.secrets_engine` replaces the whole object when present
+  - partition overrides deployment when both are present
+  - no field-level merge occurs across `secrets_engine` objects
 
 Overlay scope (draft):
 - Project, stack, and stack partition config/secret definitions.
+- Project `secrets_engine`, which may be overridden by deployment and partition overlays as a whole object.
 - Stack service overrides via overlays (`overlays.*.stacks.<stack>.services.<service>`); overlay services merge into the base service definition and do not support `source` or `overrides`.
 - Stack-level overlay definitions are supported at `stacks.<stack>.overlays.<name>` with the same rules as `overlays.*.stacks.<stack>`.
 - Stack/service templates may also define `overlays` (`stacks.<stack>.overlays` inside stack templates, `services.<service>.overlays` inside service templates).
@@ -1318,6 +1327,18 @@ overlays:
     <name>:
       project:
         sealed: <bool>
+        secrets_engine:
+          provider: vault|bao|openbao
+          addr: <url>
+          auth:
+            method: oidc|approle|jwt|kubernetes|tls
+            path: <string>
+            role: <string>
+            audience: <string>
+          vault:
+            mount: <string>
+            path_template: "{project}/{partition}/{stack}/{service}"
+          # replaces base project.secrets_engine as a whole object when present
         sources:
           url: <string>
           ref: <string>
@@ -1409,6 +1430,18 @@ overlays:
         #   pattern: <string>
       project:
         sealed: <bool>
+        secrets_engine:
+          provider: vault|bao|openbao
+          addr: <url>
+          auth:
+            method: oidc|approle|jwt|kubernetes|tls
+            path: <string>
+            role: <string>
+            audience: <string>
+          vault:
+            mount: <string>
+            path_template: "{project}/{partition}/{stack}/{service}"
+          # replaces deployment/base project.secrets_engine as a whole object when present
         sources:
           url: <string>
           ref: <string>

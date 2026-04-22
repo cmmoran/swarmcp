@@ -24,6 +24,7 @@ func debugResolvedMapWithTrace(cfg *Config, partition string, stackFilters []str
 	projectMap["sources"] = resolvedProjectSourcesWithTrace(cfg, partition, trace)
 	projectMap["configs"] = cfg.projectConfigDefsWithTrace(partition, trace)
 	projectMap["secrets"] = cfg.projectSecretDefsWithTrace(partition, trace)
+	projectMap["secrets_engine"] = cfg.projectSecretsEngineWithTrace(partition, trace)
 	if partition != "" {
 		projectMap["partitions"] = []string{partition}
 	} else if len(allowedPartitions) > 0 {

@@ -291,10 +291,11 @@ func (p ServicePartitionOverlays) Matching(partition string) []ServicePartitionO
 }
 
 type OverlayProject struct {
-	Sealed  bool                 `yaml:"sealed"`
-	Sources Sources              `yaml:"sources"`
-	Configs map[string]ConfigDef `yaml:"configs"`
-	Secrets map[string]SecretDef `yaml:"secrets"`
+	Sealed        bool                 `yaml:"sealed"`
+	Sources       Sources              `yaml:"sources"`
+	Configs       map[string]ConfigDef `yaml:"configs"`
+	Secrets       map[string]SecretDef `yaml:"secrets"`
+	SecretsEngine *SecretsEngine       `yaml:"secrets_engine"`
 }
 
 type OverlayStack struct {
@@ -447,6 +448,28 @@ func (cfg *Config) projectSecretDefsWithTrace(partition string, trace *LoadTrace
 		merged = mergeSecretDefs(merged, deployDefs)
 	}
 	return applySecretDefDefaults(merged)
+}
+
+func (cfg *Config) ProjectSecretsEngine(partition string) *SecretsEngine {
+	return cfg.projectSecretsEngineWithTrace(partition, nil)
+}
+
+func (cfg *Config) projectSecretsEngineWithTrace(partition string, trace *LoadTrace) *SecretsEngine {
+	engine := cfg.Project.SecretsEngine
+	deployEngine, _ := overlayProjectSecretsEngine(cfg.deploymentOverlay())
+	if deployEngine != nil {
+		recordSecretsEngineOverlayTrace(trace, "project deployment overlay", deployEngine)
+		engine = deployEngine
+	}
+	for _, overlay := range cfg.partitionOverlays(partition) {
+		partitionEngine, _ := overlayProjectSecretsEngine(&overlay)
+		if partitionEngine == nil {
+			continue
+		}
+		recordSecretsEngineOverlayTrace(trace, "project partition overlay", partitionEngine)
+		engine = partitionEngine
+	}
+	return engine
 }
 
 func (cfg *Config) StackConfigDefs(stackName string, partition string) map[string]ConfigDef {
@@ -717,6 +740,25 @@ func recordSecretDefOverlayTrace(trace *LoadTrace, prefix []string, label string
 	})
 }
 
+func recordSecretsEngineOverlayTrace(trace *LoadTrace, label string, engine *SecretsEngine) {
+	if trace == nil || engine == nil || len(trace.FieldPath) < 3 {
+		return
+	}
+	basePath := []string{"project", "secrets_engine"}
+	for i := range basePath {
+		if trace.FieldPath[i] != basePath[i] {
+			return
+		}
+	}
+	mapped, err := structToMap(engine)
+	if err != nil {
+		return
+	}
+	if value, ok := lookupPathValue(mapped, trace.FieldPath[len(basePath):]); ok {
+		trace.recordOverlay(label, value)
+	}
+}
+
 func recordDefinitionOverlayTrace(trace *LoadTrace, prefix []string, kind string, label string, count int, lookup func(name string) (map[string]any, bool)) {
 	if trace == nil || count == 0 {
 		return
@@ -868,6 +910,13 @@ func overlayProjectSecrets(overlay *Overlay) (map[string]SecretDef, bool) {
 		return nil, false
 	}
 	return overlay.Project.Secrets, overlay.Project.Sealed
+}
+
+func overlayProjectSecretsEngine(overlay *Overlay) (*SecretsEngine, bool) {
+	if overlay == nil || overlay.Project.SecretsEngine == nil {
+		return nil, false
+	}
+	return overlay.Project.SecretsEngine, overlay.Project.Sealed
 }
 
 func overlayStackConfigs(overlay *Overlay, stackName string) (map[string]ConfigDef, bool) {
