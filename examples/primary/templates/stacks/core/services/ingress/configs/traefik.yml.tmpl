@@ -28,9 +28,15 @@ entryPoints:
           scheme: https
   websecure:
     address: ":443"
+    forwardedHeaders:
+      trustedIPs:
+{{- range (config_value "cloudflare_ranges") }}
+        - "{{ . }}"
+{{- end }}
     http:
       middlewares:
         - add-context-id@file
+        - lb-allowlist@file
         - inject-geoip@file
       tls:
         certResolver: leresolver

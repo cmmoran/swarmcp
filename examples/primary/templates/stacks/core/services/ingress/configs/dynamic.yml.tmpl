@@ -47,6 +47,12 @@ http:
     inject-geoip:
       geoIP:
         debug: true
+        setRealIP: true
+        ipStrategy:
+          excludedIPs:
+{{- range (config_value "cloudflare_ranges") }}
+            - "{{ . }}"
+{{- end }}
         dbPath:
           - /etc/geoip/geolite2-city.mmdb
           - /etc/geoip/geolite2-asn.mmdb
@@ -63,9 +69,19 @@ http:
       ipAllowList:
         sourceRange:
           - "0.0.0.0/0"
-        excludedIPs:
-{{- range (config_value "trusted_ips") }}
-          - "{{ . }}"
+        ipStrategy:
+          excludedIPs:
+{{- range (config_value "cloudflare_ranges") }}
+            - "{{ . }}"
+{{- end }}
+    lb-allowlist:
+      ipAllowList:
+        sourceRange:
+          - "0.0.0.0/0"
+        ipStrategy:
+          excludedIPs:
+{{- range (config_value "cloudflare_ranges") }}
+            - "{{ . }}"
 {{- end }}
     local-allowlist:
       ipAllowList:

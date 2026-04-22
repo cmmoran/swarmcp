@@ -48,14 +48,18 @@ project:
       source: values#/domain
     ip_whitelist:
       source: values#/ip_whitelist
+    cloudflare_ranges:
+      source: values#/cloudflare_ranges
   deployment_targets:
     nonprod:
+      partitions: [dev, qa]
       include:
         names:
           - inclusion-awu
           - inclusion-nuc
           - inclusion-sa
     prod:
+      partitions: [dev, qa]
       include:
         names:
           - inclusion-awu
@@ -253,7 +257,7 @@ stacks:
         labels:
           traefik.enable: "true"
           traefik.http.routers.whoami.rule: {{ printf "Host(`whoami.%s`)" (config_value_index "domain" 0) }}
-          traefik.http.routers.jls.middlewares: inject-geoip@file,google-oidc@file
+          traefik.http.routers.whoami.middlewares: inject-geoip@file,google-oidc@file
           traefik.http.routers.whoami.entrypoints: websecure
           traefik.http.routers.whoami.tls: "true"
           traefik.http.services.whoami.loadbalancer.server.port: "80"

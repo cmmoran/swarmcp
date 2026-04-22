@@ -68,12 +68,14 @@ project:
       source: values#/cloudflare_ranges
   deployment_targets:
     nonprod:
+      partitions: [dev, qa]
       include:
         names:
           - inclusion-awu
           - inclusion-nuc
           - inclusion-sa
     prod:
+      partitions: [dev, qa]
       include:
         names:
           - inclusion-awu
