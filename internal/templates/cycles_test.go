@@ -222,6 +222,41 @@ func TestDetectCyclesConfigValueGetMissingAllowed(t *testing.T) {
 	}
 }
 
+func TestDetectCyclesConfigPathMissingAllowed(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.Project{
+			Name: "primary",
+		},
+		Stacks: map[string]config.Stack{
+			"core": {
+				Services: map[string]config.Service{
+					"api": {
+						Configs: []config.ConfigRef{
+							{
+								Name:   "config",
+								Source: "values#/config",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml.tmpl")
+	if err := os.WriteFile(path, []byte(`{{ config_path "missing.urls.agency" }}`), 0o600); err != nil {
+		t.Fatalf("write config template: %v", err)
+	}
+
+	cfg.Stacks["core"].Services["api"].Configs[0].Source = path
+	config.SetBaseDir(cfg, dir)
+
+	if _, err := DetectCycles(cfg, true); err != nil {
+		t.Fatalf("DetectCycles: %v", err)
+	}
+}
+
 func TestDetectCyclesConfigRefsGlobAllowed(t *testing.T) {
 	dir := t.TempDir()
 	cPath := filepath.Join(dir, "c.tmpl")

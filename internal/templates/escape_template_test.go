@@ -52,11 +52,11 @@ func renderTemplateWithDelims(t *testing.T, text string, funcs template.FuncMap,
 }
 
 func TestEscapeTemplate(t *testing.T) {
-	funcs := template.FuncMap{
+	funcs := withCommonTemplateFuncs(template.FuncMap{
 		"escape_template": func(args ...string) string {
 			return EscapeTemplate(args...)
 		},
-	}
+	})
 
 	firstPass := renderTemplate(
 		t,
@@ -70,7 +70,7 @@ func TestEscapeTemplate(t *testing.T) {
 		t.Fatalf("unexpected escaped output: %q", firstPass)
 	}
 
-	downstream := template.FuncMap{
+	downstream := withCommonTemplateFuncs(template.FuncMap{
 		"default": func(def, val string) string {
 			if val == "" {
 				return def
@@ -80,7 +80,7 @@ func TestEscapeTemplate(t *testing.T) {
 		"uuidv4": func() string {
 			return "uuid-1"
 		},
-	}
+	})
 
 	withHeader := testContext{
 		Header: testHeader{values: map[string]string{"X-Correlation-ID": "trace-123"}},
@@ -105,11 +105,11 @@ func TestEscapeTemplate_MultipleLevels(t *testing.T) {
 	firstPass := renderTemplate(
 		t,
 		`before {{ escape_template `+"`default (uuidv4) (.Header.Get \"X-Correlation-ID\")`"+` "2" }} after`,
-		template.FuncMap{
+		withCommonTemplateFuncs(template.FuncMap{
 			"escape_template": func(args ...string) string {
 				return EscapeTemplate(args...)
 			},
-		},
+		}),
 		nil,
 	)
 
@@ -118,7 +118,7 @@ func TestEscapeTemplate_MultipleLevels(t *testing.T) {
 		t.Fatalf("unexpected escaped output: %q", firstPass)
 	}
 
-	secondPass := renderTemplate(t, firstPass, template.FuncMap{}, nil)
+	secondPass := renderTemplate(t, firstPass, withCommonTemplateFuncs(template.FuncMap{}), nil)
 	wantSecondPass := `before {{ default (uuidv4) (.Header.Get "X-Correlation-ID") }} after`
 	if secondPass != wantSecondPass {
 		t.Fatalf("unexpected second-pass output: %q", secondPass)
@@ -127,7 +127,7 @@ func TestEscapeTemplate_MultipleLevels(t *testing.T) {
 	withHeader := testContext{
 		Header: testHeader{values: map[string]string{"X-Correlation-ID": "trace-999"}},
 	}
-	final := renderTemplate(t, secondPass, template.FuncMap{
+	final := renderTemplate(t, secondPass, withCommonTemplateFuncs(template.FuncMap{
 		"default": func(def, val string) string {
 			if val == "" {
 				return def
@@ -137,7 +137,7 @@ func TestEscapeTemplate_MultipleLevels(t *testing.T) {
 		"uuidv4": func() string {
 			return "uuid-9"
 		},
-	}, withHeader)
+	}), withHeader)
 	if final != "before trace-999 after" {
 		t.Fatalf("unexpected final output: %q", final)
 	}
@@ -147,11 +147,11 @@ func TestEscapeTemplate_MultipleExpressions(t *testing.T) {
 	firstPass := renderTemplate(
 		t,
 		`start {{ escape_template `+"`before {{ .Name }} then {{ .Age }} end`"+` }} finish`,
-		template.FuncMap{
+		withCommonTemplateFuncs(template.FuncMap{
 			"escape_template": func(args ...string) string {
 				return EscapeTemplate(args...)
 			},
-		},
+		}),
 		nil,
 	)
 
@@ -160,7 +160,7 @@ func TestEscapeTemplate_MultipleExpressions(t *testing.T) {
 		t.Fatalf("unexpected escaped output: %q", firstPass)
 	}
 
-	got := renderTemplate(t, firstPass, template.FuncMap{}, struct {
+	got := renderTemplate(t, firstPass, withCommonTemplateFuncs(template.FuncMap{}), struct {
 		Name string
 		Age  int
 	}{Name: "Ada", Age: 38})
@@ -174,11 +174,11 @@ func TestEscapeTemplate_CustomDelimiters(t *testing.T) {
 	firstPass := renderTemplate(
 		t,
 		`{{ escape_template `+"`hello <% .Name %>`"+` "2" "<%" "%>" }}`,
-		template.FuncMap{
+		withCommonTemplateFuncs(template.FuncMap{
 			"escape_template": func(args ...string) string {
 				return EscapeTemplate(args...)
 			},
-		},
+		}),
 		nil,
 	)
 
@@ -186,12 +186,12 @@ func TestEscapeTemplate_CustomDelimiters(t *testing.T) {
 		t.Fatalf("unexpected escaped output: %q", firstPass)
 	}
 
-	secondPass := renderTemplateWithDelims(t, firstPass, template.FuncMap{}, nil, "<%", "%>")
+	secondPass := renderTemplateWithDelims(t, firstPass, withCommonTemplateFuncs(template.FuncMap{}), nil, "<%", "%>")
 	if secondPass != `hello <% .Name %>` {
 		t.Fatalf("unexpected rendered output with custom delimiters: %q", secondPass)
 	}
 
-	got := renderTemplateWithDelims(t, secondPass, template.FuncMap{}, testContext{Name: "Ada"}, "<%", "%>")
+	got := renderTemplateWithDelims(t, secondPass, withCommonTemplateFuncs(template.FuncMap{}), testContext{Name: "Ada"}, "<%", "%>")
 	if got != "hello Ada" {
 		t.Fatalf("unexpected final rendered output with custom delimiters: %q", got)
 	}

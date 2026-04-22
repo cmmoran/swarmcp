@@ -55,7 +55,7 @@ func renderValuesFile(path string, scope Scope) (string, error) {
 }
 
 func valuesFuncMap(scope Scope) template.FuncMap {
-	funcs := sprig.TxtFuncMap()
+	funcs := withCommonTemplateFuncs(sprig.TxtFuncMap())
 	funcs["external_ip"] = func() (string, error) {
 		return ExternalIP()
 	}

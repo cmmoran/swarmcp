@@ -147,7 +147,7 @@ func addTemplateEdges(cfg *config.Config, graph *Graph, scope scopeKey, configs 
 				case "config":
 					refScope, _, ok := resolveConfigScope(cfg, scope, resolvedName)
 					if !ok {
-						if ref.FuncName == "config_value" || ref.FuncName == "config_value_index" || ref.FuncName == "config_value_get" {
+						if ref.FuncName == "config_value" || ref.FuncName == "config_value_index" || ref.FuncName == "config_value_get" || ref.FuncName == "config_path" {
 							continue
 						}
 						if infer && ref.FuncName == "config_ref" {
@@ -213,7 +213,7 @@ func addTemplateEdges(cfg *config.Config, graph *Graph, scope scopeKey, configs 
 				case "config":
 					refScope, _, ok := resolveConfigScope(cfg, scope, resolvedName)
 					if !ok {
-						if ref.FuncName == "config_value" || ref.FuncName == "config_value_index" || ref.FuncName == "config_value_get" {
+						if ref.FuncName == "config_value" || ref.FuncName == "config_value_index" || ref.FuncName == "config_value_get" || ref.FuncName == "config_path" {
 							continue
 						}
 						if infer && ref.FuncName == "config_ref" {
@@ -444,10 +444,11 @@ type TemplateRef struct {
 }
 
 func ExtractTemplateRefs(path string, content string) ([]TemplateRef, error) {
-	funcs := sprig.TxtFuncMap()
+	funcs := withCommonTemplateFuncs(sprig.TxtFuncMap())
 	funcs["config_value"] = func(string) any { return "" }
 	funcs["config_value_index"] = func(string, int) any { return "" }
 	funcs["config_value_get"] = func(string, string) any { return "" }
+	funcs["config_path"] = func(string) any { return "" }
 	funcs["config_ref"] = func(string) string { return "" }
 	funcs["config_refs"] = func(string) []string { return nil }
 	funcs["secret_value"] = func(string) string { return "" }
@@ -472,7 +473,7 @@ func ExtractTemplateRefs(path string, content string) ([]TemplateRef, error) {
 			Dynamic:  dynamic,
 		}
 		switch fn {
-		case "config_value", "config_value_index", "config_value_get", "config_ref", "config_refs":
+		case "config_value", "config_value_index", "config_value_get", "config_path", "config_ref", "config_refs":
 			ref.Kind = "config"
 		case "secret_value", "secret_ref", "secret_refs":
 			ref.Kind = "secret"
@@ -535,7 +536,7 @@ func walkCommand(cmd *parse.CommandNode, onCall func(string, parse.Node, bool)) 
 	}
 	if ident, ok := cmd.Args[0].(*parse.IdentifierNode); ok {
 		switch ident.Ident {
-		case "config_value", "config_value_index", "config_value_get", "config_ref", "config_refs", "secret_value", "secret_ref", "secret_refs":
+		case "config_value", "config_value_index", "config_value_get", "config_path", "config_ref", "config_refs", "secret_value", "secret_ref", "secret_refs":
 			if len(cmd.Args) < 2 {
 				onCall(ident.Ident, nil, true)
 			} else {
@@ -575,6 +576,13 @@ func expandTemplateRefNames(cfg *config.Config, scope scopeKey, ref TemplateRef)
 	default:
 		if ref.Name == "" {
 			return nil, nil
+		}
+		if ref.FuncName == "config_path" {
+			root, _, err := parseConfigPath(ref.Name)
+			if err != nil {
+				return nil, err
+			}
+			return []string{root}, nil
 		}
 		return []string{ref.Name}, nil
 	}

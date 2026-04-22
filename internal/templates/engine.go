@@ -33,7 +33,7 @@ func New(resolver Resolver) *Engine {
 }
 
 func (e *Engine) FuncMap() template.FuncMap {
-	funcs := sprig.TxtFuncMap()
+	funcs := withCommonTemplateFuncs(sprig.TxtFuncMap())
 	funcs["config_value"] = func(name string) (any, error) {
 		return e.resolver.ConfigValue(name)
 	}
@@ -88,6 +88,54 @@ func (e *Engine) FuncMap() template.FuncMap {
 		default:
 			return "", fmt.Errorf("config %q is not a map", name)
 		}
+	}
+	funcs["config_path"] = func(path string) (any, error) {
+		root, segments, err := parseConfigPath(path)
+		if err != nil {
+			return "", err
+		}
+		value, err := e.resolver.ConfigValue(root)
+		if err != nil {
+			return "", fmt.Errorf("config_path %q: %w", path, err)
+		}
+		value = coerceStructuredValue(value)
+		for _, segment := range segments {
+			switch typed := value.(type) {
+			case map[string]any:
+				item, ok := typed[segment]
+				if !ok {
+					return "", fmt.Errorf("config_path %q: key %q not found", path, segment)
+				}
+				value = coerceStructuredValue(item)
+			case map[string]string:
+				item, ok := typed[segment]
+				if !ok {
+					return "", fmt.Errorf("config_path %q: key %q not found", path, segment)
+				}
+				value = item
+			case []any:
+				idx, err := toTemplateIndex(segment)
+				if err != nil {
+					return "", fmt.Errorf("config_path %q: segment %q is not a valid list index", path, segment)
+				}
+				if idx < 0 || idx >= len(typed) {
+					return "", fmt.Errorf("config_path %q: index %d out of range", path, idx)
+				}
+				value = coerceStructuredValue(typed[idx])
+			case []string:
+				idx, err := toTemplateIndex(segment)
+				if err != nil {
+					return "", fmt.Errorf("config_path %q: segment %q is not a valid list index", path, segment)
+				}
+				if idx < 0 || idx >= len(typed) {
+					return "", fmt.Errorf("config_path %q: index %d out of range", path, idx)
+				}
+				value = typed[idx]
+			default:
+				return "", fmt.Errorf("config_path %q: cannot traverse segment %q on %T", path, segment, value)
+			}
+		}
+		return value, nil
 	}
 	funcs["config_ref"] = func(name string) (string, error) {
 		return e.resolver.ConfigRef(name)
@@ -211,6 +259,64 @@ func toTemplateIndex(value any) (int, error) {
 	default:
 		return 0, fmt.Errorf("index %T is not an integer", value)
 	}
+}
+
+func parseConfigPath(value string) (string, []string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil, fmt.Errorf("config_path %q: path is empty", value)
+	}
+	var parts []string
+	var current strings.Builder
+	flushCurrent := func() error {
+		part := strings.TrimSpace(current.String())
+		if part == "" {
+			return fmt.Errorf("config_path %q: path contains empty segment", value)
+		}
+		parts = append(parts, part)
+		current.Reset()
+		return nil
+	}
+
+	for i := 0; i < len(trimmed); i++ {
+		switch trimmed[i] {
+		case '.':
+			if err := flushCurrent(); err != nil {
+				return "", nil, err
+			}
+		case '[':
+			if current.Len() > 0 {
+				if err := flushCurrent(); err != nil {
+					return "", nil, err
+				}
+			} else if len(parts) == 0 {
+				return "", nil, fmt.Errorf("config_path %q: path must start with a root name", value)
+			}
+			end := strings.IndexByte(trimmed[i+1:], ']')
+			if end < 0 {
+				return "", nil, fmt.Errorf("config_path %q: missing closing bracket", value)
+			}
+			segment := strings.TrimSpace(trimmed[i+1 : i+1+end])
+			if segment == "" {
+				return "", nil, fmt.Errorf("config_path %q: path contains empty bracket segment", value)
+			}
+			parts = append(parts, segment)
+			i += end + 1
+		case ']':
+			return "", nil, fmt.Errorf("config_path %q: unexpected closing bracket", value)
+		default:
+			current.WriteByte(trimmed[i])
+		}
+	}
+	if current.Len() > 0 {
+		if err := flushCurrent(); err != nil {
+			return "", nil, err
+		}
+	}
+	if len(parts) == 0 {
+		return "", nil, fmt.Errorf("config_path %q: path is empty", value)
+	}
+	return parts[0], parts[1:], nil
 }
 
 func (e *Engine) Render(name string, content string, data any) (string, error) {

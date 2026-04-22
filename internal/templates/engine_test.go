@@ -72,6 +72,92 @@ func TestConfigValueGetParsesStringMap(t *testing.T) {
 	}
 }
 
+func TestConfigPathTraversesNestedMap(t *testing.T) {
+	engine := New(engineStubResolver{
+		values: map[string]any{
+			"runtime": `{"urls":{"agency":"https://agency.example.com"}}`,
+		},
+	})
+	rendered, err := engine.Render("test", `{{ config_path "runtime.urls.agency" }}`, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.TrimSpace(rendered) != "https://agency.example.com" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestConfigPathIndexesList(t *testing.T) {
+	engine := New(engineStubResolver{
+		values: map[string]any{
+			"runtime": `{"trusted_issuers":["https://one.example.com","https://two.example.com"]}`,
+		},
+	})
+	rendered, err := engine.Render("test", `{{ config_path "runtime.trusted_issuers.1" }}`, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.TrimSpace(rendered) != "https://two.example.com" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestConfigPathIndexesListWithBracketSyntax(t *testing.T) {
+	engine := New(engineStubResolver{
+		values: map[string]any{
+			"runtime": `{"trusted_issuers":["https://one.example.com","https://two.example.com"]}`,
+		},
+	})
+	rendered, err := engine.Render("test", `{{ config_path "runtime[trusted_issuers][1]" }}`, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.TrimSpace(rendered) != "https://two.example.com" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestConfigPathIndexesListWithMixedSyntax(t *testing.T) {
+	engine := New(engineStubResolver{
+		values: map[string]any{
+			"runtime": `{"trusted_issuers":["https://one.example.com","https://two.example.com"]}`,
+		},
+	})
+	rendered, err := engine.Render("test", `{{ config_path "runtime.trusted_issuers[1]" }}`, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.TrimSpace(rendered) != "https://two.example.com" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestConfigPathIndexesMapWithBracketSyntax(t *testing.T) {
+	engine := New(engineStubResolver{
+		values: map[string]any{
+			"runtime": `{"urls":{"agency":"https://agency.example.com"}}`,
+		},
+	})
+	rendered, err := engine.Render("test", `{{ config_path "runtime[urls][agency]" }}`, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.TrimSpace(rendered) != "https://agency.example.com" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestConfigPathMissingWraps(t *testing.T) {
+	engine := New(errResolver{})
+	_, err := engine.Render("test", `{{ config_path "missing.urls.agency" }}`, nil)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "config_path \"missing.urls.agency\":") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestConfigValueIndexMissingWraps(t *testing.T) {
 	engine := New(errResolver{})
 	_, err := engine.Render("test", `{{ config_value_index "missing" 0 }}`, nil)
