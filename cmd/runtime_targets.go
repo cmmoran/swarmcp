@@ -90,6 +90,9 @@ func loadValidatedProjectContext(targets *runtimeTargets, deployment string, loa
 		Offline:            opts.Offline,
 		Debug:              opts.Debug,
 	}
+	if len(targets.partitionFilters) == 1 {
+		projectOpts.Partition = targets.partitionFilters[0]
+	}
 	cfg, configPath, err := cmdutil.LoadProjectConfig(projectOpts)
 	if err != nil {
 		return nil, err
