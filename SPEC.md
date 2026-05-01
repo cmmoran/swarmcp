@@ -104,7 +104,8 @@ Allowed release fields:
 
 Release overlay validation rules:
 - The root of a release overlay may contain only `stacks`.
-- A release overlay may reference only stacks and services that already exist in the base config.
+- A release overlay may reference only stacks that exist in the base project config.
+- A release overlay may reference only services that exist in the resolved stack after source refs and imports have been applied.
 - `stacks.<name>.source` may only set `ref`; it may not change `url`, `path`, or `overrides_path`.
 - A release overlay may not add new stacks or services.
 
@@ -118,6 +119,48 @@ Disallowed in release overlays:
 - broad structural network, volume, or import rewrites
 
 If a release overlay uses immutable refs and image digests, it already serves as a practical lock artifact. SwarmCP does not need a separate lockfile product to achieve basic reproducibility.
+
+### Release Overlay Resolution Model
+
+Release overlays are constrained deployment intent, not general YAML patches. This distinction is important because SwarmCP supports imported stacks and services. Imported stacks make the configuration more powerful, but they also mean some service definitions are not visible in the project wrapper until import resolution has happened.
+
+SwarmCP therefore applies release overlays in two conceptual phases:
+
+1. **Import selection phase**
+   - `stacks.<name>.source.ref` is applied before import resolution.
+   - This selects the version of an imported stack or service repository that SwarmCP should fetch and expand.
+   - The stack named by `stacks.<name>` must already exist in the base project config.
+   - The stack must already have a `source` object in the base project config. A release overlay may change the ref of an import, but it may not create an import.
+   - `source.url`, `source.path`, and `source.overrides_path` remain structural authorship. They are not deploy-time pins and are rejected in release overlays.
+
+2. **Deploy intent phase**
+   - Service fields such as `image`, `replicas`, `env`, labels, and update policy are validated and applied after imports are expanded.
+   - This means release overlays may pin a service inside an imported stack:
+
+     ```yaml
+     stacks:
+       participant:
+         source:
+           ref: v0.74.1
+         services:
+           participant:
+             image: registry.example.com/app@sha256:7f3b...
+     ```
+
+   - The example above is valid when the base project defines `stacks.participant.source`, and the imported stack at `v0.74.1` contains a service named `participant`.
+   - The same overlay is invalid if the imported stack does not contain `services.participant`.
+   - Service pins are never allowed to create new services. They can only modify the small allowlisted deploy-intent fields of a service that exists after import expansion.
+
+This two-phase model is deliberate. It lets release manifests express the deployable tuple of "stack source ref plus service image digest" while preserving the safety property that release manifests cannot redefine topology.
+
+The mental model is:
+
+- `project.yaml` owns topology: nodes, deployments, partitions, stack existence, service existence, import URL/path, networks, volumes, configs, secrets, and inclusion rules.
+- Imported stack or service files own reusable service structure.
+- `values/*.yaml` owns environment-specific template input.
+- `--release-config` owns release selection and deploy intent: source refs, image digests, replica counts, and a small set of operational service knobs.
+
+When in doubt, ask whether a field changes *what exists* or only *which version/instance of an existing thing should run*. If it changes what exists, it belongs in project or imported stack configuration. If it chooses the version or runtime intent for an already-existing service, it may belong in a release overlay if the field is allowlisted.
 
 ## Configuration Sources
 - **Primary source**: project repository (YAML + templates).
@@ -200,6 +243,23 @@ Release overlay intent rules:
 - Release overlays should stay small enough to review as deployment intent rather than as structural authoring.
 - When stronger reproducibility is required, release overlays should use immutable refs and image digests.
 - Release overlays are validated only when passed via `--release-config`; plain repeated `--config` layering retains the broader config-layering rules below.
+- Release overlays are not ordinary repeated config overlays. They are interpreted through the two-phase release model:
+  - `source.ref` is applied before imports so it can select the imported stack or service version.
+  - service deploy-intent fields are validated and applied after imports so services inside imported stacks can be pinned safely.
+- For imported stacks, service pins are checked against the imported stack at the selected ref, not against the pre-import wrapper in `project.yaml`.
+- For non-imported stacks, service pins are checked against the services directly authored in the base project config.
+- In both cases, the service must exist before the release service pin is applied.
+
+Release overlay review guidance:
+- A release overlay should be readable as a deployment decision, not as a second project file.
+- A reviewer should be able to answer:
+  - which imported stack or service ref is selected,
+  - which image digest or tag will run,
+  - whether replicas or operational rollout knobs changed,
+  - and which environment or partition will consume the release file.
+- A reviewer should not need to inspect a release overlay for new networks, volumes, configs, secrets, import paths, or inclusion rules; those fields are rejected by design.
+- Prefer immutable image digests (`repo@sha256:...`) over mutable tags when the release file is intended to document an exact deployable artifact.
+- Prefer immutable source refs, such as tags or commit SHAs, when the imported stack shape must remain reproducible.
 
 Per-section policy:
 - Root:
@@ -1065,11 +1125,15 @@ Purpose:
 
 Resolution pipeline:
 1. Load repeated `--config` files left to right.
-2. Apply repeated `--release-config` overlays.
-3. Apply runtime `--deployment` selection.
-4. Resolve stack and service imports.
-5. Apply deployment, partition, stack, and service overlays for the active scope.
-6. Print the resulting resolved config model or selected subtree.
+2. Load repeated `--release-config` overlays and validate their allowlisted shape.
+3. Apply release `stacks.<name>.source.ref` fields to the pre-import config.
+4. Resolve stack and service imports using the selected source refs.
+5. Validate and apply release service deploy-intent fields against the post-import resolved services.
+6. Apply runtime `--deployment` selection.
+7. Apply deployment, partition, stack, and service overlays for the active scope.
+8. Print the resulting resolved config model or selected subtree.
+
+The split between steps 3 and 5 is intentional. `source.ref` must be known before import expansion, while service pins inside imported stacks cannot be safely validated until the imported stack exists in the resolved model.
 
 Output:
 - Default output format is YAML.
@@ -1105,7 +1169,7 @@ Path lookup:
 - Field paths use dot notation and are rooted at the resolved model.
 
 Acceptance criteria:
-- `resolve` prints the resolved model after repeated `--config` layering, repeated `--release-config`, runtime deployment selection, import resolution, and scoped overlay application.
+- `resolve` prints the resolved model after repeated `--config` layering, repeated `--release-config`, release source-ref selection, import resolution, release service-intent application, runtime deployment selection, and scoped overlay application.
 - `resolve` does not query Swarm.
 - `resolve --output json` produces valid JSON with no extra text.
 - `resolve --path` prints only the selected subtree or scalar.

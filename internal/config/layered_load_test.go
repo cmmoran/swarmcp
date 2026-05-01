@@ -186,6 +186,106 @@ stacks:
 	}
 }
 
+func TestLoadFilesWithReleaseOptionsAppliesServiceFieldsAfterImportedStackExpansion(t *testing.T) {
+	dir := t.TempDir()
+	stackPath := filepath.Join(dir, "participant.stack.yaml")
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(stackPath, []byte(`
+mode: partitioned
+services:
+  participant:
+    image: ghcr.io/acme/participant:main
+    replicas: 1
+    env:
+      LOG_LEVEL: info
+  oathkeeper:
+    image: ghcr.io/acme/oathkeeper:main
+`), 0o644); err != nil {
+		t.Fatalf("write stack source: %v", err)
+	}
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+stacks:
+  participant:
+    source:
+      path: participant.stack.yaml
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+stacks:
+  participant:
+    services:
+      participant:
+        image: ghcr.io/acme/participant@sha256:deadbeef
+        replicas: 3
+        env:
+          FEATURE_FLAG_X: "true"
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	cfg, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err != nil {
+		t.Fatalf("load configs: %v", err)
+	}
+	service := cfg.Stacks["participant"].Services["participant"]
+	if service.Image != "ghcr.io/acme/participant@sha256:deadbeef" {
+		t.Fatalf("expected release image, got %q", service.Image)
+	}
+	if service.Replicas != 3 {
+		t.Fatalf("expected release replicas, got %d", service.Replicas)
+	}
+	if service.Env["LOG_LEVEL"] != "info" || service.Env["FEATURE_FLAG_X"] != "true" {
+		t.Fatalf("expected merged env map, got %#v", service.Env)
+	}
+	if got := cfg.Stacks["participant"].Services["oathkeeper"].Image; got != "ghcr.io/acme/oathkeeper:main" {
+		t.Fatalf("expected unrelated imported service to remain unchanged, got %q", got)
+	}
+}
+
+func TestLoadFilesWithReleaseOptionsAppliesSourceRefBeforeImportedStackExpansion(t *testing.T) {
+	dir := t.TempDir()
+	stackPath := filepath.Join(dir, "participant.stack.yaml")
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(stackPath, []byte(`
+services:
+  participant:
+    image: ghcr.io/acme/participant:main
+`), 0o644); err != nil {
+		t.Fatalf("write stack source: %v", err)
+	}
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+stacks:
+  participant:
+    source:
+      path: participant.stack.yaml
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+stacks:
+  participant:
+    source:
+      ref: v1.2.3
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	cfg, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err != nil {
+		t.Fatalf("load configs: %v", err)
+	}
+	if got := cfg.Stacks["participant"].Services["participant"].Image; got != "ghcr.io/acme/participant:main" {
+		t.Fatalf("expected imported service to load, got %q", got)
+	}
+}
+
 func TestMergeReleaseOverlayMapPreservesSourceObjectWhenOverridingRef(t *testing.T) {
 	base := map[string]any{
 		"stacks": map[string]any{
@@ -274,7 +374,7 @@ stacks:
 	if err == nil {
 		t.Fatalf("expected error")
 	}
-	if !strings.Contains(err.Error(), "stacks.core.services.worker does not exist in the base config") {
+	if !strings.Contains(err.Error(), "stacks.core.services.worker does not exist in the resolved config") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

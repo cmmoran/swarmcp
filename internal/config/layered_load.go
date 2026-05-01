@@ -65,16 +65,20 @@ func loadFilesWithReleaseTrace(paths []string, releasePaths []string, opts LoadO
 			return nil, nil, err
 		}
 		trace.record("release config "+absPath, doc)
-		if err := validateReleaseOverlayMap(merged, doc, nil); err != nil {
+		if err := validateReleaseOverlayShape(doc); err != nil {
 			return nil, nil, fmt.Errorf("release config %q: %w", absPath, err)
 		}
-		merged, err = mergeReleaseOverlayMap(merged, doc)
+		if err := validateReleaseSourceRefs(merged, doc); err != nil {
+			return nil, nil, fmt.Errorf("release config %q: %w", absPath, err)
+		}
+		sourceRefs := releaseSourceRefOverlay(doc)
+		if len(sourceRefs) == 0 {
+			continue
+		}
+		merged, err = mergeReleaseOverlayMap(merged, sourceRefs)
 		if err != nil {
 			return nil, nil, fmt.Errorf("release config %q: %w", absPath, err)
 		}
-	}
-	if trace != nil && merged != nil {
-		trace.MergedDoc = cloneValue(merged).(map[string]any)
 	}
 
 	encoded, err := yaml.Marshal(merged)
@@ -95,6 +99,19 @@ func loadFilesWithReleaseTrace(paths []string, releasePaths []string, opts LoadO
 	if err := resolveImportsWithTrace(&cfg, opts, trace); err != nil {
 		return nil, nil, err
 	}
+	for _, path := range releasePaths {
+		absPath := path
+		if abs, err := filepath.Abs(path); err == nil {
+			absPath = abs
+		}
+		doc, err := loadConfigDocument(absPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := applyReleaseServiceOverlay(&cfg, doc); err != nil {
+			return nil, nil, fmt.Errorf("release config %q: %w", absPath, err)
+		}
+	}
 	SetSourcesBaseDir(&cfg)
 	if err := ApplySourceBaseDir(&cfg, opts); err != nil {
 		return nil, nil, err
@@ -102,8 +119,23 @@ func loadFilesWithReleaseTrace(paths []string, releasePaths []string, opts LoadO
 	if err := Validate(&cfg); err != nil {
 		return nil, nil, err
 	}
+	if trace != nil {
+		finalDoc, err := configToDocument(&cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		trace.MergedDoc = finalDoc
+	}
 
 	return &cfg, trace, nil
+}
+
+func configToDocument(cfg *Config) (map[string]any, error) {
+	encoded, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return parseNormalizedYAMLDocument(encoded)
 }
 
 func mergeReleaseOverlayMap(base map[string]any, overlay map[string]any) (map[string]any, error) {
@@ -263,15 +295,19 @@ func pathMatches(path []string, pattern ...string) bool {
 	return true
 }
 
-func validateReleaseOverlayMap(base map[string]any, overlay map[string]any, path []string) error {
-	return validateReleaseOverlayNode(base, overlay, nil, releasePolicyRoot)
+func validateReleaseOverlayShape(overlay map[string]any) error {
+	return validateReleaseOverlayNode(nil, overlay, nil, releasePolicyRoot, false)
 }
 
-func validateReleaseOverlayNode(base map[string]any, value any, path []string, node *releasePolicyNode) error {
+func validateReleaseOverlayMap(base map[string]any, overlay map[string]any, path []string) error {
+	return validateReleaseOverlayNode(base, overlay, nil, releasePolicyRoot, true)
+}
+
+func validateReleaseOverlayNode(base map[string]any, value any, path []string, node *releasePolicyNode, requireExisting bool) error {
 	if node == nil {
 		return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
 	}
-	if node.requireExistingMap {
+	if requireExisting && node.requireExistingMap {
 		if _, ok := lookupExistingMap(base, path); !ok {
 			return fmt.Errorf("%s does not exist in the base config", joinPath(path))
 		}
@@ -288,7 +324,7 @@ func validateReleaseOverlayNode(base map[string]any, value any, path []string, n
 			if child == nil {
 				return fmt.Errorf("%s is not allowed in release config files", joinPath(nextPath))
 			}
-			if err := validateReleaseOverlayNode(base, childValue, nextPath, child); err != nil {
+			if err := validateReleaseOverlayNode(base, childValue, nextPath, child, requireExisting); err != nil {
 				return err
 			}
 		}
@@ -313,6 +349,144 @@ func validateReleaseOverlayNode(base map[string]any, value any, path []string, n
 	default:
 		return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
 	}
+}
+
+func validateReleaseSourceRefs(base map[string]any, release map[string]any) error {
+	stacks, ok := release["stacks"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	for stackName, stackValue := range stacks {
+		stackMap, ok := stackValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		sourceMap, ok := stackMap["source"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, hasRef := sourceMap["ref"]; !hasRef {
+			continue
+		}
+		stackPath := []string{"stacks", stackName}
+		if _, ok := lookupExistingMap(base, stackPath); !ok {
+			return fmt.Errorf("%s does not exist in the base config", joinPath(stackPath))
+		}
+		sourcePath := []string{"stacks", stackName, "source"}
+		if _, ok := lookupExistingMap(base, sourcePath); !ok {
+			return fmt.Errorf("%s does not exist in the base config", joinPath(sourcePath))
+		}
+	}
+	return nil
+}
+
+func releaseSourceRefOverlay(release map[string]any) map[string]any {
+	stacks, ok := release["stacks"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	outStacks := map[string]any{}
+	for stackName, stackValue := range stacks {
+		stackMap, ok := stackValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		sourceMap, ok := stackMap["source"].(map[string]any)
+		if !ok {
+			continue
+		}
+		ref, hasRef := sourceMap["ref"]
+		if !hasRef {
+			continue
+		}
+		outStacks[stackName] = map[string]any{
+			"source": map[string]any{
+				"ref": cloneValue(ref),
+			},
+		}
+	}
+	if len(outStacks) == 0 {
+		return nil
+	}
+	return map[string]any{"stacks": outStacks}
+}
+
+func applyReleaseServiceOverlay(cfg *Config, release map[string]any) error {
+	stacks, ok := release["stacks"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	for stackName, stackValue := range stacks {
+		stackMap, ok := stackValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		services, ok := stackMap["services"].(map[string]any)
+		if !ok {
+			continue
+		}
+		stack, ok := cfg.Stacks[stackName]
+		if !ok {
+			return fmt.Errorf("stacks.%s does not exist in the resolved config", stackName)
+		}
+		for serviceName, serviceValue := range services {
+			serviceOverlay, ok := serviceValue.(map[string]any)
+			if !ok {
+				return fmt.Errorf("stacks.%s.services.%s must be a mapping", stackName, serviceName)
+			}
+			service, ok := stack.Services[serviceName]
+			if !ok {
+				return fmt.Errorf("stacks.%s.services.%s does not exist in the resolved config", stackName, serviceName)
+			}
+			mergedService, err := mergeReleaseService(service, serviceOverlay)
+			if err != nil {
+				return fmt.Errorf("stacks.%s.services.%s: %w", stackName, serviceName, err)
+			}
+			stack.Services[serviceName] = mergedService
+		}
+		cfg.Stacks[stackName] = stack
+	}
+	return nil
+}
+
+func mergeReleaseService(base Service, overlay map[string]any) (Service, error) {
+	encoded, err := yaml.Marshal(overlay)
+	if err != nil {
+		return Service{}, err
+	}
+	var patch Service
+	if err := yaml.Unmarshal(encoded, &patch); err != nil {
+		return Service{}, err
+	}
+	if _, ok := overlay["image"]; ok {
+		base.Image = patch.Image
+	}
+	if _, ok := overlay["replicas"]; ok {
+		base.Replicas = patch.Replicas
+	}
+	if patch.Env != nil {
+		if base.Env == nil {
+			base.Env = map[string]string{}
+		}
+		for key, value := range patch.Env {
+			base.Env[key] = value
+		}
+	}
+	if patch.Labels != nil {
+		if base.Labels == nil {
+			base.Labels = map[string]string{}
+		}
+		for key, value := range patch.Labels {
+			base.Labels[key] = value
+		}
+	}
+	if patch.UpdateConfig != nil {
+		base.UpdateConfig = MergeUpdatePolicies(base.UpdateConfig, patch.UpdateConfig)
+	}
+	if patch.RollbackConfig != nil {
+		base.RollbackConfig = MergeUpdatePolicies(base.RollbackConfig, patch.RollbackConfig)
+	}
+	return base, nil
 }
 
 func requireMap(value any, path []string) (map[string]any, error) {
