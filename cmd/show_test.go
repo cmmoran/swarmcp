@@ -1,0 +1,46 @@
+package cmd
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/cmmoran/swarmcp/internal/apply"
+	"github.com/cmmoran/swarmcp/internal/swarm"
+)
+
+func TestPrintPlanFileSummary(t *testing.T) {
+	planFile := apply.NewPlanFile("test-version", "demo", "prod", "blue", "core", "prod-context", true, apply.Plan{
+		CreateNetworks: []swarm.NetworkSpec{{Name: "net"}},
+		CreateConfigs:  []swarm.ConfigSpec{{Name: "cfg"}},
+		CreateSecrets:  []swarm.SecretSpec{{Name: "sec"}},
+		StackDeploys:   []apply.StackDeploy{{Name: "demo_blue_core"}},
+		DeleteConfigs:  []swarm.Config{{Name: "old-cfg"}},
+		DeleteSecrets:  []swarm.Secret{{Name: "old-sec"}},
+	})
+	planFile.Secrets.Mode = apply.PlanSecretModeReference
+	planFile.SecretSources = []apply.PlanSecretSource{{
+		SecretName: "sec",
+		Dependencies: []apply.PlanSecretDependency{{
+			Name: "token",
+		}},
+	}}
+	var out bytes.Buffer
+	printPlanFileSummary(&out, "plan.yaml", planFile)
+	got := out.String()
+	for _, want := range []string{
+		"show OK",
+		"plan artifact: plan.yaml",
+		"project: demo",
+		"deployment: prod",
+		"secret mode: reference",
+		"networks to create: 1",
+		"stacks:",
+		"secret sources:",
+		"sec (1 dependency)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, got)
+		}
+	}
+}

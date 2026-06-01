@@ -72,6 +72,7 @@ func init() {
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resolveCmd)
+	rootCmd.AddCommand(showCmd)
 }
 
 func shouldShowUsage(err error) bool {
