@@ -177,9 +177,13 @@ var planCmd = &cobra.Command{
 					done(err)
 					return err
 				}
-				if len(plan.CreateSecrets) > 0 && !planIncludeSecretPayloads {
-					done(fmt.Errorf("plan artifact would contain secret payloads"))
-					return fmt.Errorf("plan --out needs --include-secret-payloads when the plan creates swarm secrets; reference-plus-version secret replay is not implemented yet")
+				secretSources := apply.SecretSourcesForPlan(desired, plan)
+				if !planIncludeSecretPayloads {
+					apply.OmitReplayableSecretPayloads(&plan, secretSources)
+				}
+				if apply.PlanHasSecretPayloads(plan) && !planIncludeSecretPayloads {
+					done(fmt.Errorf("plan artifact would contain unreplayable secret payloads"))
+					return fmt.Errorf("plan --out needs --include-secret-payloads when the plan creates swarm secrets that cannot be replayed from a single versioned secret source")
 				}
 				planFile := apply.NewPlanFile(
 					Version,
@@ -191,7 +195,7 @@ var planCmd = &cobra.Command{
 					pruneServices,
 					plan,
 				)
-				planFile.SecretSources = apply.SecretSourcesForPlan(desired, plan)
+				planFile.SecretSources = secretSources
 				if err := apply.WritePlanFile(planOutPath, planFile); err != nil {
 					done(err)
 					return err

@@ -24,11 +24,13 @@ type ResolvedSecret struct {
 }
 
 type SecretMetadata struct {
-	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Mount    string `json:"mount,omitempty" yaml:"mount,omitempty"`
-	Path     string `json:"path,omitempty" yaml:"path,omitempty"`
-	Key      string `json:"key,omitempty" yaml:"key,omitempty"`
-	Version  *int   `json:"version,omitempty" yaml:"version,omitempty"`
+	Provider string            `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Addr     string            `json:"addr,omitempty" yaml:"addr,omitempty"`
+	Auth     config.AuthConfig `json:"auth,omitempty" yaml:"auth,omitempty"`
+	Mount    string            `json:"mount,omitempty" yaml:"mount,omitempty"`
+	Path     string            `json:"path,omitempty" yaml:"path,omitempty"`
+	Key      string            `json:"key,omitempty" yaml:"key,omitempty"`
+	Version  *int              `json:"version,omitempty" yaml:"version,omitempty"`
 }
 
 type Writer interface {

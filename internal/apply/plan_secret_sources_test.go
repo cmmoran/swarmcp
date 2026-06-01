@@ -24,6 +24,7 @@ func TestSecretSourcesForPlanIncludesCreatedSecretDependencies(t *testing.T) {
 				Hash:  hash,
 				Metadata: secrets.SecretMetadata{
 					Provider: "vault",
+					Addr:     "http://vault.test",
 					Mount:    "kv",
 					Path:     "demo/prod/core",
 					Key:      "api_token",
@@ -44,7 +45,7 @@ func TestSecretSourcesForPlanIncludesCreatedSecretDependencies(t *testing.T) {
 		t.Fatalf("unexpected secret source: %#v", sources[0])
 	}
 	dep := sources[0].Dependencies[0]
-	if dep.Provider != "vault" || dep.Mount != "kv" || dep.Path != "demo/prod/core" || dep.Key != "api_token" {
+	if dep.Provider != "vault" || dep.Addr != "http://vault.test" || dep.Mount != "kv" || dep.Path != "demo/prod/core" || dep.Key != "api_token" {
 		t.Fatalf("unexpected dependency metadata: %#v", dep)
 	}
 	if dep.Version == nil || *dep.Version != 7 {

@@ -33,6 +33,7 @@ func TestPlanFileRoundTrip(t *testing.T) {
 			Scope:    PlanScope{Project: "demo", Deployment: "prod", Stack: "core", Partition: "blue"},
 			Hash:     "hash",
 			Provider: "vault",
+			Addr:     "http://vault.test",
 			Mount:    "kv",
 			Path:     "demo/prod/core",
 			Key:      "db_password",

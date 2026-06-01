@@ -203,6 +203,9 @@ func runApplyPlanFile(cmd *cobra.Command, path string) error {
 	if planFile.APIVersion != apply.PlanFileAPIVersion {
 		return fmt.Errorf("unsupported plan api_version %q", planFile.APIVersion)
 	}
+	if err := apply.ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
+		return err
+	}
 	contextName := planFile.Context
 	if opts.Context != "" {
 		contextName = opts.Context

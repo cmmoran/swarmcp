@@ -74,12 +74,49 @@ func (v *vaultProvider) ResolveWithMetadata(ctx context.Context, scope templates
 		Value: value,
 		Metadata: SecretMetadata{
 			Provider: target.provider,
+			Addr:     v.addr,
+			Auth:     v.auth,
 			Mount:    v.mount,
 			Path:     target.path,
 			Key:      target.key,
 			Version:  version,
 		},
 	}, nil
+}
+
+func ResolveFromMetadata(ctx context.Context, metadata SecretMetadata) (ResolvedSecret, error) {
+	provider := strings.ToLower(strings.TrimSpace(metadata.Provider))
+	switch provider {
+	case "vault", "bao", "openbao":
+		if strings.TrimSpace(metadata.Addr) == "" {
+			return ResolvedSecret{}, fmt.Errorf("secret metadata addr is required for %s provider", provider)
+		}
+		if strings.TrimSpace(metadata.Mount) == "" {
+			return ResolvedSecret{}, fmt.Errorf("secret metadata mount is required for %s provider", provider)
+		}
+		if strings.TrimSpace(metadata.Path) == "" {
+			return ResolvedSecret{}, fmt.Errorf("secret metadata path is required for %s provider", provider)
+		}
+		if strings.TrimSpace(metadata.Key) == "" {
+			return ResolvedSecret{}, fmt.Errorf("secret metadata key is required for %s provider", provider)
+		}
+		v := &vaultProvider{
+			provider: provider,
+			addr:     strings.TrimRight(strings.TrimSpace(metadata.Addr), "/"),
+			token:    readEnvOrFile("VAULT_TOKEN", "VAULT_TOKEN_FILE"),
+			auth:     metadata.Auth,
+			mount:    strings.Trim(metadata.Mount, "/"),
+			client:   http.DefaultClient,
+		}
+		value, version, err := v.readKV(ctx, metadata.Path, metadata.Key, metadata.Version)
+		if err != nil {
+			return ResolvedSecret{}, err
+		}
+		metadata.Version = version
+		return ResolvedSecret{Value: value, Metadata: metadata}, nil
+	default:
+		return ResolvedSecret{}, fmt.Errorf("secret metadata provider %q cannot be replayed", metadata.Provider)
+	}
 }
 
 type secretTarget struct {

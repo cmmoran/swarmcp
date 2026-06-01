@@ -4,6 +4,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cmmoran/swarmcp/internal/config"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -31,14 +32,16 @@ type PlanSecretSource struct {
 }
 
 type PlanSecretDependency struct {
-	Name     string    `yaml:"name"`
-	Scope    PlanScope `yaml:"scope"`
-	Hash     string    `yaml:"hash"`
-	Provider string    `yaml:"provider,omitempty"`
-	Mount    string    `yaml:"mount,omitempty"`
-	Path     string    `yaml:"path,omitempty"`
-	Key      string    `yaml:"key,omitempty"`
-	Version  *int      `yaml:"version,omitempty"`
+	Name     string             `yaml:"name"`
+	Scope    PlanScope          `yaml:"scope"`
+	Hash     string             `yaml:"hash"`
+	Provider string             `yaml:"provider,omitempty"`
+	Addr     string             `yaml:"addr,omitempty"`
+	Auth     *config.AuthConfig `yaml:"auth,omitempty"`
+	Mount    string             `yaml:"mount,omitempty"`
+	Path     string             `yaml:"path,omitempty"`
+	Key      string             `yaml:"key,omitempty"`
+	Version  *int               `yaml:"version,omitempty"`
 }
 
 type PlanScope struct {

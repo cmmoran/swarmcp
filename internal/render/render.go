@@ -563,7 +563,7 @@ func secretValueCollector(resolver secrets.Resolver, deps *[]SecretDependency) f
 
 func appendSecretDependency(deps *[]SecretDependency, seen map[string]struct{}, scope templates.Scope, name string, value string, metadata secrets.SecretMetadata) {
 	hash := contentHash(value)
-	key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", secretDependencyScopeKey(scope), name, hash, metadata.Provider, metadata.Mount, metadata.Path, metadata.Key)
+	key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s", secretDependencyScopeKey(scope), name, hash, metadata.Provider, metadata.Addr, metadata.Mount, metadata.Path, metadata.Key)
 	if metadata.Version != nil {
 		key += fmt.Sprintf("|%d", *metadata.Version)
 	}

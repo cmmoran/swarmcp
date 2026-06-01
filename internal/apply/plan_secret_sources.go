@@ -1,6 +1,7 @@
 package apply
 
 import (
+	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/render"
 	"github.com/cmmoran/swarmcp/internal/templates"
 )
@@ -37,6 +38,8 @@ func planSecretDependencies(deps []render.SecretDependency) []PlanSecretDependen
 			Scope:    planScope(dep.Scope),
 			Hash:     dep.Hash,
 			Provider: dep.Metadata.Provider,
+			Addr:     dep.Metadata.Addr,
+			Auth:     planAuth(dep.Metadata.Auth),
 			Mount:    dep.Metadata.Mount,
 			Path:     dep.Metadata.Path,
 			Key:      dep.Metadata.Key,
@@ -44,6 +47,13 @@ func planSecretDependencies(deps []render.SecretDependency) []PlanSecretDependen
 		})
 	}
 	return out
+}
+
+func planAuth(auth config.AuthConfig) *config.AuthConfig {
+	if auth.Method == "" && auth.Path == "" && auth.Role == "" && auth.Audience == "" {
+		return nil
+	}
+	return &auth
 }
 
 func planScope(scope templates.Scope) PlanScope {
