@@ -197,6 +197,7 @@ Secret plan semantics:
 - Default saved plans should avoid storing secret payloads when a secret can be replayed from source metadata.
 - Vault/OpenBao KV secret dependencies record provider, address, auth method/path/role/audience, mount, path, key, optional KV version, and the SHA-256 hash of the resolved value.
 - When a KV version is available, `apply <plan-file>` must request that version and verify the resolved hash before creating the Swarm secret.
+- File-backed secret dependencies record provider `file`, key, and the SHA-256 hash of the resolved value. The plan input list records the secrets file path and SHA-256 fingerprint; `apply <plan-file>` must require that same file to exist with the same fingerprint before reading the key and verifying the resolved value hash.
 - If a created Swarm secret is composed from multiple secret values or otherwise cannot be replayed from one source, `plan --out` refuses to write the plan unless `--include-secret-payloads` is explicitly set.
 - Payload-mode plans are allowed as an explicit development/operator escape hatch, not the preferred production release artifact.
 

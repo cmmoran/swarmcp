@@ -88,6 +88,7 @@ func ValidatePlanFile(planFile PlanFile) error {
 
 func ResolvePlanSecretPayloads(ctx context.Context, planFile *PlanFile) error {
 	sourceByName := planSecretSourcesByName(planFile.SecretSources)
+	fileStoreByPath := map[string]*secrets.Store{}
 	for i := range planFile.Plan.CreateSecrets {
 		secret := &planFile.Plan.CreateSecrets[i]
 		if secretHasPayload(*secret) {
@@ -101,16 +102,7 @@ func ResolvePlanSecretPayloads(ctx context.Context, planFile *PlanFile) error {
 			return fmt.Errorf("plan secret %q has no payload and cannot replay %d dependencies", secret.Name, len(source.Dependencies))
 		}
 		dep := source.Dependencies[0]
-		auth := configAuth(dep.Auth)
-		resolved, err := secrets.ResolveFromMetadata(ctx, secrets.SecretMetadata{
-			Provider: dep.Provider,
-			Addr:     dep.Addr,
-			Auth:     auth,
-			Mount:    dep.Mount,
-			Path:     dep.Path,
-			Key:      dep.Key,
-			Version:  dep.Version,
-		})
+		resolved, err := resolvePlanSecretDependency(ctx, *planFile, dep, fileStoreByPath)
 		if err != nil {
 			return fmt.Errorf("plan secret %q dependency %q: %w", secret.Name, dep.Name, err)
 		}
@@ -121,6 +113,57 @@ func ResolvePlanSecretPayloads(ctx context.Context, planFile *PlanFile) error {
 		secret.HasData = true
 	}
 	return nil
+}
+
+func resolvePlanSecretDependency(ctx context.Context, planFile PlanFile, dep PlanSecretDependency, fileStoreByPath map[string]*secrets.Store) (secrets.ResolvedSecret, error) {
+	switch dep.Provider {
+	case "file":
+		return resolveFilePlanSecretDependency(planFile, dep, fileStoreByPath)
+	default:
+		auth := configAuth(dep.Auth)
+		return secrets.ResolveFromMetadata(ctx, secrets.SecretMetadata{
+			Provider: dep.Provider,
+			Addr:     dep.Addr,
+			Auth:     auth,
+			Mount:    dep.Mount,
+			Path:     dep.Path,
+			Key:      dep.Key,
+			Version:  dep.Version,
+		})
+	}
+}
+
+func resolveFilePlanSecretDependency(planFile PlanFile, dep PlanSecretDependency, fileStoreByPath map[string]*secrets.Store) (secrets.ResolvedSecret, error) {
+	input, err := planSecretsInput(planFile)
+	if err != nil {
+		return secrets.ResolvedSecret{}, err
+	}
+	hash, err := fileSHA256(input.Path)
+	if err != nil {
+		return secrets.ResolvedSecret{}, fmt.Errorf("secrets input %q: %w", input.Path, err)
+	}
+	if hash != input.SHA256 {
+		return secrets.ResolvedSecret{}, fmt.Errorf("secrets input %q sha256 mismatch: got %s want %s", input.Path, hash, input.SHA256)
+	}
+	store := fileStoreByPath[input.Path]
+	if store == nil {
+		store, err = secrets.Load(input.Path)
+		if err != nil {
+			return secrets.ResolvedSecret{}, fmt.Errorf("secrets input %q: %w", input.Path, err)
+		}
+		fileStoreByPath[input.Path] = store
+	}
+	value, ok := store.Values[dep.Key]
+	if !ok {
+		return secrets.ResolvedSecret{}, fmt.Errorf("%w: %s", secrets.ErrSecretNotFound, dep.Key)
+	}
+	return secrets.ResolvedSecret{
+		Value: value,
+		Metadata: secrets.SecretMetadata{
+			Provider: "file",
+			Key:      dep.Key,
+		},
+	}, nil
 }
 
 func NormalizedPlanSecretMode(planFile PlanFile) string {
@@ -158,7 +201,7 @@ func validatePlanSecretSources(planFile PlanFile) error {
 			return fmt.Errorf("plan secret %q has no payload and cannot replay %d dependencies", secret.Name, len(source.Dependencies))
 		}
 		dep := source.Dependencies[0]
-		if !isReplayableDependency(dep) {
+		if !isReplayableDependency(planFile, dep) {
 			return fmt.Errorf("plan secret %q dependency %q is not replayable", secret.Name, dep.Name)
 		}
 	}
@@ -199,22 +242,52 @@ func isDirectReplayableSecret(source PlanSecretSource, payloadHash string) bool 
 	}
 	switch dep.Provider {
 	case "vault", "bao", "openbao":
-		return isReplayableDependency(dep)
+		return isVaultReplayableDependency(dep)
+	case "file":
+		return dep.Key != ""
 	default:
 		return false
 	}
 }
 
-func isReplayableDependency(dep PlanSecretDependency) bool {
+func isReplayableDependency(planFile PlanFile, dep PlanSecretDependency) bool {
 	if dep.Hash == "" {
 		return false
 	}
 	switch dep.Provider {
 	case "vault", "bao", "openbao":
-		return dep.Addr != "" && dep.Mount != "" && dep.Path != "" && dep.Key != ""
+		return isVaultReplayableDependency(dep)
+	case "file":
+		if dep.Key == "" {
+			return false
+		}
+		_, err := planSecretsInput(planFile)
+		return err == nil
 	default:
 		return false
 	}
+}
+
+func isVaultReplayableDependency(dep PlanSecretDependency) bool {
+	return dep.Addr != "" && dep.Mount != "" && dep.Path != "" && dep.Key != ""
+}
+
+func planSecretsInput(planFile PlanFile) (PlanInput, error) {
+	var found *PlanInput
+	for i := range planFile.Inputs {
+		input := planFile.Inputs[i]
+		if input.Kind != "secrets" {
+			continue
+		}
+		if found != nil {
+			return PlanInput{}, fmt.Errorf("plan has multiple secrets inputs")
+		}
+		found = &input
+	}
+	if found == nil || found.Path == "" || found.SHA256 == "" {
+		return PlanInput{}, fmt.Errorf("plan has file-backed secrets but no secrets input fingerprint")
+	}
+	return *found, nil
 }
 
 func secretDataHash(data []byte) string {

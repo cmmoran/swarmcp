@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cmmoran/swarmcp/internal/swarm"
@@ -37,6 +39,33 @@ func TestOmitReplayableSecretPayloadsStripsDirectSecretValue(t *testing.T) {
 	}
 	if plan.CreateSecrets[0].HasData {
 		t.Fatalf("expected replayable secret payload marker to be cleared")
+	}
+}
+
+func TestOmitReplayableSecretPayloadsStripsDirectFileSecretValue(t *testing.T) {
+	plan := Plan{
+		CreateSecrets: []swarm.SecretSpec{{
+			Name:    "api_token_abcd",
+			Data:    []byte("secret"),
+			HasData: true,
+		}},
+	}
+	sources := []PlanSecretSource{{
+		SecretName: "api_token_abcd",
+		Dependencies: []PlanSecretDependency{{
+			Name:     "api_token",
+			Hash:     secretValueHash("secret"),
+			Provider: "file",
+			Key:      "api_token",
+		}},
+	}}
+
+	OmitReplayableSecretPayloads(&plan, sources)
+	if plan.CreateSecrets[0].Data != nil {
+		t.Fatalf("expected replayable file secret payload to be omitted")
+	}
+	if plan.CreateSecrets[0].HasData {
+		t.Fatalf("expected replayable file secret payload marker to be cleared")
 	}
 }
 
@@ -139,6 +168,84 @@ func TestResolvePlanSecretPayloadsRejectsHashMismatch(t *testing.T) {
 	}
 }
 
+func TestResolvePlanSecretPayloadsReadsMatchingSecretsFile(t *testing.T) {
+	dir := t.TempDir()
+	secretsPath := filepath.Join(dir, "secrets.yaml")
+	if err := os.WriteFile(secretsPath, []byte("values:\n  api_token: secret\n"), 0o600); err != nil {
+		t.Fatalf("write secrets: %v", err)
+	}
+	inputs, err := FileInputs("secrets", []string{secretsPath})
+	if err != nil {
+		t.Fatalf("FileInputs: %v", err)
+	}
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModeReference},
+		Inputs:     inputs,
+		SecretSources: []PlanSecretSource{{
+			SecretName: "api_token_abcd",
+			Dependencies: []PlanSecretDependency{{
+				Name:     "api_token",
+				Hash:     secretValueHash("secret"),
+				Provider: "file",
+				Key:      "api_token",
+			}},
+		}},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{Name: "api_token_abcd"}},
+		},
+	}
+
+	if err := ValidatePlanFile(planFile); err != nil {
+		t.Fatalf("ValidatePlanFile: %v", err)
+	}
+	if err := ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
+		t.Fatalf("ResolvePlanSecretPayloads: %v", err)
+	}
+	if got := string(planFile.Plan.CreateSecrets[0].Data); got != "secret" {
+		t.Fatalf("unexpected resolved payload: %q", got)
+	}
+	if !planFile.Plan.CreateSecrets[0].HasData {
+		t.Fatalf("expected resolved payload marker")
+	}
+}
+
+func TestResolvePlanSecretPayloadsRejectsChangedSecretsFile(t *testing.T) {
+	dir := t.TempDir()
+	secretsPath := filepath.Join(dir, "secrets.yaml")
+	if err := os.WriteFile(secretsPath, []byte("values:\n  api_token: secret\n"), 0o600); err != nil {
+		t.Fatalf("write secrets: %v", err)
+	}
+	inputs, err := FileInputs("secrets", []string{secretsPath})
+	if err != nil {
+		t.Fatalf("FileInputs: %v", err)
+	}
+	if err := os.WriteFile(secretsPath, []byte("values:\n  api_token: changed\n"), 0o600); err != nil {
+		t.Fatalf("rewrite secrets: %v", err)
+	}
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModeReference},
+		Inputs:     inputs,
+		SecretSources: []PlanSecretSource{{
+			SecretName: "api_token_abcd",
+			Dependencies: []PlanSecretDependency{{
+				Name:     "api_token",
+				Hash:     secretValueHash("secret"),
+				Provider: "file",
+				Key:      "api_token",
+			}},
+		}},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{Name: "api_token_abcd"}},
+		},
+	}
+
+	if err := ResolvePlanSecretPayloads(context.Background(), &planFile); err == nil {
+		t.Fatalf("expected changed secrets file to be rejected")
+	}
+}
+
 func TestSetPlanSecretModeDetectsReferencePlans(t *testing.T) {
 	planFile := PlanFile{
 		APIVersion: PlanFileAPIVersion,
@@ -165,6 +272,29 @@ func TestSetPlanSecretModeDetectsReferencePlans(t *testing.T) {
 	}
 	if err := ValidatePlanFile(planFile); err != nil {
 		t.Fatalf("ValidatePlanFile: %v", err)
+	}
+}
+
+func TestValidatePlanFileRejectsFileReferenceWithoutSecretsInput(t *testing.T) {
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModeReference},
+		SecretSources: []PlanSecretSource{{
+			SecretName: "api_token_abcd",
+			Dependencies: []PlanSecretDependency{{
+				Name:     "api_token",
+				Hash:     secretValueHash("secret"),
+				Provider: "file",
+				Key:      "api_token",
+			}},
+		}},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{Name: "api_token_abcd"}},
+		},
+	}
+
+	if err := ValidatePlanFile(planFile); err == nil {
+		t.Fatalf("expected validation error")
 	}
 }
 

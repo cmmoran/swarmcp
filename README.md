@@ -156,7 +156,7 @@ Generate and review a saved plan when you want Terraform-style plan/apply separa
 ./swarmcp show nginx.plan.yaml
 ```
 
-Saved plans include target metadata, input file fingerprints, exact create/delete/deploy intent, and a secret mode. When a Swarm secret is a direct `secret_value` passthrough from Vault/OpenBao KV, the plan stores provider/path/key/version/hash metadata and omits the secret payload. Composed or unreplayable secrets require the explicit `--include-secret-payloads` escape hatch.
+Saved plans include target metadata, input file fingerprints, exact create/delete/deploy intent, and a secret mode. When a Swarm secret is a direct `secret_value` passthrough from Vault/OpenBao KV or a local secrets file, the plan stores source/key/hash metadata and omits the secret payload. File-backed secret plans require the same secrets file, with the same SHA-256 fingerprint, to be present at apply time. Composed or unreplayable secrets require the explicit `--include-secret-payloads` escape hatch.
 
 Inspect the current-vs-desired diff:
 
@@ -182,7 +182,7 @@ Apply a reviewed saved plan:
 ./swarmcp apply nginx.plan.yaml
 ```
 
-`apply <plan-file>` consumes the saved plan instead of re-rendering the current workspace. It validates the plan file, replays reference-mode secret payloads from pinned source metadata, verifies stored hashes, and refuses to apply to a different Docker context unless `--allow-context-override` is set.
+`apply <plan-file>` consumes the saved plan instead of re-rendering the current workspace. It validates the plan file, replays reference-mode secret payloads from pinned source metadata or the recorded secrets file, verifies stored hashes, and refuses to apply to a different Docker context unless `--allow-context-override` is set.
 
 Check runtime status:
 
