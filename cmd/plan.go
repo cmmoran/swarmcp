@@ -18,6 +18,8 @@ import (
 )
 
 var planProgressEnabled = true
+var planOutPath string
+var planIncludeSecretPayloads bool
 
 var planCmd = &cobra.Command{
 	Use:   "plan",
@@ -168,6 +170,34 @@ var planCmd = &cobra.Command{
 					}
 				}
 			}
+			if planOutPath != "" {
+				done = progress.start("write plan artifact")
+				plan, pruneServices, err := buildApplyPlanArtifact(cmd, projectCtx, cfg, desired, partitionFilters, stackFilters, opts)
+				if err != nil {
+					done(err)
+					return err
+				}
+				if len(plan.CreateSecrets) > 0 && !planIncludeSecretPayloads {
+					done(fmt.Errorf("plan artifact would contain secret payloads"))
+					return fmt.Errorf("plan --out needs --include-secret-payloads when the plan creates swarm secrets; reference-plus-version secret replay is not implemented yet")
+				}
+				planFile := apply.NewPlanFile(
+					Version,
+					cfg.Project.Name,
+					cfg.Project.Deployment,
+					partitionState,
+					stackState,
+					projectCtx.ContextName,
+					pruneServices,
+					plan,
+				)
+				if err := apply.WritePlanFile(planOutPath, planFile); err != nil {
+					done(err)
+					return err
+				}
+				done(nil)
+				_, _ = fmt.Fprintf(out, "plan artifact: %s\n", planOutPath)
+			}
 			cmdutil.PrintWarnings(out, warnings)
 			_, _ = fmt.Fprintf(out, "plan OK (dry-run)\nconfigs rendered: %d\nsecrets rendered: %d\n", summary.Configs, summary.Secrets)
 			if len(summary.MissingSecrets) > 0 {
@@ -306,6 +336,8 @@ func (p planProgressReporter) start(phase string) func(error) {
 
 func init() {
 	planCmd.Flags().BoolVar(&planProgressEnabled, "progress", true, "Show phase progress while computing plan")
+	planCmd.Flags().StringVar(&planOutPath, "out", "", "Write an applyable plan artifact to this path")
+	planCmd.Flags().BoolVar(&planIncludeSecretPayloads, "include-secret-payloads", false, "Allow plan artifacts to include rendered swarm secret payloads")
 }
 
 func singleSelectorValue(items []string) string {

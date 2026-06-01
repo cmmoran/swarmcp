@@ -18,10 +18,10 @@ import (
 )
 
 type StackDeploy struct {
-	Name           string
-	Compose        []byte
-	ServiceCreates int
-	ServiceUpdates int
+	Name           string `yaml:"name" json:"name"`
+	Compose        []byte `yaml:"compose" json:"compose"`
+	ServiceCreates int    `yaml:"service_creates,omitempty" json:"service_creates,omitempty"`
+	ServiceUpdates int    `yaml:"service_updates,omitempty" json:"service_updates,omitempty"`
 }
 
 type composeFile struct {

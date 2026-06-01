@@ -10,19 +10,19 @@ import (
 )
 
 type Plan struct {
-	CreateConfigs  []swarm.ConfigSpec
-	CreateSecrets  []swarm.SecretSpec
-	CreateNetworks []swarm.NetworkSpec
-	DeleteConfigs  []swarm.Config
-	DeleteSecrets  []swarm.Secret
-	SkippedDeletes SkippedDeletes
-	StackDeploys   []StackDeploy
-	PruneStacks    []string
+	CreateConfigs  []swarm.ConfigSpec  `yaml:"create_configs,omitempty" json:"create_configs,omitempty"`
+	CreateSecrets  []swarm.SecretSpec  `yaml:"create_secrets,omitempty" json:"create_secrets,omitempty"`
+	CreateNetworks []swarm.NetworkSpec `yaml:"create_networks,omitempty" json:"create_networks,omitempty"`
+	DeleteConfigs  []swarm.Config      `yaml:"delete_configs,omitempty" json:"delete_configs,omitempty"`
+	DeleteSecrets  []swarm.Secret      `yaml:"delete_secrets,omitempty" json:"delete_secrets,omitempty"`
+	SkippedDeletes SkippedDeletes      `yaml:"skipped_deletes,omitempty" json:"skipped_deletes,omitempty"`
+	StackDeploys   []StackDeploy       `yaml:"stack_deploys,omitempty" json:"stack_deploys,omitempty"`
+	PruneStacks    []string            `yaml:"prune_stacks,omitempty" json:"prune_stacks,omitempty"`
 }
 
 type SkippedDeletes struct {
-	Configs int
-	Secrets int
+	Configs int `yaml:"configs,omitempty" json:"configs,omitempty"`
+	Secrets int `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 }
 
 func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, desired DesiredState, values any, partitionFilters []string, stackFilters []string, infer bool) (Plan, error) {

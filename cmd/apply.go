@@ -12,13 +12,18 @@ import (
 	"github.com/cmmoran/swarmcp/internal/apply"
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/state"
+	"github.com/cmmoran/swarmcp/internal/swarm"
 	"github.com/spf13/cobra"
 )
 
 var applyCmd = &cobra.Command{
-	Use:   "apply",
+	Use:   "apply [plan-file]",
 	Short: "Apply desired state to Swarm",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			return runApplyPlanFile(cmd, args[0])
+		}
 		targets, err := prepareRuntimeTargets()
 		if err != nil {
 			return err
@@ -181,6 +186,63 @@ var applyCmd = &cobra.Command{
 			return nil
 		})
 	},
+}
+
+func runApplyPlanFile(cmd *cobra.Command, path string) error {
+	outputMode := strings.TrimSpace(opts.Output)
+	if outputMode == "" {
+		outputMode = "auto"
+	}
+	if err := apply.ValidateDeployOutputMode(outputMode); err != nil {
+		return err
+	}
+	planFile, err := apply.ReadPlanFile(path)
+	if err != nil {
+		return err
+	}
+	if planFile.APIVersion != apply.PlanFileAPIVersion {
+		return fmt.Errorf("unsupported plan api_version %q", planFile.APIVersion)
+	}
+	contextName := planFile.Context
+	if opts.Context != "" {
+		contextName = opts.Context
+	}
+	client, err := swarmClientForContext(contextName)
+	if err != nil {
+		return err
+	}
+	outputFlagSet := cmd.Flags().Changed("output")
+	noUI := opts.NoUI || outputFlagSet
+	stackParallel := 0
+	if opts.Serial {
+		stackParallel = 1
+	}
+	if err := apply.Apply(context.Background(), client, planFile.Plan, contextName, planFile.PruneServices, stackParallel, noUI, outputMode, outputFlagSet); err != nil {
+		return err
+	}
+	planSummary := buildPlanSummary(planFile.Plan)
+	stackNames, serviceCreates, serviceUpdates := planDeploySummary(planFile.Plan.StackDeploys)
+	planSummary.StackNames = stackNames
+	planSummary.ServicesCreated = serviceCreates
+	planSummary.ServicesUpdated = serviceUpdates
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintln(out, "apply OK")
+	_, _ = fmt.Fprintf(out, "plan artifact: %s\n", path)
+	_, _ = fmt.Fprintf(out, "networks created: %d\nconfigs created: %d\nsecrets created: %d\nstacks deployed: %d\nconfigs removed: %d\nsecrets removed: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", planSummary.NetworksCreated, planSummary.ConfigsCreated, planSummary.SecretsCreated, planSummary.StacksDeployed, planSummary.ConfigsRemoved, planSummary.SecretsRemoved, planSummary.ConfigsSkipped, planSummary.SecretsSkipped)
+	if planFile.PruneServices {
+		_, _ = fmt.Fprintln(out, "prune services enabled: stack deploy uses --prune")
+	} else {
+		_, _ = fmt.Fprintln(out, "prune services disabled")
+	}
+	return nil
+}
+
+func swarmClientForContext(contextName string) (swarm.Client, error) {
+	client, err := swarm.NewClient(contextName)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 func init() {

@@ -7,29 +7,29 @@ import (
 )
 
 type ConfigSpec struct {
-	Name   string
-	Labels map[string]string
-	Data   []byte
+	Name   string            `yaml:"name" json:"name"`
+	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Data   []byte            `yaml:"data,omitempty" json:"data,omitempty"`
 }
 
 type SecretSpec struct {
-	Name   string
-	Labels map[string]string
-	Data   []byte
+	Name   string            `yaml:"name" json:"name"`
+	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Data   []byte            `yaml:"data,omitempty" json:"data,omitempty"`
 }
 
 type Config struct {
-	ID        string
-	Name      string
-	Labels    map[string]string
-	CreatedAt time.Time
+	ID        string            `yaml:"id" json:"id"`
+	Name      string            `yaml:"name" json:"name"`
+	Labels    map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	CreatedAt time.Time         `yaml:"created_at,omitempty" json:"created_at,omitempty"`
 }
 
 type Secret struct {
-	ID        string
-	Name      string
-	Labels    map[string]string
-	CreatedAt time.Time
+	ID        string            `yaml:"id" json:"id"`
+	Name      string            `yaml:"name" json:"name"`
+	Labels    map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	CreatedAt time.Time         `yaml:"created_at,omitempty" json:"created_at,omitempty"`
 }
 
 type Service struct {
@@ -50,11 +50,11 @@ type Network struct {
 }
 
 type NetworkSpec struct {
-	Name       string
-	Driver     string
-	Attachable bool
-	Internal   bool
-	Labels     map[string]string
+	Name       string            `yaml:"name" json:"name"`
+	Driver     string            `yaml:"driver,omitempty" json:"driver,omitempty"`
+	Attachable bool              `yaml:"attachable,omitempty" json:"attachable,omitempty"`
+	Internal   bool              `yaml:"internal,omitempty" json:"internal,omitempty"`
+	Labels     map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 }
 
 type Node struct {
