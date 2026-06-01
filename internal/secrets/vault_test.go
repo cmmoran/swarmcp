@@ -16,18 +16,21 @@ import (
 )
 
 type fakeVaultTransport struct {
-	t      *testing.T
-	token  string
-	mu     sync.Mutex
-	data   map[string]map[string]any
-	writes []map[string]any
+	t        *testing.T
+	token    string
+	mu       sync.Mutex
+	data     map[string]map[string]any
+	versions map[string]int
+	queries  []string
+	writes   []map[string]any
 }
 
 func newFakeVaultTransport(t *testing.T) *fakeVaultTransport {
 	return &fakeVaultTransport{
-		t:     t,
-		token: "test-token",
-		data:  make(map[string]map[string]any),
+		t:        t,
+		token:    "test-token",
+		data:     make(map[string]map[string]any),
+		versions: make(map[string]int),
 	}
 }
 
@@ -48,11 +51,20 @@ func (f *fakeVaultTransport) RoundTrip(req *http.Request) (*http.Response, error
 		case http.MethodGet:
 			f.mu.Lock()
 			data, ok := f.data[path]
+			version := f.versions[path]
+			f.queries = append(f.queries, req.URL.RawQuery)
 			f.mu.Unlock()
 			if !ok {
 				return response(http.StatusNotFound, "not found"), nil
 			}
-			resp := map[string]any{"data": map[string]any{"data": data}}
+			resp := map[string]any{
+				"data": map[string]any{
+					"data": data,
+					"metadata": map[string]any{
+						"version": version,
+					},
+				},
+			}
 			return jsonResponse(http.StatusOK, resp), nil
 		case http.MethodPost:
 			body, err := io.ReadAll(req.Body)
@@ -132,6 +144,119 @@ func TestVaultProviderResolveWithAppRole(t *testing.T) {
 	}
 	if value != "secret" {
 		t.Fatalf("unexpected value: %q", value)
+	}
+}
+
+func TestVaultProviderResolveWithMetadataCapturesKVVersion(t *testing.T) {
+	transport := newFakeVaultTransport(t)
+	transport.data["primary/dev/core/api"] = map[string]any{"password": "secret"}
+	transport.versions["primary/dev/core/api"] = 17
+
+	t.Setenv("VAULT_ROLE_ID", "role-id")
+	t.Setenv("VAULT_SECRET_ID", "secret-id")
+
+	engine := &config.SecretsEngine{
+		Provider: "openbao",
+		Addr:     "http://vault.test",
+		Auth: config.AuthConfig{
+			Method: "approle",
+		},
+		Vault: &config.VaultKV{
+			Mount:        "kv",
+			PathTemplate: "{project}/{partition}/{stack}/{service}",
+		},
+	}
+	provider, err := newVaultProvider(engine)
+	if err != nil {
+		t.Fatalf("newVaultProvider: %v", err)
+	}
+	provider.client = &http.Client{Transport: transport}
+	scope := templates.Scope{
+		Project:   "primary",
+		Partition: "dev",
+		Stack:     "core",
+		Service:   "api",
+	}
+	secret, err := provider.ResolveWithMetadata(context.Background(), scope, "password")
+	if err != nil {
+		t.Fatalf("ResolveWithMetadata: %v", err)
+	}
+	if secret.Value != "secret" {
+		t.Fatalf("unexpected value: %q", secret.Value)
+	}
+	if secret.Metadata.Provider != "openbao" || secret.Metadata.Mount != "kv" || secret.Metadata.Path != "primary/dev/core/api" || secret.Metadata.Key != "password" {
+		t.Fatalf("unexpected metadata: %#v", secret.Metadata)
+	}
+	if secret.Metadata.Version == nil || *secret.Metadata.Version != 17 {
+		t.Fatalf("expected version 17, got %#v", secret.Metadata.Version)
+	}
+}
+
+func TestVaultProviderResolveWithMetadataRequestsPinnedKVVersion(t *testing.T) {
+	transport := newFakeVaultTransport(t)
+	transport.data["primary/dev/core/api"] = map[string]any{"password": "secret"}
+	transport.versions["primary/dev/core/api"] = 17
+
+	t.Setenv("VAULT_ROLE_ID", "role-id")
+	t.Setenv("VAULT_SECRET_ID", "secret-id")
+
+	engine := &config.SecretsEngine{
+		Provider: "vault",
+		Addr:     "http://vault.test",
+		Auth: config.AuthConfig{
+			Method: "approle",
+		},
+		Vault: &config.VaultKV{
+			Mount:        "kv",
+			PathTemplate: "{project}/{partition}/{stack}/{service}",
+		},
+	}
+	provider, err := newVaultProvider(engine)
+	if err != nil {
+		t.Fatalf("newVaultProvider: %v", err)
+	}
+	provider.client = &http.Client{Transport: transport}
+	secret, err := provider.ResolveWithMetadata(context.Background(), templates.Scope{}, "vault://primary/dev/core/api?version=17#password")
+	if err != nil {
+		t.Fatalf("ResolveWithMetadata: %v", err)
+	}
+	if secret.Value != "secret" {
+		t.Fatalf("unexpected value: %q", secret.Value)
+	}
+	if secret.Metadata.Version == nil || *secret.Metadata.Version != 17 {
+		t.Fatalf("expected version 17, got %#v", secret.Metadata.Version)
+	}
+	transport.mu.Lock()
+	queries := append([]string(nil), transport.queries...)
+	transport.mu.Unlock()
+	if len(queries) == 0 || queries[len(queries)-1] != "version=17" {
+		t.Fatalf("expected pinned version query, got %#v", queries)
+	}
+}
+
+func TestVaultProviderResolveRejectsInvalidPinnedKVVersion(t *testing.T) {
+	t.Setenv("VAULT_ROLE_ID", "role-id")
+	t.Setenv("VAULT_SECRET_ID", "secret-id")
+
+	engine := &config.SecretsEngine{
+		Provider: "vault",
+		Addr:     "http://vault.test",
+		Auth: config.AuthConfig{
+			Method: "approle",
+		},
+		Vault: &config.VaultKV{
+			Mount:        "kv",
+			PathTemplate: "{project}/{partition}/{stack}/{service}",
+		},
+	}
+	provider, err := newVaultProvider(engine)
+	if err != nil {
+		t.Fatalf("newVaultProvider: %v", err)
+	}
+	provider.client = &http.Client{Transport: newFakeVaultTransport(t)}
+	_, err = provider.ResolveWithMetadata(context.Background(), templates.Scope{}, "vault://primary/dev/core/api?version=latest#password")
+	if err == nil || !strings.Contains(err.Error(), "version must be a positive integer") {
+		t.Fatalf("expected invalid version error, got %v", err)
 	}
 }
 

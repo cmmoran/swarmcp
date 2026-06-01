@@ -14,6 +14,23 @@ type Resolver interface {
 	Value(scope templates.Scope, name string) (string, error)
 }
 
+type MetadataResolver interface {
+	ValueWithMetadata(scope templates.Scope, name string) (ResolvedSecret, error)
+}
+
+type ResolvedSecret struct {
+	Value    string         `json:"value,omitempty" yaml:"value,omitempty"`
+	Metadata SecretMetadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+}
+
+type SecretMetadata struct {
+	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Mount    string `json:"mount,omitempty" yaml:"mount,omitempty"`
+	Path     string `json:"path,omitempty" yaml:"path,omitempty"`
+	Key      string `json:"key,omitempty" yaml:"key,omitempty"`
+	Version  *int   `json:"version,omitempty" yaml:"version,omitempty"`
+}
+
 type Writer interface {
 	Put(scope templates.Scope, name string, value string) error
 }
@@ -24,6 +41,10 @@ type MissingReporter interface {
 
 type provider interface {
 	Resolve(ctx context.Context, scope templates.Scope, name string) (string, error)
+}
+
+type metadataProvider interface {
+	ResolveWithMetadata(ctx context.Context, scope templates.Scope, name string) (ResolvedSecret, error)
 }
 
 type providerWriter interface {
@@ -80,9 +101,23 @@ func (w *writerWrapper) Put(scope templates.Scope, name string, value string) er
 }
 
 func (m *manager) Value(scope templates.Scope, name string) (string, error) {
+	resolved, err := m.ValueWithMetadata(scope, name)
+	if err != nil {
+		return "", err
+	}
+	return resolved.Value, nil
+}
+
+func (m *manager) ValueWithMetadata(scope templates.Scope, name string) (ResolvedSecret, error) {
 	if m.store != nil {
 		if value, ok := m.store.Values[name]; ok {
-			return value, nil
+			return ResolvedSecret{
+				Value: value,
+				Metadata: SecretMetadata{
+					Provider: "file",
+					Key:      name,
+				},
+			}, nil
 		}
 	}
 	var resolved provider
@@ -91,7 +126,7 @@ func (m *manager) Value(scope templates.Scope, name string) (string, error) {
 		if engineCfg != nil {
 			engine, err := providerFactory(engineCfg)
 			if err != nil {
-				return "", err
+				return ResolvedSecret{}, err
 			}
 			resolved = engine
 		}
@@ -99,19 +134,30 @@ func (m *manager) Value(scope templates.Scope, name string) (string, error) {
 	if resolved == nil {
 		if m.allowMissing {
 			m.recordMissing(scope, name)
-			return placeholder(scope, name), nil
+			return ResolvedSecret{Value: placeholder(scope, name)}, nil
 		}
-		return "", fmt.Errorf("%w: %s", ErrSecretNotFound, name)
+		return ResolvedSecret{}, fmt.Errorf("%w: %s", ErrSecretNotFound, name)
+	}
+	if metadataResolver, ok := resolved.(metadataProvider); ok {
+		secret, err := metadataResolver.ResolveWithMetadata(context.Background(), scope, name)
+		if err != nil {
+			if errors.Is(err, ErrSecretNotFound) && m.allowMissing {
+				m.recordMissing(scope, name)
+				return ResolvedSecret{Value: placeholder(scope, name)}, nil
+			}
+			return ResolvedSecret{}, err
+		}
+		return secret, nil
 	}
 	value, err := resolved.Resolve(context.Background(), scope, name)
 	if err != nil {
 		if errors.Is(err, ErrSecretNotFound) && m.allowMissing {
 			m.recordMissing(scope, name)
-			return placeholder(scope, name), nil
+			return ResolvedSecret{Value: placeholder(scope, name)}, nil
 		}
-		return "", err
+		return ResolvedSecret{}, err
 	}
-	return value, nil
+	return ResolvedSecret{Value: value}, nil
 }
 
 func newProvider(engine *config.SecretsEngine) (provider, error) {

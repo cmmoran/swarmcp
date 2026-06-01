@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/cmmoran/swarmcp/internal/config"
@@ -15,6 +16,7 @@ import (
 )
 
 type vaultProvider struct {
+	provider     string
 	addr         string
 	token        string
 	auth         config.AuthConfig
@@ -41,6 +43,7 @@ func newVaultProvider(engine *config.SecretsEngine) (*vaultProvider, error) {
 		return nil, fmt.Errorf("secrets_engine.vault.path_template is required for vault provider")
 	}
 	return &vaultProvider{
+		provider:     strings.ToLower(strings.TrimSpace(engine.Provider)),
 		addr:         strings.TrimRight(addr, "/"),
 		token:        readEnvOrFile("VAULT_TOKEN", "VAULT_TOKEN_FILE"),
 		auth:         engine.Auth,
@@ -51,13 +54,57 @@ func newVaultProvider(engine *config.SecretsEngine) (*vaultProvider, error) {
 }
 
 func (v *vaultProvider) Resolve(ctx context.Context, scope templates.Scope, name string) (string, error) {
-	ref, ok := parseSecretRef(name)
+	secret, err := v.ResolveWithMetadata(ctx, scope, name)
+	if err != nil {
+		return "", err
+	}
+	return secret.Value, nil
+}
+
+func (v *vaultProvider) ResolveWithMetadata(ctx context.Context, scope templates.Scope, name string) (ResolvedSecret, error) {
+	target, err := v.resolveSecretTarget(scope, name)
+	if err != nil {
+		return ResolvedSecret{}, err
+	}
+	value, version, err := v.readKV(ctx, target.path, target.key, target.version)
+	if err != nil {
+		return ResolvedSecret{}, err
+	}
+	return ResolvedSecret{
+		Value: value,
+		Metadata: SecretMetadata{
+			Provider: target.provider,
+			Mount:    v.mount,
+			Path:     target.path,
+			Key:      target.key,
+			Version:  version,
+		},
+	}, nil
+}
+
+type secretTarget struct {
+	provider string
+	path     string
+	key      string
+	version  *int
+}
+
+func (v *vaultProvider) resolveSecretTarget(scope templates.Scope, name string) (secretTarget, error) {
+	ref, ok, err := parseSecretRef(name)
+	if err != nil {
+		return secretTarget{}, err
+	}
 	if ok && ref.scheme != "vault" && ref.scheme != "bao" && ref.scheme != "openbao" {
-		return "", fmt.Errorf("unsupported secret scheme %q", ref.scheme)
+		return secretTarget{}, fmt.Errorf("unsupported secret scheme %q", ref.scheme)
 	}
 	path := templates.ExpandPathTokens(v.pathTemplate, scope)
 	key := name
+	provider := v.provider
+	if provider == "" {
+		provider = "vault"
+	}
 	if ok {
+		provider = ref.scheme
 		if ref.path != "" {
 			path = strings.Trim(ref.path, "/")
 		}
@@ -66,16 +113,24 @@ func (v *vaultProvider) Resolve(ctx context.Context, scope templates.Scope, name
 		}
 	}
 	if key == "" {
-		return "", fmt.Errorf("secret reference missing key")
+		return secretTarget{}, fmt.Errorf("secret reference missing key")
 	}
 	if path == "" {
-		return "", fmt.Errorf("secret path is empty")
+		return secretTarget{}, fmt.Errorf("secret path is empty")
 	}
-	return v.readKV(ctx, path, key)
+	return secretTarget{
+		provider: provider,
+		path:     path,
+		key:      key,
+		version:  ref.version,
+	}, nil
 }
 
 func (v *vaultProvider) Put(ctx context.Context, scope templates.Scope, name string, value string) error {
-	ref, ok := parseSecretRef(name)
+	ref, ok, err := parseSecretRef(name)
+	if err != nil {
+		return err
+	}
 	if ok && ref.scheme != "vault" && ref.scheme != "bao" && ref.scheme != "openbao" {
 		return fmt.Errorf("unsupported secret scheme %q", ref.scheme)
 	}
@@ -110,81 +165,119 @@ func (v *vaultProvider) Put(ctx context.Context, scope templates.Scope, name str
 }
 
 type secretRef struct {
-	scheme string
-	path   string
-	key    string
+	scheme  string
+	path    string
+	key     string
+	version *int
 }
 
-func parseSecretRef(value string) (secretRef, bool) {
+func parseSecretRef(value string) (secretRef, bool, error) {
 	if !strings.Contains(value, "://") {
-		return secretRef{}, false
+		return secretRef{}, false, nil
 	}
 	parsed, err := url.Parse(value)
 	if err != nil {
-		return secretRef{}, false
+		return secretRef{}, false, err
+	}
+	path := strings.Trim(parsed.Path, "/")
+	if parsed.Host != "" {
+		if path != "" {
+			path = parsed.Host + "/" + path
+		} else {
+			path = parsed.Host
+		}
+	}
+	var version *int
+	if raw := strings.TrimSpace(parsed.Query().Get("version")); raw != "" {
+		parsedVersion, err := strconv.Atoi(raw)
+		if err != nil || parsedVersion <= 0 {
+			return secretRef{}, false, fmt.Errorf("secret reference version must be a positive integer")
+		}
+		version = &parsedVersion
 	}
 	return secretRef{
-		scheme: parsed.Scheme,
-		path:   strings.TrimPrefix(parsed.Path, "/"),
-		key:    parsed.Fragment,
-	}, true
+		scheme:  parsed.Scheme,
+		path:    path,
+		key:     parsed.Fragment,
+		version: version,
+	}, true, nil
 }
 
-func (v *vaultProvider) readKV(ctx context.Context, path string, key string) (string, error) {
-	data, err := v.readKVMap(ctx, path)
+func (v *vaultProvider) readKV(ctx context.Context, path string, key string, version *int) (string, *int, error) {
+	data, metadata, err := v.readKVMapWithMetadata(ctx, path, version)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	value, ok := data[key]
 	if !ok {
-		return "", ErrSecretNotFound
+		return "", nil, ErrSecretNotFound
 	}
 	switch v := value.(type) {
 	case string:
-		return v, nil
+		return v, metadata.Version, nil
 	default:
 		encoded, err := json.Marshal(v)
 		if err != nil {
-			return fmt.Sprintf("%v", v), nil
+			return fmt.Sprintf("%v", v), metadata.Version, nil
 		}
-		return string(encoded), nil
+		return string(encoded), metadata.Version, nil
 	}
 }
 
 func (v *vaultProvider) readKVMap(ctx context.Context, path string) (map[string]any, error) {
+	data, _, err := v.readKVMapWithMetadata(ctx, path, nil)
+	return data, err
+}
+
+type vaultKVMetadata struct {
+	Version *int
+}
+
+func (v *vaultProvider) readKVMapWithMetadata(ctx context.Context, path string, version *int) (map[string]any, vaultKVMetadata, error) {
 	if err := v.ensureToken(ctx); err != nil {
-		return nil, err
+		return nil, vaultKVMetadata{}, err
 	}
 	full := fmt.Sprintf("%s/v1/%s/data/%s", v.addr, v.mount, strings.Trim(path, "/"))
+	if version != nil {
+		full += "?version=" + strconv.Itoa(*version)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
 	if err != nil {
-		return nil, err
+		return nil, vaultKVMetadata{}, err
 	}
 	req.Header.Set("X-Vault-Token", v.token)
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, vaultKVMetadata{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrSecretNotFound
+		return nil, vaultKVMetadata{}, ErrSecretNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("vault read %s: status %s", full, resp.Status)
+		return nil, vaultKVMetadata{}, fmt.Errorf("vault read %s: status %s", full, resp.Status)
 	}
 
 	var payload struct {
 		Data struct {
-			Data map[string]any `json:"data"`
+			Data     map[string]any `json:"data"`
+			Metadata struct {
+				Version int `json:"version"`
+			} `json:"metadata"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
+		return nil, vaultKVMetadata{}, err
+	}
+	metadata := vaultKVMetadata{}
+	if payload.Data.Metadata.Version > 0 {
+		version := payload.Data.Metadata.Version
+		metadata.Version = &version
 	}
 	if payload.Data.Data == nil {
-		return map[string]any{}, nil
+		return map[string]any{}, metadata, nil
 	}
-	return payload.Data.Data, nil
+	return payload.Data.Data, metadata, nil
 }
 
 func (v *vaultProvider) writeKV(ctx context.Context, path string, data map[string]any) error {
