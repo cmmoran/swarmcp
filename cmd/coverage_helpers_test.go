@@ -91,6 +91,51 @@ func TestApplyPlanHelpers(t *testing.T) {
 	})
 }
 
+func TestRunApplyPlanFileChecksContextBeforeSecretReplay(t *testing.T) {
+	oldContext := opts.Context
+	oldOutput := opts.Output
+	oldAllowContextOverride := applyAllowContextOverride
+	defer func() {
+		opts.Context = oldContext
+		opts.Output = oldOutput
+		applyAllowContextOverride = oldAllowContextOverride
+	}()
+
+	opts.Context = "other-context"
+	opts.Output = "auto"
+	applyAllowContextOverride = false
+
+	path := filepath.Join(t.TempDir(), "release.plan.yaml")
+	planFile := apply.NewPlanFile("test", "demo", "prod", "", "", "planned-context", false, apply.Plan{
+		CreateSecrets: []swarm.SecretSpec{{Name: "demo_secret_v1"}},
+	})
+	planFile.Secrets.Mode = apply.PlanSecretModeReference
+	planFile.SecretSources = []apply.PlanSecretSource{{
+		SecretName:  "demo_secret_v1",
+		LogicalName: "api-token",
+		Dependencies: []apply.PlanSecretDependency{{
+			Name:     "token",
+			Hash:     "expected-hash",
+			Provider: "vault",
+			Addr:     "https://vault.example.test",
+			Mount:    "kv",
+			Path:     "demo/prod",
+			Key:      "token",
+		}},
+	}}
+	if err := apply.WritePlanFile(path, planFile); err != nil {
+		t.Fatalf("WritePlanFile: %v", err)
+	}
+
+	err := runApplyPlanFile(applyCmd, path)
+	if err == nil {
+		t.Fatalf("expected context override rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing --context") {
+		t.Fatalf("expected context override rejection before secret replay, got: %v", err)
+	}
+}
+
 func TestLoadStateCacheFiltersByScope(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "project.yaml")

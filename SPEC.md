@@ -184,14 +184,14 @@ swarmcp apply release.plan.yaml
 
 `plan --out` generates an applyable `swarmcp.plan.v1` artifact. The saved plan is generated output, not another broad human-authored configuration layer. It captures:
 - target metadata: project, deployment, optional partition/stack selectors, and Docker context
-- input provenance: SHA-256 fingerprints for project config files, release overlays, and values files used to render the plan
+- input provenance: SHA-256 fingerprints for project config files, release overlays, values files, and local secrets files when a file-backed secrets store is used
 - exact Swarm reconciliation intent: configs, secrets, networks, stack deploy payloads, delete/prune intent, and skipped delete counts
 - secret handling mode: `payload`, `reference`, or `mixed`
 - secret source metadata for reference-mode secrets
 
 `swarmcp show <plan-file>` validates and summarizes the saved plan without connecting to Docker. It is the review step for generated plans.
 
-`swarmcp apply <plan-file>` consumes the saved plan as the execution artifact. It must not re-render the current workspace. It validates the plan API version, secret mode, replay source shape, and target context before touching Docker. Passing `--context` to apply a saved plan to a different Docker context is rejected unless `--allow-context-override` is set.
+`swarmcp apply <plan-file>` consumes the saved plan as the execution artifact. It must not re-render the current workspace. It validates the plan API version, secret mode, replay source shape, and target context before touching Docker or external secret backends. Passing `--context` to apply a saved plan to a different Docker context is rejected unless `--allow-context-override` is set.
 
 Secret plan semantics:
 - Default saved plans should avoid storing secret payloads when a secret can be replayed from source metadata.

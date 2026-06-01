@@ -205,15 +205,15 @@ func runApplyPlanFile(cmd *cobra.Command, path string) error {
 	if err := apply.ValidatePlanFile(planFile); err != nil {
 		return err
 	}
-	if err := apply.ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
-		return err
-	}
 	contextName := planFile.Context
 	if opts.Context != "" {
 		if !applyAllowContextOverride && planFile.Context != "" && opts.Context != planFile.Context {
 			return fmt.Errorf("plan context is %q; refusing --context %q without --allow-context-override", planFile.Context, opts.Context)
 		}
 		contextName = opts.Context
+	}
+	if err := apply.ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
+		return err
 	}
 	client, err := swarmClientForContext(contextName)
 	if err != nil {
