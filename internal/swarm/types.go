@@ -13,9 +13,10 @@ type ConfigSpec struct {
 }
 
 type SecretSpec struct {
-	Name   string            `yaml:"name" json:"name"`
-	Labels map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Data   []byte            `yaml:"data,omitempty" json:"data,omitempty"`
+	Name    string            `yaml:"name" json:"name"`
+	Labels  map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Data    []byte            `yaml:"data,omitempty" json:"data,omitempty"`
+	HasData bool              `yaml:"has_data,omitempty" json:"has_data,omitempty"`
 }
 
 type Config struct {

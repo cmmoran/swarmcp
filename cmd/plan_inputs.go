@@ -3,9 +3,10 @@ package cmd
 import (
 	"github.com/cmmoran/swarmcp/internal/apply"
 	"github.com/cmmoran/swarmcp/internal/cmdutil"
+	"github.com/cmmoran/swarmcp/internal/config"
 )
 
-func buildPlanInputs(configPath string, configPaths []string, releaseConfigPaths []string, valuesFiles []string) ([]apply.PlanInput, error) {
+func buildPlanInputs(cfg *config.Config, configPath string, configPaths []string, releaseConfigPaths []string, valuesFiles []string, secretsFile string) ([]apply.PlanInput, error) {
 	var inputs []apply.PlanInput
 	configInputs, err := apply.FileInputs("project", configPaths)
 	if err != nil {
@@ -22,5 +23,10 @@ func buildPlanInputs(configPath string, configPaths []string, releaseConfigPaths
 		return nil, err
 	}
 	inputs = append(inputs, valuesInputs...)
+	secretInputs, err := apply.FileInputs("secrets", []string{cmdutil.InferSecretsFile(cfg, configPath, secretsFile)})
+	if err != nil {
+		return nil, err
+	}
+	inputs = append(inputs, secretInputs...)
 	return inputs, nil
 }

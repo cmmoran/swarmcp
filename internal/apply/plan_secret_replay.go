@@ -9,6 +9,7 @@ import (
 
 	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/secrets"
+	"github.com/cmmoran/swarmcp/internal/swarm"
 )
 
 const (
@@ -26,6 +27,7 @@ func OmitReplayableSecretPayloads(plan *Plan, sources []PlanSecretSource) {
 			continue
 		}
 		secret.Data = nil
+		secret.HasData = false
 	}
 }
 
@@ -34,7 +36,7 @@ func SetPlanSecretMode(planFile *PlanFile) {
 	hasReference := false
 	sourceByName := planSecretSourcesByName(planFile.SecretSources)
 	for _, secret := range planFile.Plan.CreateSecrets {
-		if len(secret.Data) > 0 {
+		if secretHasPayload(secret) {
 			hasPayload = true
 			continue
 		}
@@ -56,10 +58,7 @@ func ValidatePlanFile(planFile PlanFile) error {
 	if planFile.APIVersion != PlanFileAPIVersion {
 		return fmt.Errorf("unsupported plan api_version %q", planFile.APIVersion)
 	}
-	mode := strings.TrimSpace(planFile.Secrets.Mode)
-	if mode == "" {
-		mode = PlanSecretModePayload
-	}
+	mode := NormalizedPlanSecretMode(planFile)
 	switch mode {
 	case PlanSecretModePayload, PlanSecretModeReference, PlanSecretModeMixed:
 	default:
@@ -91,7 +90,7 @@ func ResolvePlanSecretPayloads(ctx context.Context, planFile *PlanFile) error {
 	sourceByName := planSecretSourcesByName(planFile.SecretSources)
 	for i := range planFile.Plan.CreateSecrets {
 		secret := &planFile.Plan.CreateSecrets[i]
-		if len(secret.Data) > 0 {
+		if secretHasPayload(*secret) {
 			continue
 		}
 		source, ok := sourceByName[secret.Name]
@@ -119,14 +118,23 @@ func ResolvePlanSecretPayloads(ctx context.Context, planFile *PlanFile) error {
 			return fmt.Errorf("plan secret %q dependency %q hash mismatch: got %s want %s", secret.Name, dep.Name, got, dep.Hash)
 		}
 		secret.Data = []byte(resolved.Value)
+		secret.HasData = true
 	}
 	return nil
+}
+
+func NormalizedPlanSecretMode(planFile PlanFile) string {
+	mode := strings.TrimSpace(planFile.Secrets.Mode)
+	if mode == "" {
+		return PlanSecretModePayload
+	}
+	return mode
 }
 
 func planHasReferenceSecrets(planFile PlanFile) bool {
 	sourceByName := planSecretSourcesByName(planFile.SecretSources)
 	for _, secret := range planFile.Plan.CreateSecrets {
-		if len(secret.Data) > 0 {
+		if secretHasPayload(secret) {
 			continue
 		}
 		if _, ok := sourceByName[secret.Name]; ok {
@@ -139,7 +147,7 @@ func planHasReferenceSecrets(planFile PlanFile) bool {
 func validatePlanSecretSources(planFile PlanFile) error {
 	sourceByName := planSecretSourcesByName(planFile.SecretSources)
 	for _, secret := range planFile.Plan.CreateSecrets {
-		if len(secret.Data) > 0 {
+		if secretHasPayload(secret) {
 			continue
 		}
 		source, ok := sourceByName[secret.Name]
@@ -159,11 +167,15 @@ func validatePlanSecretSources(planFile PlanFile) error {
 
 func PlanHasSecretPayloads(plan Plan) bool {
 	for _, secret := range plan.CreateSecrets {
-		if len(secret.Data) > 0 {
+		if secretHasPayload(secret) {
 			return true
 		}
 	}
 	return false
+}
+
+func secretHasPayload(secret swarm.SecretSpec) bool {
+	return secret.HasData || len(secret.Data) > 0
 }
 
 func planSecretSourcesByName(sources []PlanSecretSource) map[string]PlanSecretSource {

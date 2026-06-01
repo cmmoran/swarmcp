@@ -4,12 +4,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cmmoran/swarmcp/internal/config"
 )
 
 func TestBuildPlanInputsIncludesInferredValues(t *testing.T) {
 	dir := t.TempDir()
 	project := filepath.Join(dir, "project.yaml")
 	release := filepath.Join(dir, "release.yaml")
+	secrets := filepath.Join(dir, "secrets.yaml")
 	valuesDir := filepath.Join(dir, "values")
 	values := filepath.Join(valuesDir, "values.yaml")
 	if err := os.MkdirAll(valuesDir, 0o755); err != nil {
@@ -18,6 +21,7 @@ func TestBuildPlanInputsIncludesInferredValues(t *testing.T) {
 	for path, content := range map[string]string{
 		project: "project: {}\n",
 		release: "stacks: {}\n",
+		secrets: "token: value\n",
 		values:  "global: {}\n",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -25,7 +29,7 @@ func TestBuildPlanInputsIncludesInferredValues(t *testing.T) {
 		}
 	}
 
-	inputs, err := buildPlanInputs(project, []string{project}, []string{release}, nil)
+	inputs, err := buildPlanInputs(&config.Config{}, project, []string{project}, []string{release}, nil, "")
 	if err != nil {
 		t.Fatalf("buildPlanInputs: %v", err)
 	}
@@ -36,6 +40,7 @@ func TestBuildPlanInputsIncludesInferredValues(t *testing.T) {
 	for _, want := range []string{
 		"project:" + project,
 		"release:" + release,
+		"secrets:" + secrets,
 		"values:" + values,
 	} {
 		if !seen[want] {

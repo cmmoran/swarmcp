@@ -13,8 +13,9 @@ import (
 func TestOmitReplayableSecretPayloadsStripsDirectSecretValue(t *testing.T) {
 	plan := Plan{
 		CreateSecrets: []swarm.SecretSpec{{
-			Name: "api_token_abcd",
-			Data: []byte("secret"),
+			Name:    "api_token_abcd",
+			Data:    []byte("secret"),
+			HasData: true,
 		}},
 	}
 	sources := []PlanSecretSource{{
@@ -33,6 +34,9 @@ func TestOmitReplayableSecretPayloadsStripsDirectSecretValue(t *testing.T) {
 	OmitReplayableSecretPayloads(&plan, sources)
 	if plan.CreateSecrets[0].Data != nil {
 		t.Fatalf("expected replayable secret payload to be omitted")
+	}
+	if plan.CreateSecrets[0].HasData {
+		t.Fatalf("expected replayable secret payload marker to be cleared")
 	}
 }
 
@@ -87,6 +91,9 @@ func TestResolvePlanSecretPayloadsReadsPinnedVaultVersion(t *testing.T) {
 	}
 	if got := string(planFile.Plan.CreateSecrets[0].Data); got != "secret" {
 		t.Fatalf("unexpected resolved payload: %q", got)
+	}
+	if !planFile.Plan.CreateSecrets[0].HasData {
+		t.Fatalf("expected resolved payload marker")
 	}
 	if gotQuery != "version=7" {
 		t.Fatalf("expected pinned version query, got %q", gotQuery)
@@ -167,13 +174,34 @@ func TestValidatePlanFileRejectsReferenceModeWithPayloads(t *testing.T) {
 		Secrets:    PlanSecrets{Mode: PlanSecretModeReference},
 		Plan: Plan{
 			CreateSecrets: []swarm.SecretSpec{{
-				Name: "api_token_abcd",
-				Data: []byte("secret"),
+				Name:    "api_token_abcd",
+				Data:    []byte("secret"),
+				HasData: true,
 			}},
 		},
 	}
 
 	if err := ValidatePlanFile(planFile); err == nil {
 		t.Fatalf("expected validation error")
+	}
+}
+
+func TestPayloadModeAllowsEmptySecretPayload(t *testing.T) {
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModePayload},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{
+				Name:    "empty_secret",
+				HasData: true,
+			}},
+		},
+	}
+
+	if err := ValidatePlanFile(planFile); err != nil {
+		t.Fatalf("ValidatePlanFile: %v", err)
+	}
+	if err := ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
+		t.Fatalf("ResolvePlanSecretPayloads: %v", err)
 	}
 }

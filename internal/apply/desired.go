@@ -46,9 +46,10 @@ func DesiredStateFromSummary(cfg *config.Config, summary render.Summary, partiti
 			})
 		case "secret":
 			desired.Secrets = append(desired.Secrets, swarm.SecretSpec{
-				Name:   physical,
-				Labels: labels,
-				Data:   []byte(def.Content),
+				Name:    physical,
+				Labels:  labels,
+				Data:    []byte(def.Content),
+				HasData: true,
 			})
 		}
 	}

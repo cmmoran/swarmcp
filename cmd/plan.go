@@ -200,7 +200,7 @@ var planCmd = &cobra.Command{
 				)
 				planFile.SecretSources = secretSources
 				apply.SetPlanSecretMode(&planFile)
-				inputs, err := buildPlanInputs(targets.configPath, targets.configPaths, targets.releaseConfigPaths, opts.ValuesFiles)
+				inputs, err := buildPlanInputs(cfg, targets.configPath, targets.configPaths, targets.releaseConfigPaths, opts.ValuesFiles, opts.SecretsFile)
 				if err != nil {
 					done(err)
 					return err
