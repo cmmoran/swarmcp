@@ -29,6 +29,9 @@ var planCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if planOutPath != "" && len(targets.deployments) > 1 {
+			return fmt.Errorf("plan --out requires a single deployment target; use --deployment once or generate one plan per deployment")
+		}
 		progress := newPlanProgressReporter(cmd.ErrOrStderr(), planProgressEnabled)
 		out := cmd.OutOrStdout()
 

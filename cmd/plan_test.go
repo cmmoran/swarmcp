@@ -33,6 +33,25 @@ func TestSplitRenderedDefItem(t *testing.T) {
 	}
 }
 
+func TestPlanOutRejectsMultipleDeployments(t *testing.T) {
+	oldOut := planOutPath
+	oldDeployments := opts.Deployments
+	oldConfigPaths := opts.ConfigPaths
+	defer func() {
+		planOutPath = oldOut
+		opts.Deployments = oldDeployments
+		opts.ConfigPaths = oldConfigPaths
+	}()
+	planOutPath = "plan.yaml"
+	opts.Deployments = []string{"dev", "prod"}
+	opts.ConfigPaths = []string{"project.yaml"}
+
+	err := planCmd.RunE(planCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "plan --out requires a single deployment target") {
+		t.Fatalf("expected single deployment error, got %v", err)
+	}
+}
+
 func TestSplitMountItem(t *testing.T) {
 	scope, item := splitMountItem(`config "dynamic.yml" -> /etc/traefik/dynamic.yml (stack "core" service "ingress") (inferred)`)
 	if scope != `stack "core" service "ingress"` {
