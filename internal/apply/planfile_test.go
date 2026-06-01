@@ -40,6 +40,7 @@ func TestPlanFileRoundTrip(t *testing.T) {
 			Version:  &version,
 		}},
 	}}
+	want.Inputs = []PlanInput{{Kind: "project", Path: "project.yaml", SHA256: "abc123"}}
 
 	if err := WritePlanFile(path, want); err != nil {
 		t.Fatalf("WritePlanFile: %v", err)
@@ -65,5 +66,8 @@ func TestPlanFileRoundTrip(t *testing.T) {
 	}
 	if len(got.SecretSources) != 1 || got.SecretSources[0].Dependencies[0].Version == nil || *got.SecretSources[0].Dependencies[0].Version != 17 {
 		t.Fatalf("unexpected secret sources: %#v", got.SecretSources)
+	}
+	if len(got.Inputs) != 1 || got.Inputs[0].Kind != "project" || got.Inputs[0].SHA256 != "abc123" {
+		t.Fatalf("unexpected inputs: %#v", got.Inputs)
 	}
 }

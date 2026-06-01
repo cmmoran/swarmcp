@@ -21,12 +21,19 @@ type PlanFile struct {
 	Context       string             `yaml:"context,omitempty"`
 	PruneServices bool               `yaml:"prune_services,omitempty"`
 	Secrets       PlanSecrets        `yaml:"secrets"`
+	Inputs        []PlanInput        `yaml:"inputs,omitempty"`
 	SecretSources []PlanSecretSource `yaml:"secret_sources,omitempty"`
 	Plan          Plan               `yaml:"plan"`
 }
 
 type PlanSecrets struct {
 	Mode string `yaml:"mode"`
+}
+
+type PlanInput struct {
+	Kind   string `yaml:"kind"`
+	Path   string `yaml:"path"`
+	SHA256 string `yaml:"sha256"`
 }
 
 type PlanSecretSource struct {

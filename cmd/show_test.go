@@ -19,6 +19,7 @@ func TestPrintPlanFileSummary(t *testing.T) {
 		DeleteSecrets:  []swarm.Secret{{Name: "old-sec"}},
 	})
 	planFile.Secrets.Mode = apply.PlanSecretModeReference
+	planFile.Inputs = []apply.PlanInput{{Kind: "project", Path: "project.yaml", SHA256: "abc123"}}
 	planFile.SecretSources = []apply.PlanSecretSource{{
 		SecretName: "sec",
 		Dependencies: []apply.PlanSecretDependency{{
@@ -34,6 +35,7 @@ func TestPrintPlanFileSummary(t *testing.T) {
 		"project: demo",
 		"deployment: prod",
 		"secret mode: reference",
+		"inputs: 1",
 		"networks to create: 1",
 		"stacks:",
 		"secret sources:",

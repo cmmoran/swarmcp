@@ -56,6 +56,7 @@ func printPlanFileSummary(out interface {
 		_, _ = fmt.Fprintf(out, "context: %s\n", planFile.Context)
 	}
 	_, _ = fmt.Fprintf(out, "secret mode: %s\n", planFile.Secrets.Mode)
+	_, _ = fmt.Fprintf(out, "inputs: %d\n", len(planFile.Inputs))
 	_, _ = fmt.Fprintf(out, "networks to create: %d\nconfigs to create: %d\nsecrets to create: %d\nstacks to deploy: %d\nconfigs to delete: %d\nsecrets to delete: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", planSummary.NetworksCreated, planSummary.ConfigsCreated, planSummary.SecretsCreated, planSummary.StacksDeployed, planSummary.ConfigsRemoved, planSummary.SecretsRemoved, planSummary.ConfigsSkipped, planSummary.SecretsSkipped)
 	if len(stackNames) > 0 {
 		_, _ = fmt.Fprintln(out, "stacks:")
