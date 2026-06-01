@@ -23,6 +23,22 @@ func TestPlanFileRoundTrip(t *testing.T) {
 			ServiceCreates: 1,
 		}},
 	})
+	version := 17
+	want.SecretSources = []PlanSecretSource{{
+		SecretName:  "app_secret_abcd1234",
+		LogicalName: "app_secret",
+		Scope:       PlanScope{Project: "demo", Deployment: "prod", Stack: "core", Partition: "blue"},
+		Dependencies: []PlanSecretDependency{{
+			Name:     "db_password",
+			Scope:    PlanScope{Project: "demo", Deployment: "prod", Stack: "core", Partition: "blue"},
+			Hash:     "hash",
+			Provider: "vault",
+			Mount:    "kv",
+			Path:     "demo/prod/core",
+			Key:      "db_password",
+			Version:  &version,
+		}},
+	}}
 
 	if err := WritePlanFile(path, want); err != nil {
 		t.Fatalf("WritePlanFile: %v", err)
@@ -42,5 +58,8 @@ func TestPlanFileRoundTrip(t *testing.T) {
 	}
 	if len(got.Plan.StackDeploys) != 1 || string(got.Plan.StackDeploys[0].Compose) != "services: {}\n" {
 		t.Fatalf("unexpected stack deploys: %#v", got.Plan.StackDeploys)
+	}
+	if len(got.SecretSources) != 1 || got.SecretSources[0].Dependencies[0].Version == nil || *got.SecretSources[0].Dependencies[0].Version != 17 {
+		t.Fatalf("unexpected secret sources: %#v", got.SecretSources)
 	}
 }

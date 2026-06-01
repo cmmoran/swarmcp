@@ -47,11 +47,19 @@ type Summary struct {
 }
 
 type RenderedDef struct {
-	Kind    string
-	Scope   string
-	Name    string
-	Content string
-	ScopeID templates.Scope
+	Kind               string
+	Scope              string
+	Name               string
+	Content            string
+	ScopeID            templates.Scope
+	SecretDependencies []SecretDependency
+}
+
+type SecretDependency struct {
+	Name     string
+	Scope    templates.Scope
+	Hash     string
+	Metadata secrets.SecretMetadata
 }
 
 type RuntimeRef struct {
@@ -169,14 +177,7 @@ func configFilterPartitions(candidates []string, allowed []string) []string {
 	return out
 }
 
-func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope string, scopeID templates.Scope, configs map[string]config.ConfigDef, secrets map[string]config.SecretDef, data TemplateData, summary *Summary, infer bool) error {
-	secretValue := func(scope templates.Scope, name string) (string, error) {
-		if resolver == nil {
-			return "", fmt.Errorf("secret_value is not available (no secrets resolver)")
-		}
-		return resolver.Value(scope, name)
-	}
-
+func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope string, scopeID templates.Scope, configs map[string]config.ConfigDef, secretDefs map[string]config.SecretDef, data TemplateData, summary *Summary, infer bool) error {
 	inferredConfigs := map[string]struct{}{}
 	inferredSecrets := map[string]struct{}{}
 	trace := func(fromKind string, fromName string, fromScope templates.Scope) func(templates.TraceCall) {
@@ -222,6 +223,8 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 			Partition:  data.Partition,
 			Service:    data.Service,
 		}
+		var secretDeps []SecretDependency
+		secretValue := secretValueCollector(resolver, &secretDeps)
 		iresolver := templates.NewScopeResolverWithTrace(cfg, defScope, false, infer, data, secretValue, values, trace("config", name, defScope))
 		engine := templates.New(iresolver)
 		rendered, err := templates.ResolveSource(def.Source, scopeID, data, engine, values, cfg.BaseDir, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
@@ -231,15 +234,16 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 		summary.Configs++
 		summary.ConfigsRendered = append(summary.ConfigsRendered, fmt.Sprintf("%s %q", scope, name))
 		summary.Defs = append(summary.Defs, RenderedDef{
-			Kind:    "config",
-			Scope:   scope,
-			Name:    name,
-			Content: rendered,
-			ScopeID: scopeID,
+			Kind:               "config",
+			Scope:              scope,
+			Name:               name,
+			Content:            rendered,
+			ScopeID:            scopeID,
+			SecretDependencies: secretDeps,
 		})
 	}
 
-	for name, def := range secrets {
+	for name, def := range secretDefs {
 		if def.Source == "" {
 			continue
 		}
@@ -250,6 +254,8 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 			Partition:  data.Partition,
 			Service:    data.Service,
 		}
+		var secretDeps []SecretDependency
+		secretValue := secretValueCollector(resolver, &secretDeps)
 		iresolver := templates.NewScopeResolverWithTrace(cfg, defScope, true, infer, data, secretValue, values, trace("secret", name, defScope))
 		engine := templates.New(iresolver)
 		rendered, err := templates.ResolveSource(def.Source, scopeID, data, engine, values, cfg.BaseDir, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
@@ -259,11 +265,12 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 		summary.Secrets++
 		summary.SecretsRendered = append(summary.SecretsRendered, fmt.Sprintf("%s %q", scope, name))
 		summary.Defs = append(summary.Defs, RenderedDef{
-			Kind:    "secret",
-			Scope:   scope,
-			Name:    name,
-			Content: rendered,
-			ScopeID: scopeID,
+			Kind:               "secret",
+			Scope:              scope,
+			Name:               name,
+			Content:            rendered,
+			ScopeID:            scopeID,
+			SecretDependencies: secretDeps,
 		})
 	}
 
@@ -291,7 +298,7 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 			if name == "" {
 				continue
 			}
-			if _, ok := secrets[name]; ok {
+			if _, ok := secretDefs[name]; ok {
 				continue
 			}
 			secretNames = append(secretNames, name)
@@ -483,12 +490,8 @@ func renderInferredDef(cfg *config.Config, resolver secrets.Resolver, values any
 	if source == "" {
 		return nil
 	}
-	secretValue := func(scope templates.Scope, name string) (string, error) {
-		if resolver == nil {
-			return "", fmt.Errorf("secret_value is not available (no secrets resolver)")
-		}
-		return resolver.Value(scope, name)
-	}
+	var secretDeps []SecretDependency
+	secretValue := secretValueCollector(resolver, &secretDeps)
 	trace := func(call templates.TraceCall) {
 		if summary.RuntimeGraph == nil {
 			summary.RuntimeGraph = templates.NewGraph()
@@ -525,13 +528,65 @@ func renderInferredDef(cfg *config.Config, resolver secrets.Resolver, values any
 		summary.SecretsRendered = append(summary.SecretsRendered, fmt.Sprintf("%s %q", scopeLabel, name))
 	}
 	summary.Defs = append(summary.Defs, RenderedDef{
-		Kind:    kind,
-		Scope:   scopeLabel,
-		Name:    name,
-		Content: rendered,
-		ScopeID: scopeID,
+		Kind:               kind,
+		Scope:              scopeLabel,
+		Name:               name,
+		Content:            rendered,
+		ScopeID:            scopeID,
+		SecretDependencies: secretDeps,
 	})
 	return nil
+}
+
+func secretValueCollector(resolver secrets.Resolver, deps *[]SecretDependency) func(templates.Scope, string) (string, error) {
+	seen := map[string]struct{}{}
+	return func(scope templates.Scope, name string) (string, error) {
+		if resolver == nil {
+			return "", fmt.Errorf("secret_value is not available (no secrets resolver)")
+		}
+		if metadataResolver, ok := resolver.(secrets.MetadataResolver); ok {
+			resolved, err := metadataResolver.ValueWithMetadata(scope, name)
+			if err != nil {
+				return "", err
+			}
+			appendSecretDependency(deps, seen, scope, name, resolved.Value, resolved.Metadata)
+			return resolved.Value, nil
+		}
+		value, err := resolver.Value(scope, name)
+		if err != nil {
+			return "", err
+		}
+		appendSecretDependency(deps, seen, scope, name, value, secrets.SecretMetadata{})
+		return value, nil
+	}
+}
+
+func appendSecretDependency(deps *[]SecretDependency, seen map[string]struct{}, scope templates.Scope, name string, value string, metadata secrets.SecretMetadata) {
+	hash := contentHash(value)
+	key := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", secretDependencyScopeKey(scope), name, hash, metadata.Provider, metadata.Mount, metadata.Path, metadata.Key)
+	if metadata.Version != nil {
+		key += fmt.Sprintf("|%d", *metadata.Version)
+	}
+	if _, ok := seen[key]; ok {
+		return
+	}
+	seen[key] = struct{}{}
+	*deps = append(*deps, SecretDependency{
+		Name:     name,
+		Scope:    scope,
+		Hash:     hash,
+		Metadata: metadata,
+	})
+}
+
+func secretDependencyScopeKey(scope templates.Scope) string {
+	return strings.Join([]string{
+		scope.Project,
+		scope.Deployment,
+		scope.Stack,
+		scope.Partition,
+		scope.Service,
+	}, "/")
 }
 
 func inferServiceRefs(cfg *config.Config, resolver secrets.Resolver, values any, scope templates.Scope, serviceName string, service config.Service, summary *Summary) (config.Service, error) {
@@ -742,13 +797,17 @@ func scopeLabel(scope templates.Scope) string {
 }
 
 func PhysicalName(logical, content string) (string, string) {
-	sum := sha256.Sum256([]byte(content))
-	fullHash := hex.EncodeToString(sum[:])
+	fullHash := contentHash(content)
 	name := logical + "_" + fullHash[:12]
 	if len(name) > 63 {
 		name = name[:63]
 	}
 	return name, fullHash
+}
+
+func contentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
 }
 
 func Labels(scope templates.Scope, logical, hash string) map[string]string {

@@ -191,6 +191,7 @@ var planCmd = &cobra.Command{
 					pruneServices,
 					plan,
 				)
+				planFile.SecretSources = apply.SecretSourcesForPlan(desired, plan)
 				if err := apply.WritePlanFile(planOutPath, planFile); err != nil {
 					done(err)
 					return err
