@@ -80,49 +80,189 @@ Design consequence:
 - Stack is a logical selection axis only.
 
 ## Recommended Project Model
-SwarmCP should be documented around three artifacts with distinct intent:
+SwarmCP should be documented around four artifacts with distinct intent:
 
-- `project.yaml`: desired topology, imports, and structural defaults
-- `values/*.yaml`: template inputs
-- `release.yaml`: deploy-time pins only
+- `project.yaml`: desired topology, imports, structural defaults, and project/team policy
+- `values/*.yaml`: authored render input artifacts
+- `release.yaml`: a concrete release manifest that identifies the deployable render contract
+- runtime flags: execution scope for commands such as `plan`, `diff`, `status`, and `apply`
 
 Recommended workflow:
-1. Author and review `project.yaml` infrequently when topology changes.
-2. Author and review `values/*.yaml` when environment-specific template inputs change.
-3. For each deployment, author or generate a small `release.yaml` that pins the version or deploy intent for that run, and pass it with `--release-config`.
+1. Author and review `project.yaml` infrequently when topology or project policy changes.
+2. Author and review `values/*.yaml` when render input artifacts change.
+3. Keep the default release version policy in `project.yaml` under `project.release_policies`.
+4. For each deployable release, generate or author a small `release.yaml` that pins artifact identities and optional deploy intent, then pass it with `--release-config`.
 
-`release.yaml` is intentionally narrow. It may change version selection and deploy intent, but it must not redefine topology. SwarmCP enforces this contract for files passed via `--release-config`.
+The mental model is:
 
-Allowed release fields:
-- `stacks.<name>.source.ref`
-- `stacks.<name>.services.<svc>.image`
-- `stacks.<name>.services.<svc>.replicas`
-- `stacks.<name>.services.<svc>.env.<key>`
-- `stacks.<name>.services.<svc>.labels.<key>`
-- `stacks.<name>.services.<svc>.update_config.{parallelism,delay,failure_action,monitor,max_failure_ratio,order}`
-- `stacks.<name>.services.<svc>.rollback_config.{parallelism,delay,failure_action,monitor,max_failure_ratio,order}`
+- `project.yaml` answers "what can exist?": nodes, deployments, partitions, stack existence, service existence, import URL/path, networks, volumes, configs, secrets, inclusion rules, and default release policy.
+- Imported stack or service files own reusable service structure.
+- `values/*.yaml` answers "what data feeds rendering?"; values are authored once and must not be duplicated inline in a release manifest.
+- `release.yaml` answers "which exact artifact versions are selected for this deploy?"; it identifies source refs, image digests/tags, values artifact revisions, resolved release version, and optional rollout intent.
+- Runtime flags answer "where and how broadly should this release be evaluated or applied?"
 
-Release overlay validation rules:
-- The root of a release overlay may contain only `stacks`.
-- A release overlay may reference only stacks that exist in the base project config.
-- A release overlay may reference only services that exist in the resolved stack after source refs and imports have been applied.
-- `stacks.<name>.source` may only set `ref`; it may not change `url`, `path`, or `overrides_path`.
-- A release overlay may not add new stacks or services.
+A release version identifies the full deployable render contract, not only the app code artifact. A release version may advance for code-only, values-only, or mixed changes.
 
-Disallowed in release overlays:
+### Release Manifests
+
+A release manifest is an identity manifest, not a general-purpose YAML patch. It should be readable as a deployment decision and should stay small enough for review.
+
+Release manifest root fields:
+- `release.version`: required resolved concrete release version string.
+- `release.policy`: optional name of the release policy used to generate `release.version`.
+- `release.version_parameters`: optional resolved parameter values used to generate or explain `release.version`.
+- `target`: optional intended deployment/partition/stack scope for review and command defaults. Runtime selectors may still narrow command execution.
+- `artifacts.stacks.<name>.source_ref`: selected stack or service import ref.
+- `artifacts.images.<stack>.<service>`: selected service image tag or digest.
+- `artifacts.values.<name>.path`: values artifact path.
+- `artifacts.values.<name>.ref`: optional values artifact revision, tag, digest, or other immutable identifier.
+- `deploy_intent`: optional constrained service rollout intent, equivalent to the existing release overlay deploy-intent allowlist.
+
+Example release manifest:
+```yaml
+release:
+  version: prod-participant-2026.05.29.004
+  policy: default
+  version_parameters:
+    deployment: prod
+    stack: participant
+    calver: 2026.05.29
+    sequence: 4
+target:
+  deployment: prod
+  partitions: [prod]
+  stacks: [participant]
+artifacts:
+  stacks:
+    participant:
+      source_ref: v0.74.1
+  images:
+    participant:
+      participant: registry.example.com/app@sha256:7f3b...
+  values:
+    platform:
+      path: values/prod.yaml
+      ref: values-prod-2026.05.29-2
+deploy_intent:
+  stacks:
+    participant:
+      services:
+        participant:
+          replicas: 3
+```
+
+Release manifest validation rules:
+- The release manifest may only select artifact identities and constrained deploy intent.
+- A release manifest may reference only stacks that exist in the base project config.
+- A release manifest may reference only services that exist in the resolved stack after source refs and imports have been applied.
+- `artifacts.stacks.<name>.source_ref` may only select the ref for an existing `stacks.<name>.source`; it may not change `url`, `path`, or `overrides_path`.
+- A release manifest may not add new stacks or services.
+- A release manifest may not redefine concrete values. It may only identify the selected values artifact path and revision.
+- The resolved `release.version` is immutable release identity. If any selected source ref, image, values artifact revision, or deploy intent changes, a new release version must be produced.
+
+Disallowed in release manifests:
 - `project.nodes`
 - `project.partitions`
 - `project.deployment_targets`
 - adding or removing stacks
 - adding or removing services
 - `stacks.<name>.services.<svc>.included_in`
-- broad structural network, volume, or import rewrites
+- broad structural network, volume, config, secret, or import rewrites
+- concrete values data under `artifacts.values` or any other release field
 
-If a release overlay uses immutable refs and image digests, it already serves as a practical lock artifact. SwarmCP does not need a separate lockfile product to achieve basic reproducibility.
+If a release manifest uses immutable refs, image digests, and immutable values artifact revisions, it serves as a practical lock artifact. SwarmCP does not need a separate lockfile product to achieve basic reproducibility.
+
+### Release Version Policies
+
+Release version policy is project/team governance and should live in `project.yaml` under `project.release_policies`. A concrete release manifest stores the selected policy name, the resolved `release.version`, and the resolved `version_parameters`; it does not store the policy definition unless it intentionally snapshots an external policy for audit.
+
+The authoring experience should prefer presets over raw parameter definitions. Custom templates and parameter definitions are the advanced escape hatch.
+
+Example project policy:
+```yaml
+project:
+  release_policies:
+    default:
+      version:
+        preset: deployment_stack_calver_sequence
+        parameters:
+          sequence:
+            scope: [deployment, stack, calver]
+            width: 3
+```
+
+Equivalent expanded policy:
+```yaml
+project:
+  release_policies:
+    default:
+      version:
+        scheme: template
+        template: "{{ .deployment }}-{{ .stack }}-{{ .calver }}.{{ .sequence }}"
+        parameters:
+          deployment:
+            source: target.deployment
+          stack:
+            source: target.stack
+          calver:
+            source: clock.date
+            type: calver
+            format: YYYY.MM.DD
+          sequence:
+            type: counter
+            scope: [deployment, stack, calver]
+            width: 3
+```
+
+Built-in version presets should include:
+- `semver`
+- `semver_prerelease`
+- `calver`
+- `calver_sequence`
+- `branch_calver_sequence`
+- `deployment_stack_calver_sequence`
+- `semver_calver_build`
+
+Parameter behavior:
+- Most parameters are supplied or derived; they do not auto-increment.
+- Only parameters with `type: counter` auto-increment.
+- Counter parameters must declare a `scope`. Valid scope elements include `global`, `branch`, `deployment`, `partition`, `stack`, `calver`, `semver`, and `artifact_tuple`.
+- Counter allocation must be deterministic within its declared scope. For example, a `scope: [deployment, stack, calver]` counter restarts for each deployment, stack, and calendar version.
+- The resolved `release.version` must be persisted in the release manifest. Commands must not silently recompute a different version for an existing manifest.
+
+Supported parameter sources:
+- `input.<name>`: provided by CLI, CI, or user prompt.
+- `git.branch`: current branch name.
+- `git.ref`: current checked-out ref.
+- `git.sha`: current commit SHA.
+- `clock.date`: current date using the policy format.
+- `target.deployment`, `target.partition`, `target.stack`: selected release target fields.
+- `artifact.<kind>...`: selected artifact identity, such as a stack source ref, image digest, or values ref.
+- `release.sequence`: allocated sequence/counter value.
+
+Supported parameter types:
+- `string`
+- `git_ref`
+- `semver`
+- `semver_prerelease`
+- `calver`
+- `integer`
+- `counter`
+
+Supported parameter transforms:
+- `normalize: slug` for branch/ref-like values.
+- `format` for date/calver and optional string formatting.
+- `prefix` or template helpers for optional prerelease/build fragments.
+- `omit_if_empty: true` for optional parameters.
+- `width` for zero-padded integer and counter values.
+
+Schema and discovery requirements:
+- Release policy YAML should be covered by JSON Schema so YAML language servers can provide completion, enum values, and descriptions.
+- SwarmCP should expose CLI discovery for presets and expanded policy shape, such as `swarmcp release version presets`, `swarmcp release version explain <preset>`, `swarmcp release version init --preset <name>`, and `swarmcp release version preview`.
 
 ### Release Overlay Resolution Model
 
-Release overlays are constrained deployment intent, not general YAML patches. This distinction is important because SwarmCP supports imported stacks and services. Imported stacks make the configuration more powerful, but they also mean some service definitions are not visible in the project wrapper until import resolution has happened.
+Release overlays are constrained deployment intent, not general YAML patches. The preferred user-facing artifact is the release manifest above. The existing `--release-config` application path may normalize a release manifest into the current release overlay phases. This distinction is important because SwarmCP supports imported stacks and services. Imported stacks make the configuration more powerful, but they also mean some service definitions are not visible in the project wrapper until import resolution has happened.
 
 SwarmCP therefore applies release overlays in two conceptual phases:
 
@@ -151,16 +291,9 @@ SwarmCP therefore applies release overlays in two conceptual phases:
    - The same overlay is invalid if the imported stack does not contain `services.participant`.
    - Service pins are never allowed to create new services. They can only modify the small allowlisted deploy-intent fields of a service that exists after import expansion.
 
-This two-phase model is deliberate. It lets release manifests express the deployable tuple of "stack source ref plus service image digest" while preserving the safety property that release manifests cannot redefine topology.
+This two-phase model is deliberate. It lets release manifests express the deployable tuple of "stack source ref plus service image digest plus values artifact revision" while preserving the safety property that release manifests cannot redefine topology or duplicate values.
 
-The mental model is:
-
-- `project.yaml` owns topology: nodes, deployments, partitions, stack existence, service existence, import URL/path, networks, volumes, configs, secrets, and inclusion rules.
-- Imported stack or service files own reusable service structure.
-- `values/*.yaml` owns environment-specific template input.
-- `--release-config` owns release selection and deploy intent: source refs, image digests, replica counts, and a small set of operational service knobs.
-
-When in doubt, ask whether a field changes *what exists* or only *which version/instance of an existing thing should run*. If it changes what exists, it belongs in project or imported stack configuration. If it chooses the version or runtime intent for an already-existing service, it may belong in a release overlay if the field is allowlisted.
+When in doubt, ask whether a field changes *what exists*, *what data was authored*, or *which version of an existing artifact should run*. If it changes what exists, it belongs in project or imported stack configuration. If it authors concrete render data, it belongs in values. If it chooses the version or runtime intent for an already-existing artifact, it may belong in a release manifest.
 
 ## Configuration Sources
 - **Primary source**: project repository (YAML + templates).
@@ -185,9 +318,9 @@ Behavior:
 Local overrides continue to work by redefining `sources` at a narrower scope.
 
 ## Config File Layering
-`--config` is repeatable. Repeatable `--config` is the implementation mechanism for composing the recommended project model, especially `project.yaml` plus a small deploy-time `release.yaml`. It is not the primary mental model and it is not intended as a general patch system.
+`--config` is repeatable. Repeatable `--config` is the implementation mechanism for composing structural project configuration. It is not the primary mental model for releases and it is not intended as a general patch system.
 
-`--release-config` is also repeatable. It is the recommended way to apply deploy-time release overlays, because SwarmCP validates those files against the release-overlay allowlist above.
+`--release-config` is also repeatable. It is the recommended way to apply concrete release manifests or legacy deploy-time release overlays, because SwarmCP validates those files against the release-manifest and release-overlay constraints above.
 
 Canonical example:
 ```bash
@@ -204,7 +337,35 @@ swarmcp apply \
   --release-config releases/prod-2026-03-10.yaml
 ```
 
-Example release overlay:
+Example release manifest:
+```yaml
+release:
+  version: prod-core-2026.03.10.001
+  policy: default
+  version_parameters:
+    deployment: prod
+    stack: core
+    calver: 2026.03.10
+    sequence: 1
+target:
+  deployment: prod
+  stacks: [core]
+artifacts:
+  stacks:
+    core:
+      source_ref: 2026.03.10-1842
+  images:
+    core:
+      api: ghcr.io/acme/api@sha256:7f3b...
+deploy_intent:
+  stacks:
+    core:
+      services:
+        api:
+          replicas: 3
+```
+
+Legacy release overlay form:
 ```yaml
 stacks:
   core:
@@ -235,31 +396,42 @@ Field policy:
 - Singular objects such as `source`, `restart_policy`, `update_config`, `rollback_config`, `healthcheck`, and `secrets_engine` replace as whole objects and are never field-merged.
 - Final merged configs must still satisfy the same validation rules as single-file configs.
 
-Repeated `--config` remains available for constrained config layering in general. The recommended project model for deploy-time pins is `project.yaml` plus `values/*.yaml` plus a deploy-specific `release.yaml` passed via `--release-config`.
+Repeated `--config` remains available for constrained config layering in general. The recommended project model for deploy-time pins is `project.yaml` plus authored `values/*.yaml` plus a deploy-specific release manifest passed via `--release-config`.
 
 Release overlay intent rules:
-- Release overlays may change version-selection fields and a small set of deploy-intent fields.
-- Release overlays must not change project topology.
-- Release overlays should stay small enough to review as deployment intent rather than as structural authoring.
-- When stronger reproducibility is required, release overlays should use immutable refs and image digests.
-- Release overlays are validated only when passed via `--release-config`; plain repeated `--config` layering retains the broader config-layering rules below.
-- Release overlays are not ordinary repeated config overlays. They are interpreted through the two-phase release model:
+- Release manifests and legacy release overlays may change version-selection fields and a small set of deploy-intent fields.
+- Release manifests and legacy release overlays must not change project topology.
+- Release manifests and legacy release overlays should stay small enough to review as deployment intent rather than as structural authoring.
+- When stronger reproducibility is required, release manifests should use immutable refs, image digests, and immutable values artifact revisions.
+- Release validation applies only when a file is passed via `--release-config`; plain repeated `--config` layering retains the broader config-layering rules below.
+- Release manifests and legacy release overlays are not ordinary repeated config overlays. They are interpreted through the two-phase release model:
   - `source.ref` is applied before imports so it can select the imported stack or service version.
   - service deploy-intent fields are validated and applied after imports so services inside imported stacks can be pinned safely.
 - For imported stacks, service pins are checked against the imported stack at the selected ref, not against the pre-import wrapper in `project.yaml`.
 - For non-imported stacks, service pins are checked against the services directly authored in the base project config.
 - In both cases, the service must exist before the release service pin is applied.
+- Legacy release overlays support these allowed fields:
+  - `stacks.<name>.source.ref`
+  - `stacks.<name>.services.<svc>.image`
+  - `stacks.<name>.services.<svc>.replicas`
+  - `stacks.<name>.services.<svc>.env.<key>`
+  - `stacks.<name>.services.<svc>.labels.<key>`
+  - `stacks.<name>.services.<svc>.update_config.{parallelism,delay,failure_action,monitor,max_failure_ratio,order}`
+  - `stacks.<name>.services.<svc>.rollback_config.{parallelism,delay,failure_action,monitor,max_failure_ratio,order}`
 
-Release overlay review guidance:
-- A release overlay should be readable as a deployment decision, not as a second project file.
+Release review guidance:
+- A release manifest or legacy release overlay should be readable as a deployment decision, not as a second project file.
 - A reviewer should be able to answer:
+  - which release version is being deployed,
   - which imported stack or service ref is selected,
   - which image digest or tag will run,
+  - which values artifact path and revision will feed rendering,
   - whether replicas or operational rollout knobs changed,
   - and which environment or partition will consume the release file.
-- A reviewer should not need to inspect a release overlay for new networks, volumes, configs, secrets, import paths, or inclusion rules; those fields are rejected by design.
+- A reviewer should not need to inspect a release manifest for new networks, volumes, configs, secrets, import paths, concrete values, or inclusion rules; those fields are rejected by design.
 - Prefer immutable image digests (`repo@sha256:...`) over mutable tags when the release file is intended to document an exact deployable artifact.
 - Prefer immutable source refs, such as tags or commit SHAs, when the imported stack shape must remain reproducible.
+- Prefer immutable values artifact refs, such as tags, commit SHAs, or content digests, when rendered configs must remain reproducible.
 
 Per-section policy:
 - Root:
@@ -298,7 +470,7 @@ Import constraints under layering:
 - A later config file may not set stack/service import `overrides`.
 - Repeated `--config` layering does not permit new mixed local/import authoring states. The final merged stack/service must still obey the normal rule: sourced objects may only be modified through their own `overrides` in the defining file.
 - `project.partitions` and `project.deployments` are allowed in overlays but are advanced, high-risk replace-only fields.
-- The recommended `release.yaml` model is narrower than the full technical layering capability. Even where a field is technically mergeable, it should not be treated as release intent unless explicitly allowed by the release overlay rules above.
+- The recommended release manifest model is narrower than the full technical layering capability. Even where a field is technically mergeable, it should not be treated as release intent unless explicitly allowed by the release manifest or legacy release overlay rules above.
 
 Valid overlay example:
 ```yaml
@@ -1125,15 +1297,17 @@ Purpose:
 
 Resolution pipeline:
 1. Load repeated `--config` files left to right.
-2. Load repeated `--release-config` overlays and validate their allowlisted shape.
-3. Apply release `stacks.<name>.source.ref` fields to the pre-import config.
-4. Resolve stack and service imports using the selected source refs.
-5. Validate and apply release service deploy-intent fields against the post-import resolved services.
-6. Apply runtime `--deployment` selection.
-7. Apply deployment, partition, stack, and service overlays for the active scope.
-8. Print the resulting resolved config model or selected subtree.
+2. Load repeated `--release-config` files and validate each as either a release manifest or a legacy allowlisted release overlay.
+3. Normalize release manifest artifact selections into the release application model.
+4. Apply selected stack `source_ref`/`stacks.<name>.source.ref` fields to the pre-import config.
+5. Resolve stack and service imports using the selected source refs.
+6. Validate and apply release service image pins and deploy-intent fields against the post-import resolved services.
+7. Resolve or load selected values artifacts for the release scope without allowing the release manifest to redefine concrete values.
+8. Apply runtime `--deployment` selection.
+9. Apply deployment, partition, stack, and service overlays for the active scope.
+10. Print the resulting resolved config model or selected subtree.
 
-The split between steps 3 and 5 is intentional. `source.ref` must be known before import expansion, while service pins inside imported stacks cannot be safely validated until the imported stack exists in the resolved model.
+The split between steps 4 and 6 is intentional. Source refs must be known before import expansion, while service pins inside imported stacks cannot be safely validated until the imported stack exists in the resolved model.
 
 Output:
 - Default output format is YAML.
@@ -1205,7 +1379,7 @@ Purpose:
 
 Resolution pipeline:
 1. Load repeated `--config` files left to right.
-2. Apply repeated `--release-config` overlays.
+2. Apply repeated `--release-config` manifests or legacy overlays.
 3. Apply runtime `--deployment` selection.
 4. Resolve stack and service imports.
 5. Apply deployment, partition, stack, and service overlays for the active scope.
@@ -1295,6 +1469,8 @@ Error cases:
 - Omitted selectors leave multiple effective target contexts for the requested field: fail with an error that tells the user which selector to add.
 
 ## YAML Schema
+The authoring schema lives at `schemas/swarmcp-project.v1.schema.json`. It is intended for editor completion and basic shape validation. `swarmcp validate` remains the normative semantic validator.
+
 Outline:
 ```yaml
 project:
@@ -1325,6 +1501,23 @@ project:
           platform:
             os: <string>
             arch: <string>
+  release_policies:
+    <name>:
+      version:
+        # Prefer a preset for normal authoring.
+        preset: semver|semver_prerelease|calver|calver_sequence|branch_calver_sequence|deployment_stack_calver_sequence|semver_calver_build
+        # Optional expanded/custom form.
+        scheme: template
+        template: <string> # Go-template-style expression over resolved parameters
+        parameters:
+          <param>:
+            source: input.<name>|git.branch|git.ref|git.sha|clock.date|target.deployment|target.partition|target.stack|artifact.<kind>...|release.sequence
+            type: string|git_ref|semver|semver_prerelease|calver|integer|counter
+            format: <string>
+            normalize: slug
+            omit_if_empty: <bool>
+            width: <int>
+            scope: [global|branch|deployment|partition|stack|calver|semver|artifact_tuple] # required for counter
   preserve_unused_resources: <int> # default: 5
   defaults:
     networks:
@@ -1808,6 +2001,55 @@ stacks:
           url: <string>
           ref: <string>
           path: <string>
+```
+
+Release manifest outline:
+```yaml
+release:
+  version: <string> # resolved immutable release identity
+  policy: <string> # optional project.release_policies key
+  version_parameters:
+    <param>: <resolved value>
+target:
+  deployment: <string>
+  partitions: [<string>]
+  stacks: [<string>]
+artifacts:
+  stacks:
+    <stack>:
+      source_ref: <ref>
+  images:
+    <stack>:
+      <service>: <image tag or digest>
+  values:
+    <name>:
+      path: <path>
+      ref: <ref|tag|digest|revision>
+deploy_intent:
+  stacks:
+    <stack>:
+      services:
+        <service>:
+          image: <string>
+          replicas: <int>
+          env:
+            <key>: <value>
+          labels:
+            <key>: <value>
+          update_config:
+            parallelism: <int>
+            delay: <duration>
+            failure_action: pause|continue|rollback
+            monitor: <duration>
+            max_failure_ratio: <float>
+            order: stop-first|start-first
+          rollback_config:
+            parallelism: <int>
+            delay: <duration>
+            failure_action: pause|continue
+            monitor: <duration>
+            max_failure_ratio: <float>
+            order: stop-first|start-first
 ```
 
 `source` may include a YAML/JSON fragment selector like `values.yaml#/global/domain`.

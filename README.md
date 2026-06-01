@@ -60,11 +60,12 @@ task install
 
 ## Core Model
 
-SwarmCP is easiest to think about as three authoring artifacts:
+SwarmCP is easiest to think about as four artifacts:
 
-- `project.yaml`: desired topology, imports, and structural defaults.
-- `values/*.yaml`: template inputs.
-- `release.yaml`: deploy-time pins passed with `--release-config`.
+- `project.yaml`: desired topology, imports, structural defaults, and project/team policy.
+- `values/*.yaml`: authored render input artifacts.
+- `release.yaml`: concrete release manifests passed with `--release-config`.
+- runtime flags: execution scope for commands such as `plan`, `diff`, `status`, and `apply`.
 
 It also uses three runtime targeting axes:
 
@@ -75,6 +76,12 @@ It also uses three runtime targeting axes:
 Shared stacks are named `<project>_<stack>`. Partitioned stacks are named `<project>_<partition>_<stack>`.
 
 ## Configuration Basics
+
+For editor completion and basic shape validation, point your YAML language server at the project schema:
+
+```yaml
+# yaml-language-server: $schema=schemas/swarmcp-project.v1.schema.json
+```
 
 A minimal project looks like this:
 

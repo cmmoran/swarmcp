@@ -9,6 +9,7 @@
 !Taskfile.yml
 !*.tmpl
 !*.md
+!/schemas/*.json
 !LICENSE
 !/Dockerfile
 !**/Dockerfile
