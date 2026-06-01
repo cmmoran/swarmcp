@@ -156,7 +156,7 @@ Release manifest validation rules:
 - A release manifest may reference only stacks that exist in the base project config.
 - A release manifest may reference only services that exist in the resolved stack after source refs and imports have been applied.
 - `artifacts.stacks.<name>.source_ref` may only select the ref for an existing `stacks.<name>.source`; it may not change `url`, `path`, or `overrides_path`.
-- A release manifest may not add new stacks or services.
+- A release manifest may not add, remove, or modify stacks, services, or lifecycle jobs.
 - A release manifest may not redefine concrete values. It may only identify the selected values artifact path and revision.
 - The resolved `release.version` is immutable release identity. If any selected source ref, image, values artifact revision, or deploy intent changes, a new release version must be produced.
 
@@ -166,6 +166,7 @@ Disallowed in release manifests:
 - `project.deployment_targets`
 - adding or removing stacks
 - adding or removing services
+- adding, removing, or modifying service lifecycle jobs
 - `stacks.<name>.services.<svc>.included_in`
 - broad structural network, volume, config, secret, or import rewrites
 - concrete values data under `artifacts.values` or any other release field
@@ -491,7 +492,7 @@ Per-section policy:
   - Replace-only: `restart_policy`, `update_config`, `rollback_config`
 - `stacks.<name>.services.<name>`:
   - Merge: `env`, `labels`, `placement`, `sources`, `overlays`
-  - Replace-only: `source`, `image`, `command`, `args`, `workdir`, `ports`, `mode`, `replicas`, `restart_policy`, `update_config`, `rollback_config`, `healthcheck`, `depends_on`, `egress`, `networks`, `network_ephemeral`, `configs`, `secrets`, `volumes`, `included_in`
+  - Replace-only: `source`, `image`, `command`, `args`, `workdir`, `ports`, `mode`, `replicas`, `restart_policy`, `update_config`, `rollback_config`, `healthcheck`, `depends_on`, `jobs`, `egress`, `networks`, `network_ephemeral`, `configs`, `secrets`, `volumes`, `included_in`
   - Invalid in later config files: `overrides`
 
 Import constraints under layering:
@@ -963,6 +964,7 @@ Optional:
 - `ports` (`target`, `published`, `protocol`, `mode`)
 - `mode` (`replicated` or `global`) and `replicas`
 - `healthcheck`, `depends_on`, `egress`
+- `jobs` (`before_update`, `after_update`, `on_rollback` lifecycle commands)
 - `included_in` (runtime inclusion rules by deployment/partition/stack)
 - `restart_policy` (`condition`, `delay`, `max_attempts`, `window`)
 - `update_config` (`parallelism`, `delay`, `failure_action`, `monitor`, `max_failure_ratio`, `order`)
@@ -1042,6 +1044,56 @@ stacks:
         included_in:
           - deployments: [nonprod]
 ```
+
+Service lifecycle jobs:
+- `stacks.<stack>.services.<service>.jobs` defines ordered one-shot commands for that service.
+- Jobs are not steady-state Swarm services and must not be included in normal `docker stack deploy` payloads.
+- A job always runs the referencing service's rendered image. It cannot set its own image or source.
+- A job must set `command`; `args` are optional.
+- A job may override only execution parameters: `name`, `command`, `args`, `workdir`, `env`, `timeout`, and `cleanup`.
+- Job `env` is merged over the referencing service's rendered environment for that job run only.
+- Service configs, secrets, volumes, placement, networks, and environment are inherited from the referencing service's rendered intent unless a later spec explicitly adds narrow overrides.
+- `before_update`: jobs that must complete before the service is updated or created.
+- `after_update`: jobs that run after the service reaches the successful update criteria.
+- `on_rollback`: jobs that run if the service update fails and rollback handling is selected.
+- Job arrays are ordered and service-local. Cross-service, cross-stack, and cross-partition job references are out of scope.
+- If a service is excluded by `included_in`, its lifecycle jobs are also excluded for that target.
+- Jobs must complete successfully before the dependent execution step proceeds. Completion means the job task exits with code 0 unless a future job success policy states otherwise.
+- Failed `before_update` jobs fail the plan application before the steady-state service update proceeds.
+- Failed `after_update` jobs fail the plan application after the service update and may trigger rollback handling if policy selects rollback.
+- Rollback jobs are only considered after a deployment failure path reaches rollback handling.
+- Job cleanup policy is explicit with `cleanup: always`, `success`, or `never`; default is `success`.
+- Job timeout is explicit with `timeout`; default is project/tool policy and should be short enough to fail operator workflows predictably.
+- Jobs are deployment topology, not release intent, so they are allowed in normal project/config files and overlays, but they may not be added, removed, or modified in files passed with `--release-config`.
+
+Example:
+```yaml
+stacks:
+  participant:
+    services:
+      participant:
+        image: ghcr.io/acme/participant:v2
+        secrets:
+          - name: db_config
+        jobs:
+          before_update:
+            - name: migrate
+              command: ["./participant", "migrate", "up"]
+              timeout: 5m
+              cleanup: success
+          on_rollback:
+            - name: rollback-db
+              command: ["./participant", "migrate", "down"]
+              timeout: 5m
+              cleanup: always
+```
+
+Saved plan behavior for jobs:
+- `plan --out` must serialize job execution steps as part of the exact apply intent.
+- The plan must include each job's service image, command, args, workdir, env, order, phase, target scope, cleanup policy, timeout, inherited service runtime attachments, and any replay metadata needed for inherited secrets.
+- `apply <plan-file>` must execute saved job steps from the plan and must not re-render job definitions from the current workspace.
+- `swarmcp show <plan-file>` should summarize job steps and their phases without printing secret payloads.
+- A plan that contains lifecycle jobs but cannot serialize the needed job execution spec is invalid.
 
 Restart policy inheritance:
 - `project.restart_policy` provides the default.
@@ -1252,6 +1304,8 @@ Prune behavior with stack targeting:
 
 ## Service Dependencies and Update Policy
 - Dependencies are explicit via `depends_on`.
+- One-shot lifecycle work is explicit via service-local `jobs` phases.
+- `depends_on` is for steady-state service dependency and reachability only; it must not be used to imply migration completion, rollback hooks, or other one-shot execution.
 - Updates run in topological order; independent services update in parallel batches.
 - Auto-attach required networks for dependency reachability within the same partition (overrideable).
 - Egress networks are never auto-attached; services must opt in with `egress: true`.
@@ -1961,6 +2015,34 @@ stacks:
             - <constraint>
         healthcheck: { ... }
         depends_on: [<service>]
+        jobs:
+          before_update:
+            - name: <string>
+              command: [<string>]
+              args: [<string>]
+              workdir: <path>
+              env:
+                <key>: <value>
+              timeout: <duration>
+              cleanup: always|success|never
+          after_update:
+            - name: <string>
+              command: [<string>]
+              args: [<string>]
+              workdir: <path>
+              env:
+                <key>: <value>
+              timeout: <duration>
+              cleanup: always|success|never
+          on_rollback:
+            - name: <string>
+              command: [<string>]
+              args: [<string>]
+              workdir: <path>
+              env:
+                <key>: <value>
+              timeout: <duration>
+              cleanup: always|success|never
         egress: true|false
         network_ephemeral:
           internal: <bool> # default false
