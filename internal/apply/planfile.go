@@ -20,8 +20,13 @@ type PlanFile struct {
 	Stack         string             `yaml:"stack,omitempty"`
 	Context       string             `yaml:"context,omitempty"`
 	PruneServices bool               `yaml:"prune_services,omitempty"`
+	Secrets       PlanSecrets        `yaml:"secrets"`
 	SecretSources []PlanSecretSource `yaml:"secret_sources,omitempty"`
 	Plan          Plan               `yaml:"plan"`
+}
+
+type PlanSecrets struct {
+	Mode string `yaml:"mode"`
 }
 
 type PlanSecretSource struct {
@@ -63,6 +68,7 @@ func NewPlanFile(toolVersion string, project string, deployment string, partitio
 		Stack:         stack,
 		Context:       contextName,
 		PruneServices: pruneServices,
+		Secrets:       PlanSecrets{Mode: PlanSecretModePayload},
 		Plan:          plan,
 	}
 }

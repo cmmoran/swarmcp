@@ -61,6 +61,7 @@ func TestResolvePlanSecretPayloadsReadsPinnedVaultVersion(t *testing.T) {
 	t.Setenv("VAULT_TOKEN", "test-token")
 	version := 7
 	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
 		SecretSources: []PlanSecretSource{{
 			SecretName: "api_token_abcd",
 			Dependencies: []PlanSecretDependency{{
@@ -108,6 +109,7 @@ func TestResolvePlanSecretPayloadsRejectsHashMismatch(t *testing.T) {
 	defer server.Close()
 	t.Setenv("VAULT_TOKEN", "test-token")
 	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
 		SecretSources: []PlanSecretSource{{
 			SecretName: "api_token_abcd",
 			Dependencies: []PlanSecretDependency{{
@@ -127,5 +129,51 @@ func TestResolvePlanSecretPayloadsRejectsHashMismatch(t *testing.T) {
 
 	if err := ResolvePlanSecretPayloads(context.Background(), &planFile); err == nil {
 		t.Fatalf("expected hash mismatch")
+	}
+}
+
+func TestSetPlanSecretModeDetectsReferencePlans(t *testing.T) {
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		SecretSources: []PlanSecretSource{{
+			SecretName: "api_token_abcd",
+			Dependencies: []PlanSecretDependency{{
+				Name:     "api_token",
+				Hash:     secretValueHash("secret"),
+				Provider: "vault",
+				Addr:     "http://vault.test",
+				Mount:    "kv",
+				Path:     "demo/prod/core",
+				Key:      "api_token",
+			}},
+		}},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{Name: "api_token_abcd"}},
+		},
+	}
+
+	SetPlanSecretMode(&planFile)
+	if planFile.Secrets.Mode != PlanSecretModeReference {
+		t.Fatalf("unexpected secret mode: %q", planFile.Secrets.Mode)
+	}
+	if err := ValidatePlanFile(planFile); err != nil {
+		t.Fatalf("ValidatePlanFile: %v", err)
+	}
+}
+
+func TestValidatePlanFileRejectsReferenceModeWithPayloads(t *testing.T) {
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModeReference},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{
+				Name: "api_token_abcd",
+				Data: []byte("secret"),
+			}},
+		},
+	}
+
+	if err := ValidatePlanFile(planFile); err == nil {
+		t.Fatalf("expected validation error")
 	}
 }

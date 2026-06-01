@@ -188,6 +188,8 @@ var applyCmd = &cobra.Command{
 	},
 }
 
+var applyAllowContextOverride bool
+
 func runApplyPlanFile(cmd *cobra.Command, path string) error {
 	outputMode := strings.TrimSpace(opts.Output)
 	if outputMode == "" {
@@ -200,14 +202,17 @@ func runApplyPlanFile(cmd *cobra.Command, path string) error {
 	if err != nil {
 		return err
 	}
-	if planFile.APIVersion != apply.PlanFileAPIVersion {
-		return fmt.Errorf("unsupported plan api_version %q", planFile.APIVersion)
+	if err := apply.ValidatePlanFile(planFile); err != nil {
+		return err
 	}
 	if err := apply.ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
 		return err
 	}
 	contextName := planFile.Context
 	if opts.Context != "" {
+		if !applyAllowContextOverride && planFile.Context != "" && opts.Context != planFile.Context {
+			return fmt.Errorf("plan context is %q; refusing --context %q without --allow-context-override", planFile.Context, opts.Context)
+		}
 		contextName = opts.Context
 	}
 	client, err := swarmClientForContext(contextName)
@@ -252,6 +257,7 @@ func init() {
 	applyCmd.Flags().BoolVar(&opts.Serial, "serial", false, "Deploy stacks one at a time during apply")
 	applyCmd.Flags().BoolVar(&opts.NoUI, "no-ui", false, "Disable stack deployment UI and emit buffered output per stack")
 	applyCmd.Flags().StringVar(&opts.Output, "output", "auto", "Deploy output mode for apply: auto|summary|stack|error-only (explicitly setting this implies --no-ui)")
+	applyCmd.Flags().BoolVar(&applyAllowContextOverride, "allow-context-override", false, "Allow applying a saved plan to a Docker context different from the planned context")
 }
 
 func planStatePath(configPath string) (string, error) {

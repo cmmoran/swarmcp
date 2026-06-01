@@ -196,6 +196,7 @@ var planCmd = &cobra.Command{
 					plan,
 				)
 				planFile.SecretSources = secretSources
+				apply.SetPlanSecretMode(&planFile)
 				if err := apply.WritePlanFile(planOutPath, planFile); err != nil {
 					done(err)
 					return err

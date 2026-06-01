@@ -51,6 +51,9 @@ func TestPlanFileRoundTrip(t *testing.T) {
 	if got.APIVersion != PlanFileAPIVersion {
 		t.Fatalf("unexpected api version: %q", got.APIVersion)
 	}
+	if got.Secrets.Mode != PlanSecretModePayload {
+		t.Fatalf("unexpected secret mode: %q", got.Secrets.Mode)
+	}
 	if got.Project != "demo" || got.Deployment != "prod" || got.Partition != "blue" || got.Stack != "core" || got.Context != "prod-context" {
 		t.Fatalf("unexpected plan metadata: %#v", got)
 	}
