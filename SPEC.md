@@ -172,6 +172,34 @@ Disallowed in release manifests:
 
 If a release manifest uses immutable refs, image digests, and immutable values artifact revisions, it serves as a practical lock artifact. SwarmCP does not need a separate lockfile product to achieve basic reproducibility.
 
+### Saved Plan Artifacts
+
+The preferred Terraform-style execution flow is:
+
+```bash
+swarmcp plan --out release.plan.yaml ...
+swarmcp show release.plan.yaml
+swarmcp apply release.plan.yaml
+```
+
+`plan --out` generates an applyable `swarmcp.plan.v1` artifact. The saved plan is generated output, not another broad human-authored configuration layer. It captures:
+- target metadata: project, deployment, optional partition/stack selectors, and Docker context
+- input provenance: SHA-256 fingerprints for project config files, release overlays, and values files used to render the plan
+- exact Swarm reconciliation intent: configs, secrets, networks, stack deploy payloads, delete/prune intent, and skipped delete counts
+- secret handling mode: `payload`, `reference`, or `mixed`
+- secret source metadata for reference-mode secrets
+
+`swarmcp show <plan-file>` validates and summarizes the saved plan without connecting to Docker. It is the review step for generated plans.
+
+`swarmcp apply <plan-file>` consumes the saved plan as the execution artifact. It must not re-render the current workspace. It validates the plan API version, secret mode, replay source shape, and target context before touching Docker. Passing `--context` to apply a saved plan to a different Docker context is rejected unless `--allow-context-override` is set.
+
+Secret plan semantics:
+- Default saved plans should avoid storing secret payloads when a secret can be replayed from source metadata.
+- Vault/OpenBao KV secret dependencies record provider, address, auth method/path/role/audience, mount, path, key, optional KV version, and the SHA-256 hash of the resolved value.
+- When a KV version is available, `apply <plan-file>` must request that version and verify the resolved hash before creating the Swarm secret.
+- If a created Swarm secret is composed from multiple secret values or otherwise cannot be replayed from one source, `plan --out` refuses to write the plan unless `--include-secret-payloads` is explicitly set.
+- Payload-mode plans are allowed as an explicit development/operator escape hatch, not the preferred production release artifact.
+
 ### Release Version Policies
 
 Release version policy is project/team governance and should live in `project.yaml` under `project.release_policies`. A concrete release manifest stores the selected policy name, the resolved `release.version`, and the resolved `version_parameters`; it does not store the policy definition unless it intentionally snapshots an external policy for audit.

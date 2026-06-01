@@ -144,6 +144,20 @@ Plan the desired state:
   --secrets-file examples/nginx/secrets.yaml
 ```
 
+Generate and review a saved plan when you want Terraform-style plan/apply separation:
+
+```bash
+./swarmcp plan \
+  --config examples/nginx/project.yaml \
+  --values examples/nginx/values/values.yaml.tmpl \
+  --secrets-file examples/nginx/secrets.yaml \
+  --out nginx.plan.yaml
+
+./swarmcp show nginx.plan.yaml
+```
+
+Saved plans include target metadata, input file fingerprints, exact create/delete/deploy intent, and a secret mode. When a Swarm secret is a direct `secret_value` passthrough from Vault/OpenBao KV, the plan stores provider/path/key/version/hash metadata and omits the secret payload. Composed or unreplayable secrets require the explicit `--include-secret-payloads` escape hatch.
+
 Inspect the current-vs-desired diff:
 
 ```bash
@@ -161,6 +175,14 @@ Apply changes:
   --values examples/nginx/values/values.yaml.tmpl \
   --secrets-file examples/nginx/secrets.yaml
 ```
+
+Apply a reviewed saved plan:
+
+```bash
+./swarmcp apply nginx.plan.yaml
+```
+
+`apply <plan-file>` consumes the saved plan instead of re-rendering the current workspace. It validates the plan file, replays reference-mode secret payloads from pinned source metadata, verifies stored hashes, and refuses to apply to a different Docker context unless `--allow-context-override` is set.
 
 Check runtime status:
 
