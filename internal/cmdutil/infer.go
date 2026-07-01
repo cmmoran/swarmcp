@@ -28,6 +28,24 @@ func InferValuesFiles(configPath string, values []string) []string {
 	return values
 }
 
+func InferValuesSources(cfg *config.Config, configPath string, values []string) ([]string, error) {
+	if len(values) > 0 {
+		return values, nil
+	}
+	if cfg != nil && len(cfg.Project.Values) > 0 {
+		out := make([]string, 0, len(cfg.Project.Values))
+		for _, ref := range cfg.Project.Values {
+			source, err := config.ResolveSourceRef(config.SourceRef{URL: ref.URL, Ref: ref.Ref, Path: ref.Path}, cfg.BaseDir, config.LoadOptions{CacheDir: cfg.CacheDir, Offline: cfg.Offline, Debug: cfg.Debug})
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, source)
+		}
+		return out, nil
+	}
+	return InferValuesFiles(configPath, values), nil
+}
+
 func InferSecretsFile(cfg *config.Config, configPath string, secretsFile string) string {
 	if secretsFile != "" {
 		return secretsFile

@@ -24,6 +24,7 @@ type Project struct {
 	PreserveUnusedResources *int                 `yaml:"preserve_unused_resources"`
 	Nodes                   map[string]Node      `yaml:"nodes"`
 	Sources                 Sources              `yaml:"sources"`
+	Values                  []ValueSource        `yaml:"values"`
 	Configs                 map[string]ConfigDef `yaml:"configs"`
 	Secrets                 map[string]SecretDef `yaml:"secrets"`
 	SecretsEngine           *SecretsEngine       `yaml:"secrets_engine"`
@@ -100,6 +101,7 @@ type Stack struct {
 	Volumes        map[string]VolumeDef      `yaml:"volumes"`
 	Services       map[string]Service        `yaml:"services"`
 	BaseDir        string                    `yaml:"-"`
+	SourceRefs     []string                  `yaml:"-"`
 }
 
 type StackPartition struct {
@@ -139,6 +141,7 @@ type Service struct {
 	Overlays         ServiceOverlays          `yaml:"overlays"`
 	Sources          Sources                  `yaml:"sources"`
 	BaseDir          string                   `yaml:"-"`
+	SourceRefs       []string                 `yaml:"-"`
 }
 
 type InclusionRule struct {
@@ -250,6 +253,14 @@ type Port struct {
 }
 
 type Sources struct {
+	URL  string `yaml:"url"`
+	Ref  string `yaml:"ref"`
+	Path string `yaml:"path"`
+	Base string `yaml:"-"`
+}
+
+type ValueSource struct {
+	Name string `yaml:"name"`
 	URL  string `yaml:"url"`
 	Ref  string `yaml:"ref"`
 	Path string `yaml:"path"`

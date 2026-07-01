@@ -57,6 +57,8 @@ func printPlanFileSummary(out interface {
 	}
 	_, _ = fmt.Fprintf(out, "secret mode: %s\n", apply.NormalizedPlanSecretMode(planFile))
 	_, _ = fmt.Fprintf(out, "inputs: %d\n", len(planFile.Inputs))
+	_, _ = fmt.Fprintf(out, "source inputs: %d\n", len(planFile.SourceInputs))
+	_, _ = fmt.Fprintf(out, "assumptions: %d\n", planAssumptionCount(planFile.Plan.Assumptions))
 	_, _ = fmt.Fprintf(out, "networks to create: %d\nconfigs to create: %d\nsecrets to create: %d\nstacks to deploy: %d\nconfigs to delete: %d\nsecrets to delete: %d\nconfigs skipped (in use): %d\nsecrets skipped (in use): %d\n", planSummary.NetworksCreated, planSummary.ConfigsCreated, planSummary.SecretsCreated, planSummary.StacksDeployed, planSummary.ConfigsRemoved, planSummary.SecretsRemoved, planSummary.ConfigsSkipped, planSummary.SecretsSkipped)
 	if len(stackNames) > 0 {
 		_, _ = fmt.Fprintln(out, "stacks:")
@@ -70,6 +72,29 @@ func printPlanFileSummary(out interface {
 			_, _ = fmt.Fprintf(out, "  - %s (%s)\n", source.SecretName, pluralCount(len(source.Dependencies), "dependency", "dependencies"))
 		}
 	}
+	if len(planFile.SourceInputs) > 0 {
+		_, _ = fmt.Fprintln(out, "source inputs:")
+		for _, source := range planFile.SourceInputs {
+			label := source.URL
+			if source.Ref != "" {
+				label += "@" + source.Ref
+			}
+			if source.Path != "" {
+				label += "#" + source.Path
+			}
+			_, _ = fmt.Fprintf(out, "  - %s commit=%s subtree=%s\n", label, source.Commit, source.Subtree)
+		}
+	}
+}
+
+func planAssumptionCount(assumptions apply.PlanAssumptions) int {
+	return len(assumptions.AbsentConfigs) +
+		len(assumptions.AbsentSecrets) +
+		len(assumptions.AbsentNetworks) +
+		len(assumptions.AbsentServices) +
+		len(assumptions.PresentConfigs) +
+		len(assumptions.PresentSecrets) +
+		len(assumptions.PresentServices)
 }
 
 func pluralCount(count int, singular string, plural string) string {

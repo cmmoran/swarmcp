@@ -3,55 +3,66 @@ package templates
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"reflect"
 	"text/template"
 
 	"github.com/Masterminds/sprig/v3"
+	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/mergeutil"
 	"github.com/cmmoran/swarmcp/internal/yamlutil"
 	"go.yaml.in/yaml/v4"
 )
 
 func LoadValuesFiles(paths []string, scope Scope) (any, error) {
+	values, _, err := LoadValuesFilesWithSources(paths, scope, "", config.LoadOptions{})
+	return values, err
+}
+
+func LoadValuesFilesWithSources(paths []string, scope Scope, baseDir string, opts config.LoadOptions) (any, []string, error) {
 	if len(paths) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var merged any
+	var sources []string
 	for _, path := range paths {
-		rendered, err := renderValuesFile(path, scope)
+		rendered, source, err := renderValuesFile(path, scope, baseDir, opts)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		sources = append(sources, source)
 		var parsed any
 		if err := yaml.Unmarshal([]byte(rendered), &parsed); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		merged, err = mergeValues(merged, yamlutil.NormalizeValue(parsed))
 		if err != nil {
-			return nil, fmt.Errorf("values file %q: %w", path, err)
+			return nil, nil, fmt.Errorf("values file %q: %w", path, err)
 		}
 	}
-	return merged, nil
+	return merged, sources, nil
 }
 
-func renderValuesFile(path string, scope Scope) (string, error) {
-	content, err := os.ReadFile(path)
+func renderValuesFile(path string, scope Scope, baseDir string, opts config.LoadOptions) (string, string, error) {
+	source, err := config.ResolveSourcePath(path, baseDir, opts)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	if !IsTemplateSource(path) {
-		return string(content), nil
-	}
-	tpl, err := template.New(path).Funcs(valuesFuncMap(scope)).Parse(string(content))
+	content, err := config.ReadSourceFile(source, "", opts)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	if !IsTemplateSource(source) {
+		return string(content), source, nil
+	}
+	tpl, err := template.New(source).Funcs(valuesFuncMap(scope)).Parse(string(content))
+	if err != nil {
+		return "", "", err
 	}
 	var buf bytes.Buffer
 	if err := tpl.Execute(&buf, nil); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return buf.String(), nil
+	return buf.String(), source, nil
 }
 
 func valuesFuncMap(scope Scope) template.FuncMap {

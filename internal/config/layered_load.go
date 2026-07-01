@@ -71,7 +71,7 @@ func loadFilesWithReleaseTrace(paths []string, releasePaths []string, opts LoadO
 		if err := validateReleaseSourceRefs(merged, doc); err != nil {
 			return nil, nil, fmt.Errorf("release config %q: %w", absPath, err)
 		}
-		sourceRefs := releaseSourceRefOverlay(doc)
+		sourceRefs := releaseSourceRefOverlay(merged, doc)
 		if len(sourceRefs) == 0 {
 			continue
 		}
@@ -334,6 +334,15 @@ func validateReleaseOverlayNode(base map[string]any, value any, path []string, n
 			return fmt.Errorf("%s must be a scalar value", joinPath(path))
 		}
 		return nil
+	case releaseValueRequiredString:
+		stringValue, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("%s must be a string", joinPath(path))
+		}
+		if stringValue == "" {
+			return fmt.Errorf("%s must not be empty", joinPath(path))
+		}
+		return nil
 	case releaseValueScalarMap:
 		mapped, err := requireMap(value, path)
 		if err != nil {
@@ -346,12 +355,53 @@ func validateReleaseOverlayNode(base map[string]any, value any, path []string, n
 			return err
 		}
 		return validateReleaseUpdatePolicyMap(mapped, path)
+	case releaseValueSourceList:
+		return validateReleaseSourceList(value, path)
 	default:
 		return fmt.Errorf("%s is not allowed in release config files", joinPath(path))
 	}
 }
 
+func validateReleaseSourceList(value any, path []string) error {
+	items, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("%s must be a list", joinPath(path))
+	}
+	for i, item := range items {
+		itemPath := appendPath(path, fmt.Sprintf("%d", i))
+		mapped, ok := item.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s must be a mapping", joinPath(itemPath))
+		}
+		for key, child := range mapped {
+			childPath := appendPath(itemPath, key)
+			switch key {
+			case "name", "ref":
+				value, ok := child.(string)
+				if !ok {
+					return fmt.Errorf("%s must be a string", joinPath(childPath))
+				}
+				if value == "" {
+					return fmt.Errorf("%s must not be empty", joinPath(childPath))
+				}
+			default:
+				return fmt.Errorf("%s is not allowed in release config files", joinPath(childPath))
+			}
+		}
+		if _, ok := mapped["name"]; !ok {
+			return fmt.Errorf("%s.name is required", joinPath(itemPath))
+		}
+		if _, ok := mapped["ref"]; !ok {
+			return fmt.Errorf("%s.ref is required", joinPath(itemPath))
+		}
+	}
+	return nil
+}
+
 func validateReleaseSourceRefs(base map[string]any, release map[string]any) error {
+	if err := validateReleaseProjectValues(base, release); err != nil {
+		return err
+	}
 	stacks, ok := release["stacks"].(map[string]any)
 	if !ok {
 		return nil
@@ -380,10 +430,71 @@ func validateReleaseSourceRefs(base map[string]any, release map[string]any) erro
 	return nil
 }
 
-func releaseSourceRefOverlay(release map[string]any) map[string]any {
-	stacks, ok := release["stacks"].(map[string]any)
+func validateReleaseProjectValues(base map[string]any, release map[string]any) error {
+	project, ok := release["project"].(map[string]any)
 	if !ok {
 		return nil
+	}
+	values, ok := project["values"].([]any)
+	if !ok {
+		return nil
+	}
+	baseProject, ok := base["project"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("project does not exist in the base config")
+	}
+	baseValues, ok := baseProject["values"].([]any)
+	if !ok {
+		return fmt.Errorf("project.values does not exist in the base config")
+	}
+	baseValuesByName := map[string]map[string]any{}
+	for i, value := range baseValues {
+		mapped, ok := value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("project.values.%d must be a mapping", i)
+		}
+		name, ok := mapped["name"].(string)
+		if !ok || name == "" {
+			return fmt.Errorf("project.values.%d.name is required in the base config", i)
+		}
+		baseValuesByName[name] = mapped
+	}
+	seen := map[string]bool{}
+	for i, value := range values {
+		mapped, ok := value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("project.values.%d must be a mapping", i)
+		}
+		name, ok := mapped["name"].(string)
+		if !ok || name == "" {
+			return fmt.Errorf("project.values.%d.name is required", i)
+		}
+		if seen[name] {
+			return fmt.Errorf("project.values name %q is duplicated in release config", name)
+		}
+		seen[name] = true
+		baseValue, ok := baseValuesByName[name]
+		if !ok {
+			return fmt.Errorf("project.values %q does not exist in the base config", name)
+		}
+		if url, _ := baseValue["url"].(string); url == "" {
+			return fmt.Errorf("project.values %q cannot override ref because the base values source is local; declare a git url in project.values", name)
+		}
+	}
+	return nil
+}
+
+func releaseSourceRefOverlay(base map[string]any, release map[string]any) map[string]any {
+	out := map[string]any{}
+	if project := releaseProjectValuesOverlay(base, release); len(project) > 0 {
+		out["project"] = project
+	}
+	stacks, ok := release["stacks"].(map[string]any)
+	if !ok {
+		if len(out) == 0 {
+			return nil
+		}
+		return out
 	}
 	outStacks := map[string]any{}
 	for stackName, stackValue := range stacks {
@@ -405,10 +516,64 @@ func releaseSourceRefOverlay(release map[string]any) map[string]any {
 			},
 		}
 	}
-	if len(outStacks) == 0 {
+	if len(outStacks) > 0 {
+		out["stacks"] = outStacks
+	}
+	if len(out) == 0 {
 		return nil
 	}
-	return map[string]any{"stacks": outStacks}
+	return out
+}
+
+func releaseProjectValuesOverlay(base map[string]any, release map[string]any) map[string]any {
+	project, ok := release["project"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	values, ok := project["values"].([]any)
+	if !ok {
+		return nil
+	}
+	baseProject, _ := base["project"].(map[string]any)
+	baseValues, _ := baseProject["values"].([]any)
+	outValues := cloneValue(baseValues).([]any)
+	indexByName := map[string]int{}
+	for i, value := range outValues {
+		mapped, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, ok := mapped["name"].(string)
+		if !ok || name == "" {
+			continue
+		}
+		indexByName[name] = i
+	}
+	for _, value := range values {
+		releaseValue, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, ok := releaseValue["name"].(string)
+		if !ok || name == "" {
+			continue
+		}
+		index, ok := indexByName[name]
+		if !ok {
+			continue
+		}
+		baseValue, ok := outValues[index].(map[string]any)
+		if !ok {
+			outValues[index] = cloneValue(releaseValue)
+			continue
+		}
+		mergedValue := cloneValue(baseValue).(map[string]any)
+		for key, child := range releaseValue {
+			mergedValue[key] = cloneValue(child)
+		}
+		outValues[index] = mergedValue
+	}
+	return map[string]any{"values": outValues}
 }
 
 func applyReleaseServiceOverlay(cfg *Config, release map[string]any) error {
@@ -519,7 +684,7 @@ func validateReleaseScalarMap(mapped map[string]any, path []string) error {
 		if key == "" {
 			return fmt.Errorf("%s contains an empty key", joinPath(path))
 		}
-		if _, ok := value.(map[string]any); ok {
+		if !isReleaseScalar(value) {
 			return fmt.Errorf("%s.%s must be a scalar value", joinPath(path), key)
 		}
 	}
@@ -533,9 +698,14 @@ func validateReleaseUpdatePolicyMap(mapped map[string]any, path []string) error 
 		default:
 			return fmt.Errorf("%s.%s is not allowed in release config files", joinPath(path), key)
 		}
-		if _, ok := value.(map[string]any); ok {
+		if !isReleaseScalar(value) {
 			return fmt.Errorf("%s.%s must be a scalar value", joinPath(path), key)
 		}
 	}
 	return nil
+}
+
+func isReleaseScalar(value any) bool {
+	_, ok := value.(map[string]any)
+	return !ok
 }

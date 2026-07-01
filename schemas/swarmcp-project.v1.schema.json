@@ -64,6 +64,31 @@
         }
       }
     },
+    "valueSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable values input name used by release configs to override this entry."
+        },
+        "url": {
+          "type": "string",
+          "description": "Remote source repository URL."
+        },
+        "ref": {
+          "type": "string",
+          "description": "Remote source ref, tag, branch, or commit SHA."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path within the local project or fetched source tree."
+        }
+      }
+    },
     "sourceRef": {
       "type": "object",
       "additionalProperties": false,
@@ -213,13 +238,6 @@
             "$ref": "#/$defs/deploymentTarget"
           }
         },
-        "release_policies": {
-          "type": "object",
-          "description": "Project/team release version policies used when generating concrete release manifests.",
-          "additionalProperties": {
-            "$ref": "#/$defs/releasePolicy"
-          }
-        },
         "defaults": {
           "$ref": "#/$defs/projectDefaults"
         },
@@ -246,6 +264,13 @@
         "sources": {
           "$ref": "#/$defs/source"
         },
+        "values": {
+          "type": "array",
+          "description": "Static values input source references. Passing --values overrides this list. Release configs may override existing entries by name, commonly with ref only.",
+          "items": {
+            "$ref": "#/$defs/valueSource"
+          }
+        },
         "configs": {
           "type": "object",
           "additionalProperties": {
@@ -260,104 +285,6 @@
         },
         "secrets_engine": {
           "$ref": "#/$defs/secretsEngine"
-        }
-      }
-    },
-    "releasePolicy": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "version": {
-          "$ref": "#/$defs/releaseVersionPolicy"
-        }
-      }
-    },
-    "releaseVersionPolicy": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "preset": {
-          "type": "string",
-          "enum": [
-            "semver",
-            "semver_prerelease",
-            "calver",
-            "calver_sequence",
-            "branch_calver_sequence",
-            "deployment_stack_calver_sequence",
-            "semver_calver_build"
-          ],
-          "description": "Named release version strategy. Prefer presets for normal authoring."
-        },
-        "scheme": {
-          "type": "string",
-          "enum": ["template"],
-          "description": "Expanded/custom version strategy."
-        },
-        "template": {
-          "type": "string",
-          "description": "Template evaluated over resolved version parameters."
-        },
-        "parameters": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/versionParameter"
-          }
-        }
-      }
-    },
-    "versionParameter": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "source": {
-          "type": "string",
-          "description": "Parameter source such as input.semver, git.branch, clock.date, target.deployment, target.stack, artifact.<kind>..., or release.sequence."
-        },
-        "type": {
-          "type": "string",
-          "enum": [
-            "string",
-            "git_ref",
-            "semver",
-            "semver_prerelease",
-            "calver",
-            "integer",
-            "counter"
-          ]
-        },
-        "format": {
-          "type": "string",
-          "description": "Format string for dates/calver or optional formatted fragments."
-        },
-        "normalize": {
-          "type": "string",
-          "enum": ["slug"]
-        },
-        "omit_if_empty": {
-          "type": "boolean"
-        },
-        "width": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Zero-padding width for integer/counter values."
-        },
-        "scope": {
-          "type": "array",
-          "description": "Counter allocation scope. Required by SwarmCP when type is counter.",
-          "items": {
-            "type": "string",
-            "enum": [
-              "global",
-              "branch",
-              "deployment",
-              "partition",
-              "stack",
-              "calver",
-              "semver",
-              "artifact_tuple"
-            ]
-          }
         }
       }
     },

@@ -165,6 +165,41 @@ func ReadSourceFile(path string, baseDir string, opts LoadOptions) ([]byte, erro
 	return os.ReadFile(resolved)
 }
 
+func ResolveSourcePath(path string, baseDir string, opts LoadOptions) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("source path is required")
+	}
+	resolved := path
+	if baseDir != "" && !IsGitSource(resolved) && !filepath.IsAbs(resolved) {
+		if IsGitSource(baseDir) {
+			var err error
+			resolved, err = resolvePathWithin(baseDir, resolved, opts)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			resolved = filepath.Join(baseDir, resolved)
+		}
+	}
+	if IsGitSource(resolved) {
+		parsed, ok, err := parseGitSource(resolved)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", fmt.Errorf("invalid git source %q", resolved)
+		}
+		if _, err := readGitPath(context.Background(), parsed.URL, parsed.Ref, parsed.Path, opts); err != nil {
+			return "", err
+		}
+		return resolved, nil
+	}
+	if filepath.IsAbs(resolved) {
+		return resolveAbsolutePath(resolved)
+	}
+	return resolved, nil
+}
+
 // ReadGitSourceFiles loads file contents for a git source at the given ref.
 func ReadGitSourceFiles(url, ref, pathValue string, opts LoadOptions) (map[string][]byte, error) {
 	if url == "" {

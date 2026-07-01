@@ -15,7 +15,7 @@ vars:
       set -euo pipefail
       bare="$PWD/.task/semantic-release-remote.git"
       rm -rf "${bare}"
-      git clone --bare . "${bare}" >/dev/null 2>&1
+      git clone --bare --no-local . "${bare}" >/dev/null 2>&1
       printf 'file:///workspace/.task/semantic-release-remote.git'
   SEMREL_IMAGE: docker.io/voxpupuli/semantic-release:latest
   GIT_TAG:
@@ -101,8 +101,15 @@ vars:
       fi
       printf '%s' "${version}"
 
-  CI_IMAGE: '{{default (printf "chrismoran/swarmcp:%s" .VERSION) .CI_IMAGE}}'
-  RUNNER_IMAGE: '{{default (printf "swarmcp-runner:%s" .VERSION) .RUNNER_IMAGE}}'
+  IMAGE_VERSION:
+    sh: |
+      version="{{.VERSION}}"
+      case "${version}" in
+        v*) printf '%s' "${version}" ;;
+        *) printf 'v%s' "${version}" ;;
+      esac
+  CI_IMAGE: '{{default (printf "chrismoran/swarmcp:%s" .IMAGE_VERSION) .CI_IMAGE}}'
+  RUNNER_IMAGE: '{{default (printf "swarmcp-runner:%s" .IMAGE_VERSION) .RUNNER_IMAGE}}'
   DOCS_IMAGE: '{{default "swarmcp-docs" .DOCS_IMAGE}}'
   DOCS_PORT: '{{default "8000" .DOCS_PORT}}'
   RUNNER_CMD: '{{default "swarmcp version" .RUNNER_CMD}}'
@@ -161,7 +168,7 @@ tasks:
 
   # Build the CI helper container image used by pipeline jobs.
   ci-image:
-    desc: "Build+push the swarmcp CI runner image using Docker context default (default tag: chrismoran/swarmcp:{{.VERSION}}; override CI_IMAGE to change tag)"
+    desc: "Build+push the swarmcp CI runner image using Docker context default (default tag: chrismoran/swarmcp:{{.IMAGE_VERSION}}; override CI_IMAGE to change tag)"
     cmds:
       - docker --context default buildx build --push -f contrib/ci/swarmcp-runner/Dockerfile -t {{.CI_IMAGE}} --build-arg VERSION={{.VERSION}} .
 

@@ -18,11 +18,34 @@ type Plan struct {
 	SkippedDeletes SkippedDeletes      `yaml:"skipped_deletes,omitempty" json:"skipped_deletes,omitempty"`
 	StackDeploys   []StackDeploy       `yaml:"stack_deploys,omitempty" json:"stack_deploys,omitempty"`
 	PruneStacks    []string            `yaml:"prune_stacks,omitempty" json:"prune_stacks,omitempty"`
+	Assumptions    PlanAssumptions     `yaml:"assumptions,omitempty" json:"assumptions,omitempty"`
 }
 
 type SkippedDeletes struct {
 	Configs int `yaml:"configs,omitempty" json:"configs,omitempty"`
 	Secrets int `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+}
+
+type PlanAssumptions struct {
+	AbsentConfigs   []string             `yaml:"absent_configs,omitempty" json:"absent_configs,omitempty"`
+	AbsentSecrets   []string             `yaml:"absent_secrets,omitempty" json:"absent_secrets,omitempty"`
+	AbsentNetworks  []string             `yaml:"absent_networks,omitempty" json:"absent_networks,omitempty"`
+	AbsentServices  []string             `yaml:"absent_services,omitempty" json:"absent_services,omitempty"`
+	PresentConfigs  []ResourceAssumption `yaml:"present_configs,omitempty" json:"present_configs,omitempty"`
+	PresentSecrets  []ResourceAssumption `yaml:"present_secrets,omitempty" json:"present_secrets,omitempty"`
+	PresentServices []ServiceAssumption  `yaml:"present_services,omitempty" json:"present_services,omitempty"`
+}
+
+type ResourceAssumption struct {
+	Name string `yaml:"name" json:"name"`
+	ID   string `yaml:"id" json:"id"`
+}
+
+type ServiceAssumption struct {
+	Name    string `yaml:"name" json:"name"`
+	ID      string `yaml:"id" json:"id"`
+	Stack   string `yaml:"stack,omitempty" json:"stack,omitempty"`
+	Version uint64 `yaml:"version" json:"version"`
 }
 
 func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, desired DesiredState, values any, partitionFilters []string, stackFilters []string, infer bool) (Plan, error) {
@@ -203,8 +226,111 @@ func BuildPlan(ctx context.Context, client swarm.Client, cfg *config.Config, des
 	if len(pruneStacks) > 0 {
 		plan.PruneStacks = sortedKeys(pruneStacks)
 	}
+	plan.Assumptions = buildPlanAssumptions(plan, creates, existingServices)
 
 	return plan, nil
+}
+
+func buildPlanAssumptions(plan Plan, creates []ServiceCreate, existingServices []swarm.Service) PlanAssumptions {
+	var out PlanAssumptions
+	for _, cfg := range plan.CreateConfigs {
+		out.AbsentConfigs = append(out.AbsentConfigs, cfg.Name)
+	}
+	for _, sec := range plan.CreateSecrets {
+		out.AbsentSecrets = append(out.AbsentSecrets, sec.Name)
+	}
+	for _, net := range plan.CreateNetworks {
+		out.AbsentNetworks = append(out.AbsentNetworks, net.Name)
+	}
+	for _, cfg := range plan.DeleteConfigs {
+		out.PresentConfigs = append(out.PresentConfigs, ResourceAssumption{Name: cfg.Name, ID: cfg.ID})
+	}
+	for _, sec := range plan.DeleteSecrets {
+		out.PresentSecrets = append(out.PresentSecrets, ResourceAssumption{Name: sec.Name, ID: sec.ID})
+	}
+	for _, create := range creates {
+		out.AbsentServices = append(out.AbsentServices, create.Name)
+	}
+	deployedStacks := make(map[string]struct{}, len(plan.StackDeploys)+len(plan.PruneStacks))
+	for _, deploy := range plan.StackDeploys {
+		deployedStacks[deploy.Name] = struct{}{}
+	}
+	for _, name := range plan.PruneStacks {
+		deployedStacks[name] = struct{}{}
+	}
+	for _, svc := range existingServices {
+		stackName := stackNameFromService(svc)
+		if _, ok := deployedStacks[stackName]; !ok {
+			continue
+		}
+		out.PresentServices = append(out.PresentServices, ServiceAssumption{
+			Name:    svc.Name,
+			ID:      svc.ID,
+			Stack:   stackName,
+			Version: svc.Version,
+		})
+	}
+	return normalizePlanAssumptions(out)
+}
+
+func stackNameFromService(svc swarm.Service) string {
+	if svc.Labels == nil {
+		return ""
+	}
+	project := svc.Labels[render.LabelProject]
+	stack := svc.Labels[render.LabelStack]
+	partition := svc.Labels[render.LabelPartition]
+	if partition == "none" {
+		partition = ""
+	}
+	if project == "" || stack == "" {
+		return ""
+	}
+	mode := "shared"
+	if partition != "" {
+		mode = "partitioned"
+	}
+	return config.StackInstanceName(project, stack, partition, mode)
+}
+
+func normalizePlanAssumptions(in PlanAssumptions) PlanAssumptions {
+	in.AbsentConfigs = sortedUniqueStrings(in.AbsentConfigs)
+	in.AbsentSecrets = sortedUniqueStrings(in.AbsentSecrets)
+	in.AbsentNetworks = sortedUniqueStrings(in.AbsentNetworks)
+	in.AbsentServices = sortedUniqueStrings(in.AbsentServices)
+	sort.Slice(in.PresentConfigs, func(i, j int) bool {
+		if in.PresentConfigs[i].Name == in.PresentConfigs[j].Name {
+			return in.PresentConfigs[i].ID < in.PresentConfigs[j].ID
+		}
+		return in.PresentConfigs[i].Name < in.PresentConfigs[j].Name
+	})
+	sort.Slice(in.PresentSecrets, func(i, j int) bool {
+		if in.PresentSecrets[i].Name == in.PresentSecrets[j].Name {
+			return in.PresentSecrets[i].ID < in.PresentSecrets[j].ID
+		}
+		return in.PresentSecrets[i].Name < in.PresentSecrets[j].Name
+	})
+	sort.Slice(in.PresentServices, func(i, j int) bool {
+		if in.PresentServices[i].Name == in.PresentServices[j].Name {
+			return in.PresentServices[i].ID < in.PresentServices[j].ID
+		}
+		return in.PresentServices[i].Name < in.PresentServices[j].Name
+	})
+	return in
+}
+
+func sortedUniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		seen[value] = struct{}{}
+	}
+	return sortedKeys(seen)
 }
 
 func sortedKeys(values map[string]struct{}) []string {

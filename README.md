@@ -64,7 +64,7 @@ SwarmCP is easiest to think about as four artifacts:
 
 - `project.yaml`: desired topology, imports, structural defaults, and project/team policy.
 - `values/*.yaml`: authored render input artifacts.
-- `release.yaml`: concrete release manifests passed with `--release-config`.
+- `release.yaml`: concrete release configs passed with `--release-config`.
 - runtime flags: execution scope for commands such as `plan`, `diff`, `status`, and `apply`.
 
 It also uses three runtime targeting axes:
@@ -77,10 +77,14 @@ Shared stacks are named `<project>_<stack>`. Partitioned stacks are named `<proj
 
 ## Configuration Basics
 
-For editor completion and basic shape validation, point your YAML language server at the project schema:
+For editor completion and basic shape validation, point your YAML language server at the project or release schema:
 
 ```yaml
 # yaml-language-server: $schema=schemas/swarmcp-project.v1.schema.json
+```
+
+```yaml
+# yaml-language-server: $schema=schemas/swarmcp-release.v1.schema.json
 ```
 
 A minimal project looks like this:
@@ -124,6 +128,34 @@ Related inputs typically live alongside it:
 - secrets file: `secrets.yaml`
 - templates: `templates/...`
 
+Values can also be declared in the project file when they should be loaded
+through the same source machinery as stack and template sources:
+
+```yaml
+project:
+  name: demo
+  values:
+    - name: platform
+      url: ssh://git@github.com/example/platform-config.git
+      ref: v1.2.3
+      path: values/values.yaml.tmpl
+```
+
+`project.values` entries are static source references loaded before template
+rendering. They are not themselves rendered from values. Passing `--values`
+overrides `project.values`.
+
+Release configs can override existing git-backed `project.values` entries by
+name, typically to pin the values source ref while preserving the base URL and
+path:
+
+```yaml
+project:
+  values:
+    - name: platform
+      ref: v1.2.3
+```
+
 ## Common Workflow
 
 Validate first:
@@ -156,7 +188,7 @@ Generate and review a saved plan when you want Terraform-style plan/apply separa
 ./swarmcp show nginx.plan.yaml
 ```
 
-Saved plans include target metadata, input file fingerprints, exact create/delete/deploy intent, and a secret mode. When a Swarm secret is a direct `secret_value` passthrough from Vault/OpenBao KV or a local secrets file, the plan stores source/key/hash metadata and omits the secret payload. File-backed secret plans require the same secrets file, with the same SHA-256 fingerprint, to be present at apply time. Composed or unreplayable secrets require the explicit `--include-secret-payloads` escape hatch.
+Saved plans include target metadata, input file fingerprints, git source fingerprints, current-state assumptions, exact create/delete/deploy intent, and a secret mode. Git-backed `project.values` are recorded with the resolved commit and subtree hash. Local values files are recorded by SHA-256 and produce a reproducibility warning because the exact file must be recoverable externally. When a Swarm secret is a direct `secret_value` passthrough from Vault/OpenBao KV or a local secrets file, the plan stores source/key/hash metadata and omits the secret payload. File-backed secret plans require the same secrets file, with the same SHA-256 fingerprint, to be present at apply time. Composed or unreplayable secrets require the explicit `--include-secret-payloads` escape hatch.
 
 Inspect the current-vs-desired diff:
 
@@ -182,7 +214,7 @@ Apply a reviewed saved plan:
 ./swarmcp apply nginx.plan.yaml
 ```
 
-`apply <plan-file>` consumes the saved plan instead of re-rendering the current workspace. It validates the plan file, replays reference-mode secret payloads from pinned source metadata or the recorded secrets file, verifies stored hashes, and refuses to apply to a different Docker context unless `--allow-context-override` is set.
+`apply <plan-file>` consumes the saved plan instead of re-rendering the current workspace. It validates the plan file, re-checks recorded Swarm assumptions before mutation, replays reference-mode secret payloads from pinned source metadata or the recorded secrets file, verifies stored hashes, and refuses to apply to a different Docker context unless `--allow-context-override` is set.
 
 Check runtime status:
 

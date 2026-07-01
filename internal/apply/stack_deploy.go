@@ -18,10 +18,11 @@ import (
 )
 
 type StackDeploy struct {
-	Name           string `yaml:"name" json:"name"`
-	Compose        []byte `yaml:"compose" json:"compose"`
-	ServiceCreates int    `yaml:"service_creates,omitempty" json:"service_creates,omitempty"`
-	ServiceUpdates int    `yaml:"service_updates,omitempty" json:"service_updates,omitempty"`
+	Name           string   `yaml:"name" json:"name"`
+	Compose        []byte   `yaml:"compose" json:"compose"`
+	ServiceCreates int      `yaml:"service_creates,omitempty" json:"service_creates,omitempty"`
+	ServiceUpdates int      `yaml:"service_updates,omitempty" json:"service_updates,omitempty"`
+	SourceRefs     []string `yaml:"-" json:"-"`
 }
 
 type composeFile struct {
@@ -239,8 +240,9 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 				return nil, err
 			}
 			deploy := StackDeploy{
-				Name:    deployName,
-				Compose: raw,
+				Name:       deployName,
+				Compose:    raw,
+				SourceRefs: stackDeploySourceRefs(stack, services),
 			}
 			if entry, ok := changes[deployName]; ok {
 				deploy.ServiceCreates = entry.creates
@@ -250,6 +252,25 @@ func BuildStackDeploys(cfg *config.Config, desired DesiredState, values any, par
 		}
 	}
 	return deploys, nil
+}
+
+func stackDeploySourceRefs(stack config.Stack, services map[string]config.Service) []string {
+	seen := map[string]struct{}{}
+	add := func(source string) {
+		if !config.IsGitSource(source) {
+			return
+		}
+		seen[source] = struct{}{}
+	}
+	for _, source := range stack.SourceRefs {
+		add(source)
+	}
+	for _, service := range services {
+		for _, source := range service.SourceRefs {
+			add(source)
+		}
+	}
+	return sortedKeys(seen)
 }
 
 func ValidateDeployOutputMode(mode string) error {

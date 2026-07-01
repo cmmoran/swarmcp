@@ -11,8 +11,10 @@ func TestRewriteGitURLLongestPrefixWins(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	t.Setenv("GIT_CONFIG_LOCAL", "")
+	t.Setenv("GIT_CONFIG_COUNT", "0")
 
 	globalCfg := filepath.Join(home, ".gitconfig")
+	t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
 	content := `[url "git@gh-org:"]
 	insteadOf = https://github.com/sentinelgo/
 [url "git@gh-repo:"]
@@ -33,8 +35,10 @@ func TestRewriteGitURLLocalOverridesGlobalOnEqualPrefix(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("GIT_CONFIG_COUNT", "0")
 
 	globalCfg := filepath.Join(home, ".gitconfig")
+	t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
 	global := `[url "git@gh-global:"]
 	insteadOf = https://github.com/sentinelgo/synergy-devops
 `
@@ -76,8 +80,10 @@ func TestRewriteGitURLNoMatch(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	t.Setenv("GIT_CONFIG_LOCAL", "")
+	t.Setenv("GIT_CONFIG_COUNT", "0")
 
 	globalCfg := filepath.Join(home, ".gitconfig")
+	t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
 	if err := os.WriteFile(globalCfg, []byte(`[user]
 	name = test
 `), 0o600); err != nil {

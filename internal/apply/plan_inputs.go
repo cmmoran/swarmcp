@@ -15,13 +15,17 @@ func FileInputs(kind string, paths []string) ([]PlanInput, error) {
 		if path == "" {
 			continue
 		}
-		hash, err := fileSHA256(path)
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("%s input %q: %w", kind, path, err)
+		}
+		hash, err := fileSHA256(absPath)
 		if err != nil {
 			return nil, fmt.Errorf("%s input %q: %w", kind, path, err)
 		}
 		out = append(out, PlanInput{
 			Kind:   kind,
-			Path:   filepath.Clean(path),
+			Path:   filepath.Clean(absPath),
 			SHA256: hash,
 		})
 	}

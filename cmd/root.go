@@ -47,7 +47,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&opts.NoWarnUnmanaged, "no-warn-unmanaged", false, "Suppress warnings for unmanaged resources")
 	rootCmd.PersistentFlags().BoolVar(&opts.SkipHealthcheck, "skip-healthcheck", false, "Skip healthcheck requirement (not recommended)")
 	rootCmd.PersistentFlags().StringVar(&opts.SecretsFile, "secrets-file", "", "Path to secrets values file (YAML)")
-	rootCmd.PersistentFlags().StringArrayVar(&opts.ValuesFiles, "values", nil, "Path to values file (YAML; repeatable)")
+	rootCmd.PersistentFlags().StringArrayVar(&opts.ValuesFiles, "values", nil, "Path to values file (YAML; repeatable; overrides project.values)")
 	rootCmd.PersistentFlags().StringArrayVar(&opts.Deployments, "deployment", nil, "Deployment name selector (repeatable; overrides project.deployment)")
 	rootCmd.PersistentFlags().StringVar(&opts.Context, "context", "", "Docker context name (overrides project.contexts)")
 	rootCmd.PersistentFlags().StringArrayVar(&opts.Partitions, "partition", nil, "Partition selector (repeatable)")

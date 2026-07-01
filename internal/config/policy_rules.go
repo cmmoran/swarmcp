@@ -78,8 +78,10 @@ type releaseValueKind int
 const (
 	releaseValueMap releaseValueKind = iota
 	releaseValueScalar
+	releaseValueRequiredString
 	releaseValueScalarMap
 	releaseValueUpdatePolicyMap
+	releaseValueSourceList
 )
 
 type releasePolicyNode struct {
@@ -92,6 +94,13 @@ type releasePolicyNode struct {
 var releasePolicyRoot = &releasePolicyNode{
 	kind: releaseValueMap,
 	children: []*releasePolicyNode{
+		{
+			segment: "project",
+			kind:    releaseValueMap,
+			children: []*releasePolicyNode{
+				{segment: "values", kind: releaseValueSourceList},
+			},
+		},
 		{
 			segment: "stacks",
 			kind:    releaseValueMap,
@@ -106,7 +115,7 @@ var releasePolicyRoot = &releasePolicyNode{
 							requireExistingMap: true,
 							kind:               releaseValueMap,
 							children: []*releasePolicyNode{
-								{segment: "ref", kind: releaseValueScalar},
+								{segment: "ref", kind: releaseValueRequiredString},
 							},
 						},
 						{

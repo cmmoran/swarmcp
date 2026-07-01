@@ -339,6 +339,9 @@ func Validate(cfg *Config) error {
 	if err := validateSecretsEngine(cfg.Project.SecretsEngine); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := validateProjectValues(cfg.Project.Values); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if err := validateStandardMounts("project.defaults.volumes.standards", cfg.Project.Defaults.Volumes.Standards); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -376,6 +379,32 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("config validation failed:\n- %s", joinErrors(errs))
 	}
 
+	return nil
+}
+
+func validateProjectValues(values []ValueSource) error {
+	var errs []string
+	seen := map[string]bool{}
+	for i, value := range values {
+		path := fmt.Sprintf("project.values.%d", i)
+		if value.Name == "" {
+			errs = append(errs, path+".name is required")
+		} else {
+			if err := validateLogicalName(path+".name", value.Name); err != nil {
+				errs = append(errs, err.Error())
+			}
+			if seen[value.Name] {
+				errs = append(errs, fmt.Sprintf("project.values name %q is duplicated", value.Name))
+			}
+			seen[value.Name] = true
+		}
+		if value.Path == "" {
+			errs = append(errs, path+".path is required")
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", joinErrors(errs))
+	}
 	return nil
 }
 

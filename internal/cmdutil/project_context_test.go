@@ -65,6 +65,67 @@ func TestLoadProjectContextValuesAndSecrets(t *testing.T) {
 	}
 }
 
+func TestLoadProjectContextProjectValuesRenderWithScopeAndCanBeOverridden(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "project.yaml")
+	valuesDir := filepath.Join(dir, "values")
+	if err := os.MkdirAll(valuesDir, 0o755); err != nil {
+		t.Fatalf("values dir: %v", err)
+	}
+	writeFile(t, configPath, `project:
+  name: demo
+  partitions:
+    - dev
+  values:
+    - name: platform
+      path: values/project-values.yaml.tmpl
+`)
+	projectValuesPath := filepath.Join(valuesDir, "project-values.yaml.tmpl")
+	writeFile(t, projectValuesPath, `global:
+  host: "{{ runtime_value "{project}-{partition}" }}"
+`)
+	cliValuesPath := filepath.Join(valuesDir, "cli-values.yaml")
+	writeFile(t, cliValuesPath, `global:
+  host: cli
+`)
+
+	ctx, err := LoadProjectContext(ProjectOptions{
+		ConfigPath: configPath,
+		Partition:  "dev",
+	}, true, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	values, ok := ctx.Values.(map[string]any)
+	if !ok {
+		t.Fatalf("expected values map, got %T", ctx.Values)
+	}
+	global, ok := values["global"].(map[string]any)
+	if !ok || global["host"] != "demo-dev" {
+		t.Fatalf("expected project.values to render with scope, got %#v", ctx.Values)
+	}
+	if len(ctx.ValuesSources) != 1 || ctx.ValuesSources[0] != projectValuesPath {
+		t.Fatalf("unexpected project values sources: %#v", ctx.ValuesSources)
+	}
+
+	ctx, err = LoadProjectContext(ProjectOptions{
+		ConfigPath:  configPath,
+		Partition:   "dev",
+		ValuesFiles: []string{cliValuesPath},
+	}, true, false)
+	if err != nil {
+		t.Fatalf("unexpected cli override error: %v", err)
+	}
+	values, ok = ctx.Values.(map[string]any)
+	if !ok {
+		t.Fatalf("expected values map, got %T", ctx.Values)
+	}
+	global, ok = values["global"].(map[string]any)
+	if !ok || global["host"] != "cli" {
+		t.Fatalf("expected --values to override project.values, got %#v", ctx.Values)
+	}
+}
+
 func TestProjectContextSwarmClientWrap(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "project.yaml")

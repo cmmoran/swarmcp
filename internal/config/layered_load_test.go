@@ -286,6 +286,241 @@ stacks:
 	}
 }
 
+func TestLoadFilesWithReleaseOptionsAppliesProjectValuesRef(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+  values:
+    - name: platform
+      url: ssh://git@example.com/platform-config.git
+      path: values/values.yaml.tmpl
+    - name: local
+      path: values/local.yaml.tmpl
+stacks: {}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+project:
+  values:
+    - name: platform
+      ref: v0.1.0
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	cfg, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err != nil {
+		t.Fatalf("load configs: %v", err)
+	}
+	if len(cfg.Project.Values) != 2 {
+		t.Fatalf("expected two project values sources, got %#v", cfg.Project.Values)
+	}
+	source := cfg.Project.Values[0]
+	if source.Name != "platform" || source.URL != "ssh://git@example.com/platform-config.git" || source.Path != "values/values.yaml.tmpl" || source.Ref != "v0.1.0" {
+		t.Fatalf("unexpected project values source: %#v", source)
+	}
+	if cfg.Project.Values[1].Name != "local" || cfg.Project.Values[1].Ref != "" {
+		t.Fatalf("unexpected non-overridden values source: %#v", cfg.Project.Values[1])
+	}
+}
+
+func TestLoadFilesWithReleaseOptionsRejectsProjectValuesWithoutBase(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+stacks: {}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+project:
+  values:
+    - name: platform
+      ref: v0.1.0
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	_, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "project.values does not exist in the base config") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFilesWithReleaseOptionsRejectsUnknownProjectValuesName(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+  values:
+    - name: platform
+      path: values/values.yaml.tmpl
+stacks: {}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+project:
+  values:
+    - name: missing
+      ref: v0.1.0
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	_, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), `project.values "missing" does not exist in the base config`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFilesWithReleaseOptionsRejectsProjectValuesPathOverride(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+  values:
+    - name: platform
+      url: ssh://git@example.com/platform-config.git
+      path: values/values.yaml.tmpl
+stacks: {}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+project:
+  values:
+    - name: platform
+      ref: v0.1.0
+      path: values/other.yaml.tmpl
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	_, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "project.values.0.path is not allowed in release config files") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFilesWithReleaseOptionsRejectsLocalProjectValuesRefOverride(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+  values:
+    - name: platform
+      path: values/values.yaml.tmpl
+stacks: {}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+project:
+  values:
+    - name: platform
+      ref: v0.1.0
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	_, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), `project.values "platform" cannot override ref because the base values source is local`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFilesWithReleaseOptionsRejectsEmptyProjectValuesRefOverride(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+  values:
+    - name: platform
+      url: ssh://git@example.com/platform-config.git
+      path: values/values.yaml.tmpl
+stacks: {}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+project:
+  values:
+    - name: platform
+      ref: ""
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	_, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "project.values.0.ref must not be empty") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadFilesWithReleaseOptionsRejectsEmptyStackSourceRefOverride(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "project.yaml")
+	releasePath := filepath.Join(dir, "release.yaml")
+	if err := os.WriteFile(basePath, []byte(`
+project:
+  name: demo
+stacks:
+  core:
+    source:
+      url: ssh://git@example.com/platform-config.git
+      path: stacks/core.yaml
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(`
+stacks:
+  core:
+    source:
+      ref: ""
+`), 0o644); err != nil {
+		t.Fatalf("write release: %v", err)
+	}
+
+	_, err := LoadFilesWithReleaseOptions([]string{basePath}, []string{releasePath}, LoadOptions{})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "stacks.core.source.ref must not be empty") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestMergeReleaseOverlayMapPreservesSourceObjectWhenOverridingRef(t *testing.T) {
 	base := map[string]any{
 		"stacks": map[string]any{
@@ -340,7 +575,7 @@ project:
 	if err == nil {
 		t.Fatalf("expected error")
 	}
-	if !strings.Contains(err.Error(), "project is not allowed in release config files") {
+	if !strings.Contains(err.Error(), "project.partitions is not allowed in release config files") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

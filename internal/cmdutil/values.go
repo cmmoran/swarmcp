@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/secrets"
 	"github.com/cmmoran/swarmcp/internal/templates"
 )
@@ -20,6 +21,13 @@ func LoadValuesStore(paths []string, scope templates.Scope) (any, error) {
 		return nil, nil
 	}
 	return templates.LoadValuesFiles(paths, scope)
+}
+
+func LoadValuesStoreWithSources(paths []string, scope templates.Scope, baseDir string, opts config.LoadOptions) (any, []string, error) {
+	if len(paths) == 0 {
+		return nil, nil, nil
+	}
+	return templates.LoadValuesFilesWithSources(paths, scope, baseDir, opts)
 }
 
 func LoadOrInitSecretsStore(path string) (*secrets.Store, error) {

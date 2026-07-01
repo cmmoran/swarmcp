@@ -212,11 +212,14 @@ func runApplyPlanFile(cmd *cobra.Command, path string) error {
 		}
 		contextName = opts.Context
 	}
-	if err := apply.ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
-		return err
-	}
 	client, err := swarmClientForContext(contextName)
 	if err != nil {
+		return err
+	}
+	if err := apply.ValidatePlanAssumptions(context.Background(), client, planFile.Plan.Assumptions); err != nil {
+		return err
+	}
+	if err := apply.ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
 		return err
 	}
 	outputFlagSet := cmd.Flags().Changed("output")

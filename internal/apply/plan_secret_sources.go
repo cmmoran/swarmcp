@@ -24,10 +24,21 @@ func SecretSourcesForPlan(desired DesiredState, plan Plan) []PlanSecretSource {
 			SecretName:   secretName,
 			LogicalName:  def.Name,
 			Scope:        planScope(def.ScopeID),
+			Recipe:       planSecretRecipe(def),
 			Dependencies: planSecretDependencies(def.SecretDependencies),
 		})
 	}
 	return out
+}
+
+func planSecretRecipe(def render.RenderedDef) *PlanSecretRecipe {
+	if def.Kind != "secret" || def.Source == "" {
+		return nil
+	}
+	return &PlanSecretRecipe{
+		Source:       def.Source,
+		RenderedHash: secretValueHash(def.Content),
+	}
 }
 
 func planSecretDependencies(deps []render.SecretDependency) []PlanSecretDependency {

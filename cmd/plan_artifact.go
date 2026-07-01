@@ -52,5 +52,7 @@ func buildApplyPlanArtifact(cmd *cobra.Command, projectCtx *cmdutil.ProjectConte
 		}
 	}
 
+	plan = apply.FinalizePlanAssumptions(plan)
+
 	return plan, pruneServices, nil
 }

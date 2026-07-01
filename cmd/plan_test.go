@@ -52,6 +52,44 @@ func TestPlanOutRejectsMultipleDeployments(t *testing.T) {
 	}
 }
 
+func TestPlanOutRejectsMultiplePartitions(t *testing.T) {
+	oldOut := planOutPath
+	oldPartitions := opts.Partitions
+	oldConfigPaths := opts.ConfigPaths
+	defer func() {
+		planOutPath = oldOut
+		opts.Partitions = oldPartitions
+		opts.ConfigPaths = oldConfigPaths
+	}()
+	planOutPath = "plan.yaml"
+	opts.Partitions = []string{"blue", "green"}
+	opts.ConfigPaths = []string{"project.yaml"}
+
+	err := planCmd.RunE(planCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "plan --out requires at most one partition target") {
+		t.Fatalf("expected single partition error, got %v", err)
+	}
+}
+
+func TestPlanOutRejectsMultipleStacks(t *testing.T) {
+	oldOut := planOutPath
+	oldStacks := opts.Stacks
+	oldConfigPaths := opts.ConfigPaths
+	defer func() {
+		planOutPath = oldOut
+		opts.Stacks = oldStacks
+		opts.ConfigPaths = oldConfigPaths
+	}()
+	planOutPath = "plan.yaml"
+	opts.Stacks = []string{"core", "edge"}
+	opts.ConfigPaths = []string{"project.yaml"}
+
+	err := planCmd.RunE(planCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "plan --out requires at most one stack target") {
+		t.Fatalf("expected single stack error, got %v", err)
+	}
+}
+
 func TestSplitMountItem(t *testing.T) {
 	scope, item := splitMountItem(`config "dynamic.yml" -> /etc/traefik/dynamic.yml (stack "core" service "ingress") (inferred)`)
 	if scope != `stack "core" service "ingress"` {

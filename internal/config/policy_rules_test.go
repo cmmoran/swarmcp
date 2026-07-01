@@ -35,6 +35,14 @@ func TestLayeredPolicyForPath(t *testing.T) {
 }
 
 func TestReleasePolicyTree(t *testing.T) {
+	project := releasePolicyChild(releasePolicyRoot, "project")
+	if project == nil {
+		t.Fatalf("expected project policy")
+	}
+	values := releasePolicyChild(project, "values")
+	if values == nil || values.kind != releaseValueSourceList {
+		t.Fatalf("expected project values source-list policy, got %#v", values)
+	}
 	stacks := releasePolicyChild(releasePolicyRoot, "stacks")
 	if stacks == nil {
 		t.Fatalf("expected stacks policy")
@@ -54,6 +62,14 @@ func TestReleasePolicyTree(t *testing.T) {
 	updateConfig := releasePolicyChild(service, "update_config")
 	if updateConfig == nil || updateConfig.kind != releaseValueUpdatePolicyMap {
 		t.Fatalf("expected update_config policy, got %#v", updateConfig)
+	}
+	source := releasePolicyChild(stack, "source")
+	if source == nil {
+		t.Fatalf("expected source policy")
+	}
+	ref := releasePolicyChild(source, "ref")
+	if ref == nil || ref.kind != releaseValueRequiredString {
+		t.Fatalf("expected required string source ref policy, got %#v", ref)
 	}
 	if child := releasePolicyChild(service, "ports"); child != nil {
 		t.Fatalf("expected ports to be disallowed, got %#v", child)

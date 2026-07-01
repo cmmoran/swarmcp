@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://swarmcp.dev/schemas/swarmcp-release.v1.schema.json",
+  "title": "SwarmCP Release Config",
+  "description": "Schema for SwarmCP files passed with --release-config. This schema covers deploy-time release intent; swarmcp validate remains the source of truth for semantic validation against the base project.",
+  "type": "object",
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": ["project"]
+    },
+    {
+      "required": ["stacks"]
+    }
+  ],
+  "properties": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "values": {
+          "type": "array",
+          "description": "Release-selected refs for existing git-backed project.values entries. The base project owns url and path.",
+          "items": {
+            "$ref": "#/$defs/valueRef"
+          }
+        }
+      }
+    },
+    "stacks": {
+      "type": "object",
+      "description": "Release intent keyed by existing stack name.",
+      "additionalProperties": {
+        "$ref": "#/$defs/stackRelease"
+      }
+    }
+  },
+  "$defs": {
+    "duration": {
+      "type": "string",
+      "pattern": "^(|[-+]?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:ns|us|µs|μs|ms|s|m|h)(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|µs|μs|ms|s|m|h))*)$",
+      "description": "Go duration string such as 10s, 1m, or 500ms."
+    },
+    "scalarMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "number", "integer", "boolean", "null"]
+      }
+    },
+    "valueRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ref"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of an existing project.values entry in the base project."
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Release-selected ref for the existing git-backed values source."
+        }
+      }
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Release-selected ref for an existing stack source."
+        }
+      }
+    },
+    "stackRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/sourceRef"
+        },
+        "services": {
+          "type": "object",
+          "description": "Release intent keyed by existing service name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/serviceRelease"
+          }
+        }
+      }
+    },
+    "serviceRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Release-selected image tag or digest."
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "env": {
+          "$ref": "#/$defs/scalarMap"
+        },
+        "labels": {
+          "$ref": "#/$defs/scalarMap"
+        },
+        "update_config": {
+          "$ref": "#/$defs/updatePolicy"
+        },
+        "rollback_config": {
+          "$ref": "#/$defs/updatePolicy"
+        }
+      }
+    },
+    "updatePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parallelism": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "delay": {
+          "$ref": "#/$defs/duration"
+        },
+        "failure_action": {
+          "type": "string",
+          "pattern": "^([Pp][Aa][Uu][Ss][Ee]|[Cc][Oo][Nn][Tt][Ii][Nn][Uu][Ee]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])$",
+          "description": "Service update failure action. SwarmCP normalizes case."
+        },
+        "monitor": {
+          "$ref": "#/$defs/duration"
+        },
+        "max_failure_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "order": {
+          "type": "string",
+          "pattern": "^([Ss][Tt][Oo][Pp]-[Ff][Ii][Rr][Ss][Tt]|[Ss][Tt][Aa][Rr][Tt]-[Ff][Ii][Rr][Ss][Tt])$",
+          "description": "Service update order. SwarmCP normalizes case."
+        }
+      }
+    }
+  }
+}

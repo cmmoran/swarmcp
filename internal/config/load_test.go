@@ -251,6 +251,34 @@ func TestValidateOverlayProjectSecretsEngineMissingAddr(t *testing.T) {
 	}
 }
 
+func TestValidateProjectValuesRequiresUniqueNamesAndPath(t *testing.T) {
+	cfg := &Config{
+		Project: Project{
+			Name: "primary",
+			Values: []ValueSource{
+				{Path: "values/one.yaml"},
+				{Name: "platform"},
+				{Name: "platform", Path: "values/two.yaml"},
+			},
+		},
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	message := err.Error()
+	for _, want := range []string{
+		"project.values.0.name is required",
+		"project.values.1.path is required",
+		`project.values name "platform" is duplicated`,
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("expected %q in %v", want, err)
+		}
+	}
+}
+
 func TestStackSecretsList(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "swarmcp.yaml")

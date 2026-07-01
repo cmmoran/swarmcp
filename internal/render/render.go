@@ -51,6 +51,7 @@ type RenderedDef struct {
 	Scope              string
 	Name               string
 	Content            string
+	Source             string
 	ScopeID            templates.Scope
 	SecretDependencies []SecretDependency
 }
@@ -227,7 +228,7 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 		secretValue := secretValueCollector(resolver, &secretDeps)
 		iresolver := templates.NewScopeResolverWithTrace(cfg, defScope, false, infer, data, secretValue, values, trace("config", name, defScope))
 		engine := templates.New(iresolver)
-		rendered, err := templates.ResolveSource(def.Source, scopeID, data, engine, values, cfg.BaseDir, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
+		rendered, source, err := templates.ResolveSourceWithMetadata(def.Source, scopeID, data, engine, values, cfg.BaseDir, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
 		if err != nil {
 			return fmt.Errorf("%s config %q: %w", scope, name, err)
 		}
@@ -238,6 +239,7 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 			Scope:              scope,
 			Name:               name,
 			Content:            rendered,
+			Source:             source,
 			ScopeID:            scopeID,
 			SecretDependencies: secretDeps,
 		})
@@ -258,7 +260,7 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 		secretValue := secretValueCollector(resolver, &secretDeps)
 		iresolver := templates.NewScopeResolverWithTrace(cfg, defScope, true, infer, data, secretValue, values, trace("secret", name, defScope))
 		engine := templates.New(iresolver)
-		rendered, err := templates.ResolveSource(def.Source, scopeID, data, engine, values, cfg.BaseDir, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
+		rendered, source, err := templates.ResolveSourceWithMetadata(def.Source, scopeID, data, engine, values, cfg.BaseDir, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
 		if err != nil {
 			return fmt.Errorf("%s secret %q: %w", scope, name, err)
 		}
@@ -269,6 +271,7 @@ func renderDefs(cfg *config.Config, resolver secrets.Resolver, values any, scope
 			Scope:              scope,
 			Name:               name,
 			Content:            rendered,
+			Source:             source,
 			ScopeID:            scopeID,
 			SecretDependencies: secretDeps,
 		})
@@ -515,7 +518,7 @@ func renderInferredDef(cfg *config.Config, resolver secrets.Resolver, values any
 	allowSecrets := kind == "secret"
 	iresolver := templates.NewScopeResolverWithTrace(cfg, scopeID, allowSecrets, true, data, secretValue, values, trace)
 	engine := templates.New(iresolver)
-	rendered, err := templates.ResolveSource(source, scopeID, data, engine, values, cfg.BaseDir, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
+	rendered, resolvedSource, err := templates.ResolveSourceWithMetadata(source, scopeID, data, engine, values, cfg.BaseDir, config.LoadOptions{Offline: cfg.Offline, CacheDir: cfg.CacheDir, Debug: cfg.Debug})
 	if err != nil {
 		return fmt.Errorf("%s %s %q: %w", scopeLabel, kind, name, err)
 	}
@@ -532,6 +535,7 @@ func renderInferredDef(cfg *config.Config, resolver secrets.Resolver, values any
 		Scope:              scopeLabel,
 		Name:               name,
 		Content:            rendered,
+		Source:             resolvedSource,
 		ScopeID:            scopeID,
 		SecretDependencies: secretDeps,
 	})

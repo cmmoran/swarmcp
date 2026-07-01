@@ -22,6 +22,8 @@ type PlanFile struct {
 	PruneServices bool               `yaml:"prune_services,omitempty"`
 	Secrets       PlanSecrets        `yaml:"secrets"`
 	Inputs        []PlanInput        `yaml:"inputs,omitempty"`
+	SourceInputs  []PlanSourceInput  `yaml:"source_inputs,omitempty"`
+	Warnings      []string           `yaml:"warnings,omitempty"`
 	SecretSources []PlanSecretSource `yaml:"secret_sources,omitempty"`
 	Plan          Plan               `yaml:"plan"`
 }
@@ -36,11 +38,27 @@ type PlanInput struct {
 	SHA256 string `yaml:"sha256"`
 }
 
+type PlanSourceInput struct {
+	Kind    string `yaml:"kind"`
+	Origin  string `yaml:"origin,omitempty"`
+	URL     string `yaml:"url"`
+	Ref     string `yaml:"ref,omitempty"`
+	Commit  string `yaml:"commit"`
+	Path    string `yaml:"path,omitempty"`
+	Subtree string `yaml:"subtree"`
+}
+
 type PlanSecretSource struct {
 	SecretName   string                 `yaml:"secret_name"`
 	LogicalName  string                 `yaml:"logical_name"`
 	Scope        PlanScope              `yaml:"scope"`
+	Recipe       *PlanSecretRecipe      `yaml:"recipe,omitempty"`
 	Dependencies []PlanSecretDependency `yaml:"dependencies"`
+}
+
+type PlanSecretRecipe struct {
+	Source       string `yaml:"source"`
+	RenderedHash string `yaml:"rendered_hash"`
 }
 
 type PlanSecretDependency struct {

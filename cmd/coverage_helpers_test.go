@@ -108,6 +108,9 @@ func TestRunApplyPlanFileChecksContextBeforeSecretReplay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "release.plan.yaml")
 	planFile := apply.NewPlanFile("test", "demo", "prod", "", "", "planned-context", false, apply.Plan{
 		CreateSecrets: []swarm.SecretSpec{{Name: "demo_secret_v1"}},
+		Assumptions: apply.PlanAssumptions{
+			AbsentSecrets: []string{"demo_secret_v1"},
+		},
 	})
 	planFile.Secrets.Mode = apply.PlanSecretModeReference
 	planFile.SecretSources = []apply.PlanSecretSource{{

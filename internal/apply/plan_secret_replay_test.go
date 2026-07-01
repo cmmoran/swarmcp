@@ -2,13 +2,17 @@ package apply
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/cmmoran/swarmcp/internal/config"
 	"github.com/cmmoran/swarmcp/internal/swarm"
 )
 
@@ -160,6 +164,9 @@ func TestResolvePlanSecretPayloadsRejectsHashMismatch(t *testing.T) {
 		}},
 		Plan: Plan{
 			CreateSecrets: []swarm.SecretSpec{{Name: "api_token_abcd"}},
+			Assumptions: PlanAssumptions{
+				AbsentSecrets: []string{"api_token_abcd"},
+			},
 		},
 	}
 
@@ -193,6 +200,9 @@ func TestResolvePlanSecretPayloadsReadsMatchingSecretsFile(t *testing.T) {
 		}},
 		Plan: Plan{
 			CreateSecrets: []swarm.SecretSpec{{Name: "api_token_abcd"}},
+			Assumptions: PlanAssumptions{
+				AbsentSecrets: []string{"api_token_abcd"},
+			},
 		},
 	}
 
@@ -238,6 +248,9 @@ func TestResolvePlanSecretPayloadsRejectsChangedSecretsFile(t *testing.T) {
 		}},
 		Plan: Plan{
 			CreateSecrets: []swarm.SecretSpec{{Name: "api_token_abcd"}},
+			Assumptions: PlanAssumptions{
+				AbsentSecrets: []string{"api_token_abcd"},
+			},
 		},
 	}
 
@@ -263,6 +276,9 @@ func TestSetPlanSecretModeDetectsReferencePlans(t *testing.T) {
 		}},
 		Plan: Plan{
 			CreateSecrets: []swarm.SecretSpec{{Name: "api_token_abcd"}},
+			Assumptions: PlanAssumptions{
+				AbsentSecrets: []string{"api_token_abcd"},
+			},
 		},
 	}
 
@@ -316,6 +332,54 @@ func TestValidatePlanFileRejectsReferenceModeWithPayloads(t *testing.T) {
 	}
 }
 
+func TestValidatePlanFileRejectsPayloadModeWithoutPayload(t *testing.T) {
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModePayload},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{
+				Name: "api_token_abcd",
+			}},
+		},
+	}
+
+	if err := ValidatePlanFile(planFile); err == nil {
+		t.Fatalf("expected validation error")
+	}
+}
+
+func TestValidatePlanFileRejectsMutatingPlanWithoutAssumptions(t *testing.T) {
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModePayload},
+		Plan: Plan{
+			CreateConfigs: []swarm.ConfigSpec{{
+				Name: "config_v1",
+				Data: []byte("config"),
+			}},
+		},
+	}
+
+	if err := ValidatePlanFile(planFile); err == nil {
+		t.Fatalf("expected validation error")
+	}
+}
+
+func TestValidatePlanFileRejectsIncompleteGitSourceInput(t *testing.T) {
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModePayload},
+		SourceInputs: []PlanSourceInput{{
+			Kind: "git",
+			URL:  "ssh://git@example.com/repo.git",
+		}},
+	}
+
+	if err := ValidatePlanFile(planFile); err == nil {
+		t.Fatalf("expected validation error")
+	}
+}
+
 func TestPayloadModeAllowsEmptySecretPayload(t *testing.T) {
 	planFile := PlanFile{
 		APIVersion: PlanFileAPIVersion,
@@ -325,6 +389,9 @@ func TestPayloadModeAllowsEmptySecretPayload(t *testing.T) {
 				Name:    "empty_secret",
 				HasData: true,
 			}},
+			Assumptions: PlanAssumptions{
+				AbsentSecrets: []string{"empty_secret"},
+			},
 		},
 	}
 
@@ -334,4 +401,212 @@ func TestPayloadModeAllowsEmptySecretPayload(t *testing.T) {
 	if err := ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
 		t.Fatalf("ResolvePlanSecretPayloads: %v", err)
 	}
+}
+
+func TestResolvePlanSecretPayloadsReplaysComposedRecipe(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "secret.tmpl"), []byte("user={{ secret_value \"username\" }}\npass={{ secret_value \"password\" }}\n"), 0o600); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+	runPlanSecretGit(t, repo, "init", "-b", "main")
+	runPlanSecretGit(t, repo, "config", "user.email", "test@example.com")
+	runPlanSecretGit(t, repo, "config", "user.name", "Test User")
+	runPlanSecretGit(t, repo, "add", ".")
+	runPlanSecretGit(t, repo, "commit", "-m", "add secret template")
+	url := "file://" + filepath.ToSlash(repo)
+	cacheDir := filepath.Join(dir, ".swarmcp", "sources")
+	cacheRepo := filepath.Join(cacheDir, "repos", planSecretTestSourceHashKey(url))
+	if err := os.MkdirAll(filepath.Dir(cacheRepo), 0o755); err != nil {
+		t.Fatalf("mkdir cache repo parent: %v", err)
+	}
+	runPlanSecretGit(t, dir, "clone", "--bare", repo, cacheRepo)
+	source, err := config.ResolveSourceRef(config.SourceRef{
+		URL:  url,
+		Ref:  "main",
+		Path: "secret.tmpl",
+	}, "", config.LoadOptions{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("ResolveSourceRef: %v", err)
+	}
+	meta, found, err := config.ReadSourceMetadata(url, "main", "secret.tmpl", config.LoadOptions{CacheDir: cacheDir})
+	if err != nil {
+		t.Fatalf("ReadSourceMetadata: %v", err)
+	}
+	if !found {
+		t.Fatalf("expected source metadata")
+	}
+	projectPath := filepath.Join(dir, "project.yaml")
+	if err := os.WriteFile(projectPath, []byte("project:\n  name: demo\n"), 0o600); err != nil {
+		t.Fatalf("write project: %v", err)
+	}
+	secretsPath := filepath.Join(dir, "secrets.yaml")
+	if err := os.WriteFile(secretsPath, []byte("values:\n  username: alice\n  password: secret\n"), 0o600); err != nil {
+		t.Fatalf("write secrets: %v", err)
+	}
+	inputs, err := FileInputs("project", []string{projectPath})
+	if err != nil {
+		t.Fatalf("project FileInputs: %v", err)
+	}
+	secretInputs, err := FileInputs("secrets", []string{secretsPath})
+	if err != nil {
+		t.Fatalf("secrets FileInputs: %v", err)
+	}
+	inputs = append(inputs, secretInputs...)
+	rendered := "user=alice\npass=secret\n"
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModePayload},
+		Inputs:     inputs,
+		SourceInputs: []PlanSourceInput{{
+			Kind:    "git",
+			URL:     meta.URL,
+			Ref:     meta.Ref,
+			Commit:  meta.Commit,
+			Path:    meta.Path,
+			Subtree: meta.Subtree,
+		}},
+		SecretSources: []PlanSecretSource{{
+			SecretName:  "app_secret_abcd",
+			LogicalName: "app_secret",
+			Recipe: &PlanSecretRecipe{
+				Source:       source,
+				RenderedHash: secretValueHash(rendered),
+			},
+			Dependencies: []PlanSecretDependency{
+				{Name: "username", Hash: secretValueHash("alice"), Provider: "file", Key: "username"},
+				{Name: "password", Hash: secretValueHash("secret"), Provider: "file", Key: "password"},
+			},
+		}},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{
+				Name:    "app_secret_abcd",
+				Data:    []byte(rendered),
+				HasData: true,
+			}},
+			Assumptions: PlanAssumptions{
+				AbsentSecrets: []string{"app_secret_abcd"},
+			},
+		},
+	}
+
+	OmitReplayableSecretPayloadsFromPlan(context.Background(), &planFile)
+	if PlanHasSecretPayloads(planFile.Plan) {
+		t.Fatalf("expected recipe payload to be omitted")
+	}
+	SetPlanSecretMode(&planFile)
+	if err := ValidatePlanFile(planFile); err != nil {
+		t.Fatalf("ValidatePlanFile: %v", err)
+	}
+	if err := ResolvePlanSecretPayloads(context.Background(), &planFile); err != nil {
+		t.Fatalf("ResolvePlanSecretPayloads: %v", err)
+	}
+	if got := string(planFile.Plan.CreateSecrets[0].Data); got != rendered {
+		t.Fatalf("unexpected recipe payload: %q", got)
+	}
+}
+
+func TestValidatePlanFileRejectsRecipeWithoutGitSource(t *testing.T) {
+	planFile := PlanFile{
+		APIVersion: PlanFileAPIVersion,
+		Secrets:    PlanSecrets{Mode: PlanSecretModeRecipe},
+		SecretSources: []PlanSecretSource{{
+			SecretName: "app_secret_abcd",
+			Recipe: &PlanSecretRecipe{
+				Source:       "secret.tmpl",
+				RenderedHash: secretValueHash("user=alice\npass=secret\n"),
+			},
+			Dependencies: []PlanSecretDependency{
+				{Name: "username", Hash: secretValueHash("alice"), Provider: "file", Key: "username"},
+				{Name: "password", Hash: secretValueHash("secret"), Provider: "file", Key: "password"},
+			},
+		}},
+		Plan: Plan{
+			CreateSecrets: []swarm.SecretSpec{{Name: "app_secret_abcd"}},
+			Assumptions: PlanAssumptions{
+				AbsentSecrets: []string{"app_secret_abcd"},
+			},
+		},
+	}
+
+	if err := ValidatePlanFile(planFile); err == nil {
+		t.Fatalf("expected validation error")
+	}
+}
+
+func TestPlanSourceInputForGitSourceRequiresMatchingRef(t *testing.T) {
+	inputs := []PlanSourceInput{
+		{
+			Kind:    "git",
+			URL:     "ssh://git@example.com/repo.git",
+			Ref:     "main",
+			Commit:  "1111111111111111111111111111111111111111",
+			Path:    "secret.tmpl",
+			Subtree: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		{
+			Kind:    "git",
+			URL:     "ssh://git@example.com/repo.git",
+			Ref:     "release",
+			Commit:  "2222222222222222222222222222222222222222",
+			Path:    "secret.tmpl",
+			Subtree: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+	}
+
+	input, ok := planSourceInputForGitSource(inputs, config.GitSource{
+		URL:  "ssh://git@example.com/repo.git",
+		Ref:  "release",
+		Path: "secret.tmpl",
+	})
+	if !ok {
+		t.Fatalf("expected matching source input")
+	}
+	if input.Commit != "2222222222222222222222222222222222222222" {
+		t.Fatalf("selected wrong source input: %#v", input)
+	}
+}
+
+func TestPlanRecipeResolverPrefersScopedSecretValue(t *testing.T) {
+	scope := PlanScope{
+		Project:    "demo",
+		Deployment: "prod",
+		Stack:      "core",
+		Partition:  "qa",
+		Service:    "api",
+	}
+	resolver := planRecipeResolver{
+		scope: scope,
+		values: map[string]string{
+			planRecipeSecretKey(PlanScope{}, "password"): "global",
+			planRecipeSecretKey(scope, "password"):       "scoped",
+		},
+	}
+
+	got, err := resolver.SecretValue("password")
+	if err != nil {
+		t.Fatalf("SecretValue: %v", err)
+	}
+	if got != "scoped" {
+		t.Fatalf("expected scoped value, got %q", got)
+	}
+}
+
+func runPlanSecretGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, string(out))
+	}
+	return string(out)
+}
+
+func planSecretTestSourceHashKey(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:16])
 }

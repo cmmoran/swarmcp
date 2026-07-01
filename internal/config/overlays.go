@@ -1187,7 +1187,13 @@ func mergeServiceOverlay(base Service, overlay OverlayService) (Service, error) 
 	if err != nil {
 		return Service{}, err
 	}
-	return decodeServiceMap(merged)
+	out, err := decodeServiceMap(merged)
+	if err != nil {
+		return Service{}, err
+	}
+	out.BaseDir = base.BaseDir
+	out.SourceRefs = append([]string(nil), base.SourceRefs...)
+	return out, nil
 }
 
 func mergeServices(base map[string]Service, overlays ...map[string]OverlayService) (map[string]Service, error) {

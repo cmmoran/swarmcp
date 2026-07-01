@@ -32,6 +32,12 @@ var planCmd = &cobra.Command{
 		if planOutPath != "" && len(targets.deployments) > 1 {
 			return fmt.Errorf("plan --out requires a single deployment target; use --deployment once or generate one plan per deployment")
 		}
+		if planOutPath != "" && len(targets.partitionFilters) > 1 {
+			return fmt.Errorf("plan --out requires at most one partition target; use --partition once or generate one plan per partition")
+		}
+		if planOutPath != "" && len(targets.stackFilters) > 1 {
+			return fmt.Errorf("plan --out requires at most one stack target; use --stack once or generate one plan per stack")
+		}
 		progress := newPlanProgressReporter(cmd.ErrOrStderr(), planProgressEnabled)
 		out := cmd.OutOrStdout()
 
@@ -181,13 +187,6 @@ var planCmd = &cobra.Command{
 					return err
 				}
 				secretSources := apply.SecretSourcesForPlan(desired, plan)
-				if !planIncludeSecretPayloads {
-					apply.OmitReplayableSecretPayloads(&plan, secretSources)
-				}
-				if apply.PlanHasSecretPayloads(plan) && !planIncludeSecretPayloads {
-					done(fmt.Errorf("plan artifact would contain unreplayable secret payloads"))
-					return fmt.Errorf("plan --out needs --include-secret-payloads when the plan creates swarm secrets that cannot be replayed from a single versioned secret source")
-				}
 				planFile := apply.NewPlanFile(
 					Version,
 					cfg.Project.Name,
@@ -199,13 +198,29 @@ var planCmd = &cobra.Command{
 					plan,
 				)
 				planFile.SecretSources = secretSources
-				apply.SetPlanSecretMode(&planFile)
-				inputs, err := buildPlanInputs(cfg, targets.configPath, targets.configPaths, targets.releaseConfigPaths, opts.ValuesFiles, opts.SecretsFile)
+				inputs, err := buildPlanInputs(cfg, targets.configPath, targets.configPaths, targets.releaseConfigPaths, projectCtx.ValuesSources, opts.SecretsFile)
 				if err != nil {
 					done(err)
 					return err
 				}
 				planFile.Inputs = inputs
+				planWarnings := planArtifactWarnings(inputs)
+				planFile.Warnings = planWarnings
+				warnings = append(warnings, planWarnings...)
+				sourceInputs, err := buildPlanSourceInputs(cfg, desired, plan, projectCtx.ValuesSources)
+				if err != nil {
+					done(err)
+					return err
+				}
+				planFile.SourceInputs = sourceInputs
+				if !planIncludeSecretPayloads {
+					apply.OmitReplayableSecretPayloadsFromPlan(cmd.Context(), &planFile)
+				}
+				if apply.PlanHasSecretPayloads(planFile.Plan) && !planIncludeSecretPayloads {
+					done(fmt.Errorf("plan artifact would contain unreplayable secret payloads"))
+					return fmt.Errorf("plan --out needs --include-secret-payloads when the plan creates swarm secrets that cannot be replayed from a single versioned secret source or pinned recipe")
+				}
+				apply.SetPlanSecretMode(&planFile)
 				if err := apply.WritePlanFile(planOutPath, planFile); err != nil {
 					done(err)
 					return err

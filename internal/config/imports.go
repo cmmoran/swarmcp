@@ -58,10 +58,12 @@ func loadStackFromSource(stackName string, ref *SourceRef, baseDir string, overr
 	if err != nil {
 		return Stack{}, "", err
 	}
+	sourceRefs := []string{basePath}
 	traceStackImportLayer(trace, stackName, "import stack source "+sourceLabel(basePath), baseMap)
 	var overlay map[string]any
 	if ref.OverridesPath != "" {
-		overlay, _, err = loadSourceMap(SourceRef{
+		var overlayPath string
+		overlay, overlayPath, err = loadSourceMap(SourceRef{
 			URL:  ref.URL,
 			Ref:  ref.Ref,
 			Path: ref.OverridesPath,
@@ -69,6 +71,7 @@ func loadStackFromSource(stackName string, ref *SourceRef, baseDir string, overr
 		if err != nil {
 			return Stack{}, "", err
 		}
+		sourceRefs = append(sourceRefs, overlayPath)
 		traceStackImportLayer(trace, stackName, "import stack overrides "+ref.OverridesPath, overlay)
 	}
 	localOverrides, err := normalizeOverrideMap(overrides)
@@ -91,6 +94,7 @@ func loadStackFromSource(stackName string, ref *SourceRef, baseDir string, overr
 	if err != nil {
 		return Stack{}, "", err
 	}
+	stack.SourceRefs = append(stack.SourceRefs, sourceRefs...)
 	return stack, stackBaseDir, nil
 }
 
@@ -131,10 +135,12 @@ func loadServiceFromSource(stackName string, serviceName string, ref *SourceRef,
 	if err != nil {
 		return Service{}, "", err
 	}
+	sourceRefs := []string{basePath}
 	traceServiceImportLayer(trace, stackName, serviceName, "import service source "+sourceLabel(basePath), baseMap)
 	var overlay map[string]any
 	if ref.OverridesPath != "" {
-		overlay, _, err = loadSourceMap(SourceRef{
+		var overlayPath string
+		overlay, overlayPath, err = loadSourceMap(SourceRef{
 			URL:  ref.URL,
 			Ref:  ref.Ref,
 			Path: ref.OverridesPath,
@@ -142,6 +148,7 @@ func loadServiceFromSource(stackName string, serviceName string, ref *SourceRef,
 		if err != nil {
 			return Service{}, "", err
 		}
+		sourceRefs = append(sourceRefs, overlayPath)
 		traceServiceImportLayer(trace, stackName, serviceName, "import service overrides "+ref.OverridesPath, overlay)
 	}
 	localOverrides, err := normalizeOverrideMap(overrides)
@@ -164,6 +171,7 @@ func loadServiceFromSource(stackName string, serviceName string, ref *SourceRef,
 	if err != nil {
 		return Service{}, "", err
 	}
+	service.SourceRefs = append(service.SourceRefs, sourceRefs...)
 	return service, serviceBaseDir, nil
 }
 
@@ -253,6 +261,10 @@ func resolveSourceFile(ref SourceRef, baseDir string, opts LoadOptions) (string,
 		return resolveAbsolutePath(ref.Path)
 	}
 	return resolvePathWithin(root, ref.Path, opts)
+}
+
+func ResolveSourceRef(ref SourceRef, baseDir string, opts LoadOptions) (string, error) {
+	return resolveSourceFile(ref, baseDir, opts)
 }
 
 func resolveAbsolutePath(path string) (string, error) {

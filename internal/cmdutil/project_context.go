@@ -30,6 +30,7 @@ type ProjectContext struct {
 	Partition     string
 	Stack         string
 	Values        any
+	ValuesSources []string
 	Secrets       *secrets.Store
 	ContextName   string
 	ValuesScope   templates.Scope
@@ -116,12 +117,16 @@ func LoadProjectInputs(ctx *ProjectContext, configPath string, opts ProjectOptio
 	}
 
 	if includeValues {
-		valuesFiles := InferValuesFiles(configPath, opts.ValuesFiles)
-		values, err := LoadValuesStore(valuesFiles, ctx.ValuesScope)
+		valuesFiles, err := InferValuesSources(ctx.Config, configPath, opts.ValuesFiles)
+		if err != nil {
+			return err
+		}
+		values, sources, err := LoadValuesStoreWithSources(valuesFiles, ctx.ValuesScope, "", config.LoadOptions{CacheDir: ctx.Config.CacheDir, Offline: ctx.Config.Offline, Debug: ctx.Config.Debug})
 		if err != nil {
 			return err
 		}
 		ctx.Values = values
+		ctx.ValuesSources = sources
 	}
 	return nil
 }

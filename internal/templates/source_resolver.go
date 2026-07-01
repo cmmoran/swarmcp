@@ -10,20 +10,27 @@ import (
 )
 
 func ResolveSource(source string, scope Scope, data any, engine *Engine, values any, baseDir string, opts config.LoadOptions) (string, error) {
+	content, _, err := ResolveSourceWithMetadata(source, scope, data, engine, values, baseDir, opts)
+	return content, err
+}
+
+func ResolveSourceWithMetadata(source string, scope Scope, data any, engine *Engine, values any, baseDir string, opts config.LoadOptions) (string, string, error) {
 	if source == "" {
-		return "", nil
+		return "", "", nil
 	}
 	if strings.HasPrefix(source, "inline:") {
 		content := strings.TrimPrefix(source, "inline:")
 		content = strings.TrimSpace(content)
-		return engine.Render("inline", content, data)
+		rendered, err := engine.Render("inline", content, data)
+		return rendered, "", err
 	}
 	if fragment, ok := ValuesFragment(source); ok {
 		if values == nil {
-			return "", fmt.Errorf("values store not configured")
+			return "", "", fmt.Errorf("values store not configured")
 		}
 		fragment = ExpandTokens(fragment, scope)
-		return ResolveValuesFragment(values, fragment, scope)
+		resolved, err := ResolveValuesFragment(values, fragment, scope)
+		return resolved, "", err
 	}
 	templatePath := ExpandSourcePathTokens(source, scope)
 	basePath, fragment := SplitSource(templatePath)
@@ -32,19 +39,20 @@ func ResolveSource(source string, scope Scope, data any, engine *Engine, values 
 	}
 	content, err := config.ReadSourceFile(basePath, baseDir, opts)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	rendered := string(content)
 	if IsTemplateSource(basePath) {
 		rendered, err = engine.Render(basePath, rendered, data)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	if fragment == "" || fragment == "#" {
-		return rendered, nil
+		return rendered, basePath, nil
 	}
-	return ResolveYAMLFragment(rendered, fragment)
+	resolved, err := ResolveYAMLFragment(rendered, fragment)
+	return resolved, basePath, err
 }
 
 func ResolveFragment(root any, fragment string) (string, error) {

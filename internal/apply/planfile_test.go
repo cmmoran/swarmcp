@@ -41,6 +41,15 @@ func TestPlanFileRoundTrip(t *testing.T) {
 		}},
 	}}
 	want.Inputs = []PlanInput{{Kind: "project", Path: "project.yaml", SHA256: "abc123"}}
+	want.SourceInputs = []PlanSourceInput{{
+		Kind:    "git",
+		Origin:  "stack.app.base",
+		URL:     "ssh://git@example.com/repo.git",
+		Ref:     "v1.2.3",
+		Commit:  "0123456789abcdef",
+		Path:    "deploy/app",
+		Subtree: "abcdef0123456789",
+	}}
 
 	if err := WritePlanFile(path, want); err != nil {
 		t.Fatalf("WritePlanFile: %v", err)
@@ -69,5 +78,8 @@ func TestPlanFileRoundTrip(t *testing.T) {
 	}
 	if len(got.Inputs) != 1 || got.Inputs[0].Kind != "project" || got.Inputs[0].SHA256 != "abc123" {
 		t.Fatalf("unexpected inputs: %#v", got.Inputs)
+	}
+	if len(got.SourceInputs) != 1 || got.SourceInputs[0].Commit != "0123456789abcdef" || got.SourceInputs[0].Subtree != "abcdef0123456789" {
+		t.Fatalf("unexpected source inputs: %#v", got.SourceInputs)
 	}
 }
